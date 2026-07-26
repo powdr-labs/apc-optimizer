@@ -1245,6 +1245,154 @@ theorem denseCheckReencode_polyVars (d : DenseConstraintSystem p) (xs bits : Lis
     ∀ y ∈ xs, ∀ v ∈ ((DenseExpr.var y).substF (denseGroupSubst xs hm)).vars, v ∈ bits := by
   grind [denseCheckReencode, List.contains_iff_mem]
 
+/-- `denseBuildPruned` recomputed the item's variable list for the prune test and then again inside
+    `denseBuildStep`; the compiled body shares one. -/
+@[csimp] theorem denseBuildPruned_eq_fast : @denseBuildPruned = @denseBuildPrunedFast := by
+  funext α varsOf maxVars items
+  rw [denseBuildPruned, denseBuildPrunedFast]
+  refine congrArg (fun f => items.zipIdx.foldr f (⟨∅, []⟩ : DenseCovIndex)) ?_
+  funext ai idx
+  rfl
+
+/-! ### The sparse accept path equals `denseReencodeOut` on a fold-normal system -/
+
+/-- An expression with a variable, none of them in `xs`, is not wholly inside `xs`. -/
+theorem denseVarsInF_false_of_disjoint (xs : List VarId) :
+    ∀ (e : DenseExpr p), e.hasVar = true → e.anyVarIn xs = false → e.varsInF xs = false := by
+  intro e
+  induction e with
+  | const n => intro h; simp [DenseExpr.hasVar] at h
+  | var y => intro _ h; simpa [DenseExpr.varsInF] using h
+  | add e₁ e₂ ih₁ ih₂ =>
+      intro hv hd
+      simp only [DenseExpr.anyVarIn, Bool.or_eq_false_iff] at hd
+      simp only [DenseExpr.hasVar, Bool.or_eq_true] at hv
+      simp only [DenseExpr.varsInF, Bool.and_eq_false_iff]
+      rcases hv with hv | hv
+      · exact Or.inl (ih₁ hv hd.1)
+      · exact Or.inr (ih₂ hv hd.2)
+  | mul e₁ e₂ ih₁ ih₂ =>
+      intro hv hd
+      simp only [DenseExpr.anyVarIn, Bool.or_eq_false_iff] at hd
+      simp only [DenseExpr.hasVar, Bool.or_eq_true] at hv
+      simp only [DenseExpr.varsInF, Bool.and_eq_false_iff]
+      rcases hv with hv | hv
+      · exact Or.inl (ih₁ hv hd.1)
+      · exact Or.inr (ih₂ hv hd.2)
+
+/-- Nothing sharing no variable with the group is covered by it. -/
+theorem denseCoveredBy_false_of_disjoint (xs : List VarId) (e : DenseExpr p)
+    (hd : e.anyVarIn xs = false) : denseCoveredBy xs e = false := by
+  simp only [denseCoveredBy, Bool.and_eq_false_iff]
+  cases hv : e.hasVar with
+  | false => exact Or.inl rfl
+  | true => exact Or.inr (denseVarsInF_false_of_disjoint xs e hv hd)
+
+/-- **The identity the sparse rewrite rests on.** `denseGroupRewrite` leaves an expression alone
+    when it shares no variable with the group *and* has no variable-free node left to fold — the
+    second condition is needed because `varsInF xs` holds vacuously on a variable-free node, which
+    would otherwise be replaced by its constant value. -/
+theorem denseGroupRewrite_id_of_disjoint (xs bits : List VarId)
+    (σfn : VarId → Option (DenseExpr p)) (patts : List (List (VarId × ZMod p))) :
+    ∀ (e : DenseExpr p), e.anyVarIn xs = false → e.hasConstFoldableNode = false →
+      denseGroupRewrite xs bits σfn patts e = e := by
+  intro e
+  induction e with
+  | const n => intro _ _; rfl
+  | var y =>
+      intro hd _
+      simp only [DenseExpr.anyVarIn] at hd
+      rw [denseGroupRewrite, if_neg (by simp [hd])]
+  | add e₁ e₂ ih₁ ih₂ =>
+      intro hd hf
+      simp only [DenseExpr.anyVarIn, Bool.or_eq_false_iff] at hd
+      simp only [DenseExpr.hasConstFoldableNode, Bool.or_eq_false_iff, Bool.not_eq_false'] at hf
+      obtain ⟨⟨hv, hf₁⟩, hf₂⟩ := hf
+      rw [denseGroupRewrite,
+        if_neg (by simp [denseVarsInF_false_of_disjoint xs _ hv (by
+          simp [DenseExpr.anyVarIn, hd.1, hd.2])]),
+        ih₁ hd.1 hf₁, ih₂ hd.2 hf₂]
+  | mul e₁ e₂ ih₁ ih₂ =>
+      intro hd hf
+      simp only [DenseExpr.anyVarIn, Bool.or_eq_false_iff] at hd
+      simp only [DenseExpr.hasConstFoldableNode, Bool.or_eq_false_iff, Bool.not_eq_false'] at hf
+      obtain ⟨⟨hv, hf₁⟩, hf₂⟩ := hf
+      rw [denseGroupRewrite,
+        if_neg (by simp [denseVarsInF_false_of_disjoint xs _ hv (by
+          simp [DenseExpr.anyVarIn, hd.1, hd.2])]),
+        ih₁ hd.1 hf₁, ih₂ hd.2 hf₂]
+
+/-- The sparse accept path equals the dense one for *any* rewrite and keep-test that fix the items
+    the test rejects. Stated over abstract `rwf`/`keepCs`/`keepBis` so the instantiation below is a
+    direct application: with the concrete terms in place the unifier has to look inside
+    `denseGroupRewrite`, which does not elaborate in reasonable time. -/
+theorem denseSparseOut_eq (d : DenseConstraintSystem p) (xs : List VarId)
+    (rwf : DenseExpr p → DenseExpr p) (extra : List (DenseExpr p))
+    (keepCs : DenseExpr p → Bool) (keepBis : BusInteraction (DenseExpr p) → Bool)
+    (hcs : ∀ c ∈ d.algebraicConstraints, keepCs c = false →
+      denseCoveredBy xs c = false ∧ rwf c = c)
+    (hbis : ∀ bi ∈ d.busInteractions, keepBis bi = false →
+      rwf bi.multiplicity = bi.multiplicity ∧ ∀ e ∈ bi.payload, rwf e = e) :
+    ({ algebraicConstraints :=
+          (d.algebraicConstraints.filter (fun c => !denseCoveredBy xs c)).map rwf ++ extra,
+       busInteractions := d.busInteractions.map (fun bi =>
+         { bi with multiplicity := rwf bi.multiplicity, payload := bi.payload.map rwf }) } :
+        DenseConstraintSystem p)
+      = { algebraicConstraints :=
+            d.algebraicConstraints.filterMap (fun c =>
+              if keepCs c then
+                (if !denseCoveredBy xs c then some (rwf c) else none)
+              else some c) ++ extra,
+          busInteractions := d.busInteractions.map (fun bi =>
+            if keepBis bi then
+              { bi with multiplicity := rwf bi.multiplicity, payload := bi.payload.map rwf }
+            else bi) } := by
+  have h1 : (d.algebraicConstraints.filter (fun c => !denseCoveredBy xs c)).map rwf
+      = d.algebraicConstraints.filterMap (fun c =>
+          if keepCs c then (if !denseCoveredBy xs c then some (rwf c) else none) else some c) := by
+    rw [← filterMap_if_some (fun c => !denseCoveredBy xs c) rwf d.algebraicConstraints]
+    refine filterMap_congr' d.algebraicConstraints ?_
+    intro c hc
+    by_cases hk : keepCs c = true
+    · rw [if_pos hk]
+    · rw [if_neg hk]
+      obtain ⟨hcov, hfix⟩ := hcs c hc (by simpa using hk)
+      rw [if_pos (show (!denseCoveredBy xs c) = true by simp [hcov]), hfix]
+  have h2 : d.busInteractions.map (fun bi =>
+        { bi with multiplicity := rwf bi.multiplicity, payload := bi.payload.map rwf })
+      = d.busInteractions.map (fun bi =>
+          if keepBis bi then
+            { bi with multiplicity := rwf bi.multiplicity, payload := bi.payload.map rwf }
+          else bi) := by
+    refine List.map_congr_left ?_
+    intro bi hbi
+    by_cases hk : keepBis bi = true
+    · rw [if_pos hk]
+    · rw [if_neg hk]
+      obtain ⟨hmult, hpay⟩ := hbis bi hbi (by simpa using hk)
+      exact denseMapExpr_eq_self hmult hpay
+  rw [h1, h2]
+
+/-- **The sparse accept path is the accept path**, with no side condition: an item the skip test
+    rejects shares no variable with the group *and* has no variable-free node left, so it is neither
+    covered (`denseCoveredBy_false_of_disjoint`) nor changed by the rewrite
+    (`denseGroupRewrite_id_of_disjoint`). -/
+@[csimp] theorem denseReencodeOut_eq_sparse : @denseReencodeOut = @denseReencodeOutSparse := by
+  funext q d xs bits hm
+  rw [denseReencodeOut, denseReencodeOutSparse]
+  refine denseSparseOut_eq d xs _ _ (denseReencodeTouchesCs xs) (denseReencodeTouchesBi xs) ?_ ?_
+  · intro c _ hskip
+    simp only [denseReencodeTouchesCs, Bool.or_eq_false_iff] at hskip
+    exact ⟨denseCoveredBy_false_of_disjoint xs c hskip.1,
+      denseGroupRewrite_id_of_disjoint xs bits _ _ _ hskip.1 hskip.2⟩
+  · intro bi _ hskip
+    simp only [denseReencodeTouchesBi, denseBiAnyVarIn, Bool.or_eq_false_iff,
+      List.any_eq_false] at hskip
+    obtain ⟨⟨⟨hdm, hdp⟩, hnm⟩, hnp⟩ := hskip
+    exact ⟨denseGroupRewrite_id_of_disjoint xs bits _ _ _ hdm hnm,
+      fun e he => denseGroupRewrite_id_of_disjoint xs bits _ _ _
+        (by simpa using hdp e he) (by simpa using hnp e he)⟩
+
 theorem denseBuildReencode_ext_of_eq {reg reg1 : VarRegistry} {useIdx : Bool}
     {csIdx : DenseCovIndex} {arrCs : Array (DenseExpr p)} {xs : List VarId} {freshBase : String}
     {o : Option (List VarId × Std.HashMap VarId (DenseExpr p))}

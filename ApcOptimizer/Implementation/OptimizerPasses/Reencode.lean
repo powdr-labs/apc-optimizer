@@ -285,6 +285,22 @@ def denseBuildPruned {α : Type} (varsOf : α → List VarId) (maxVars : Nat) (i
       denseBuildStep varsOf ai idx
     else idx) ⟨∅, []⟩
 
+/-- `denseBuildStep` with the item's variable list already in hand. -/
+def denseBuildStepWith (vs : List VarId) (i : Nat) (idx : DenseCovIndex) : DenseCovIndex :=
+  match vs with
+  | [] => ⟨idx.buckets, i :: idx.varless⟩
+  | vs => ⟨vs.foldl (fun m v => m.insert v (i :: m.getD v [])) idx.buckets, idx.varless⟩
+
+/-- `denseBuildPruned`'s compiled body: the item's variable list is computed once and shared between
+    the prune test and the bucket insert, instead of once for each (`denseBuildPruned_eq_fast`). -/
+def denseBuildPrunedFast {α : Type} (varsOf : α → List VarId) (maxVars : Nat) (items : List α) :
+    DenseCovIndex :=
+  items.zipIdx.foldr (fun ai idx =>
+    let vs := varsOf ai.1
+    if (HashedDedup.hashedEraseDups (hash ·) vs).length ≤ maxVars then
+      denseBuildStepWith vs ai.2 idx
+    else idx) ⟨∅, []⟩
+
 /-- Register the `k` fresh bit variables `freshBase ++ "_0", …, freshBase ++ "_(k-1)"` into `reg`,
     in order. -/
 def denseRegisterBits (reg : VarRegistry) (freshBase : String) (k : Nat) :
@@ -377,6 +393,47 @@ def denseBuildUseIdx (d : DenseConstraintSystem p) : DenseReencodeUseIdx p :=
     occurrence, and the gate below rewrites every position it visits). -/
 def denseUsePositions (idx : DenseCovIndex) (xs : List VarId) : List Nat :=
   ((denseCandidates idx xs).foldl (·.insert ·) (∅ : Std.HashSet Nat)).toList
+
+/-! ## The sparse accept path
+
+`denseReencodeOut` rewrites *every* item, and it cannot simply skip the ones sharing no variable with
+the group: `varsInF xs` holds vacuously on a variable-free node, so `denseGroupRewrite` replaces such
+a node by its constant even in an item the group does not touch. Adding that second condition to the
+skip test makes the rewrite provably an identity on everything skipped
+(`denseGroupRewrite_id_of_disjoint`), so the sparse form needs no side condition at all — it trades
+one allocating traversal per item for one read-only one. -/
+
+/-- Does this interaction mention a variable of `xs` (multiplicity or payload)? -/
+def denseBiAnyVarIn (xs : List VarId) (bi : BusInteraction (DenseExpr p)) : Bool :=
+  bi.multiplicity.anyVarIn xs || bi.payload.any (fun e => e.anyVarIn xs)
+
+/-- Can the group rewrite change this constraint at all? -/
+def denseReencodeTouchesCs (xs : List VarId) (c : DenseExpr p) : Bool :=
+  c.anyVarIn xs || c.hasConstFoldableNode
+
+/-- Can the group rewrite change this interaction at all? -/
+def denseReencodeTouchesBi (xs : List VarId) (bi : BusInteraction (DenseExpr p)) : Bool :=
+  denseBiAnyVarIn xs bi || bi.multiplicity.hasConstFoldableNode ||
+    bi.payload.any (fun e => e.hasConstFoldableNode)
+
+/-- `denseReencodeOut`'s compiled body: items the rewrite provably cannot change are passed through
+    without being rebuilt (`denseReencodeOut_eq_sparse`). -/
+def denseReencodeOutSparse (d : DenseConstraintSystem p) (xs bits : List VarId)
+    (hm : Std.HashMap VarId (DenseExpr p)) : DenseConstraintSystem p :=
+  let σ := denseGroupSubst xs hm
+  let patts := denseAssignments (denseBitBox bits)
+  { algebraicConstraints :=
+      d.algebraicConstraints.filterMap (fun c =>
+        if denseReencodeTouchesCs xs c then
+          (if !denseCoveredBy xs c then some (denseGroupRewrite xs bits σ patts c) else none)
+        else some c)
+        ++ bits.map denseBoolConstraint,
+    busInteractions := d.busInteractions.map (fun bi =>
+      if denseReencodeTouchesBi xs bi then
+        { bi with
+          multiplicity := denseGroupRewrite xs bits σ patts bi.multiplicity,
+          payload := bi.payload.map (denseGroupRewrite xs bits σ patts) }
+      else bi) }
 
 /-- Degree pre-gate (untrusted): rewrite only the items sharing a variable with the group and fire
     when a rewritten item already exceeds the bound. Only the indexed candidate positions are
