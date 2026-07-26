@@ -69,3 +69,16 @@ workflow (`gh workflow run "Runtime Bench" -f pr=<N>`) benches the full set from
 Benchmarks/runtime_bench.py            # all openvm-eth cases, serial (stable timings)
 Benchmarks/runtime_bench.py --n 20 --repeat 3   # top 20, best-of-3 per case
 ```
+
+To bench how runtime *scales* with circuit size — which the above cannot show, since a pass can get
+uniformly faster while staying quadratic — use `scaling_bench.py`. It replicates one APC `k` times
+with disjoint variables, so a linear optimizer would take exactly `k ×` the single-copy time and the
+log-log slope of time-vs-`k` is each pass's exponent (`1.00` = linear). The copies share nothing, so
+the cleanup iteration count stays flat across rungs, which is what isolates per-pass cost from
+"bigger circuits need more fixpoint rounds". The on-demand `Scaling Bench` workflow
+(`gh workflow run "Scaling Bench" -f pr=<N>`) compares a PR head against `main` on one runner:
+
+```bash
+Benchmarks/scaling_bench.py                    # default APC, rungs 1,2,3,4,6,8
+Benchmarks/scaling_bench.py --rungs 1,2,4 --repeat 3   # cheaper ladder, best-of-3 per rung
+```

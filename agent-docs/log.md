@@ -4903,3 +4903,70 @@ Cumulative for entries 142–144: sha256_big **523.9 → 377.6 s (−28 %)**.
 
 **Worked locally: yes (byte-identical `opt-export` on openvm-eth apc_044/apc_067, keccak, wasm-eth
 apc_036 and the 168k-var OpenVM sha256 case).**
+
+### 145. Runtime: a scaling instrument, and four exponent fixes it justifies
+
+`runtime_bench.py` measures wall time on fixed inputs, which cannot distinguish "this pass is
+expensive" from "this pass is superlinear" — the optimizer can get uniformly faster while staying
+quadratic, which is exactly what entries 142–144 did (524 → 378 s on sha256_big with no exponent
+changed). So this entry starts with the missing instrument.
+
+**`Benchmarks/scaling_bench.py`** builds a ladder by replication: rung `k` is `k` copies of one real
+APC with disjoint variables (copy `c` renames `<name>@<id>` to `<name>@<id + c·stride>`). Two
+properties make it the right measurement: a linear optimizer takes exactly `k ×` the single-copy
+time, so the log-log slope of time-vs-`k` *is* the exponent with no model to fit; and the copies
+share nothing, so each copy's fixpoint runs as it does alone and the cleanup iteration count stays
+flat across rungs — which is what separates per-pass cost from "bigger circuits need more rounds".
+The count is reported, so a rung that drifts is visibly not comparable. Generation emits only the
+keys `JsonParser` reads and renames variables positionally, mirroring `parseJsonExpr`, so an operator
+can never be misread as a variable. `.github/workflows/scaling_bench.yml` runs it for a PR head
+against a baseline on one runner and posts the exponent table as a sticky comment.
+
+Four fixes, each byte-identical and independently benched:
+
+1. **`DenseExpr.vars` accumulator twin.** `vars` appended its children's lists, so the left subtree
+   was copied again at every enclosing node — quadratic in the depth of a left-associated chain,
+   which is exactly what affine reconstruction produces. It is called per constraint per cycle by
+   nearly every dense pass. `varsAcc` proves `e.varsAcc acc = e.vars ++ acc` and `@[csimp]
+   vars_eq_fast` installs it everywhere; the list order is identical, so output is byte-identical
+   *by the theorem*. openvm-eth apc_044/067 −3%, keccak −3%, wasm-eth apc_036 neutral.
+2. **`busUnify` keeps the split candidate's prefix reversed.** `denseEmitCand` materialized
+   `w.revPre.reverse` per emitted candidate — a fresh copy of the whole prefix of the bus's
+   interaction list. Nothing reads it at runtime (`denseCollectForBus` binds it as `_pre`,
+   `denseCheckPair` takes only `S mid R`); it exists so the positional split can be *stated*, and
+   proofs are erased. `SplitEqC` now says `cand.1.reverse ++ …` and the two consumers instantiate at
+   `pre.reverse`. `dense_split_of_positions` already produced the reversed form, so
+   `denseEmitCand_split` was unchanged.
+3. **`subsumedRange`/`subsumedCheck` serve bound queries from a per-variable index.**
+   `denseSubsumedDropKeep` walked the whole justification base per recognised check —
+   O(checks × interactions), exponent 2.24 on the ladder, the cleanest quadratic left in the tree. A
+   bound can only come from an interaction mentioning the variable (`denseInteractionBound` needs
+   `denseVarSlot` to find a slot holding literally `.var x`), so `denseVarBucket` returns the
+   identical first match. `@[csimp]` twin, so `denseSubsumedDropF_correct`'s whole-list hypothesis is
+   untouched. `denseVarBucket_lookup_eq` (entry 140's exactness lemma) loses its `private`.
+4. **`bytePack` resumes the pack scan instead of restarting at the head.** `denseBytePackStep` called
+   `denseFindGo` with an empty prefix every drain iteration, re-examining every earlier interaction
+   with `denseSvCheck?`: Θ(packs × interactions). `DenseNativeStep.drain`'s state parameter is
+   generic and was sitting at `Unit`. Skipping is output-preserving because `pre` holds no *packable*
+   single-value check (each was walked past either as unrecognised or as partnerless, and a pack only
+   removes single-value checks, so a partnerless check stays partnerless) and the emitted `.pair`
+   check is not one either. Both step lemmas generalise from the `[] / d.busInteractions` instance to
+   an arbitrary scanned prefix plus `revPre.reverse ++ bis = d.busInteractions`; each used that
+   hypothesis only to derive the split. **keccak: bytePack 596 → 188 ms (−68%), bytePackLate
+   70 → 10 ms (−86%).**
+
+**Measured dead end — `busPairCancel` shield truncation.** The obvious reading of R8 is to start
+`denseShieldScanSeg` at the last live provable same-address receive `q` instead of at 0, justified by
+two short list lemmas (a provable receive in a suffix makes the head irrelevant). The lemmas are
+real, but the win is not: simulating `denseFindCancelGoIdx`'s scan order against the real exports
+gives Σ(i−q)/Σi = **1.00** on the execution bridge with real positions and 1.00–1.01× under
+realistic memory-key models. The pass drops the send *and* its matching receive, so the last
+surviving same-key receive collapses back to the *first* access of that key and the window stays
+≈ `i`. The "gap = 1 at p100" statistic that suggested otherwise measures the *between*-region
+`j − i − 1` (a send to its own partner), not the distance back to the previous *surviving* receive.
+Worse, the hint lookup reintroduces Θ(N): with `addressFields = []` every bridge message hashes to
+one `denseAddrHash` bucket and "last entry `< i`" on a `List` is O(bucket). See R8 for the design
+that does work (a monotone per-key watermark).
+
+**Worked: yes** — `lake build` warning-free, `Scripts/check-proof-integrity.sh` green, and
+byte-identical `opt-export` on openvm-eth apc_044, keccak and wasm-eth apc_036 for every commit.

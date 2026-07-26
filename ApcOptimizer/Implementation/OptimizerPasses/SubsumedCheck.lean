@@ -67,4 +67,33 @@ def denseSubsumedDropF (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) : DenseConstraintSystem p :=
   d.filterBus (denseSubsumedDropKeep bs facts f (denseSubsumedDropBase f d))
 
+/-! ## Indexed bound lookups (runtime twin)
+
+`denseSubsumedDropKeep` walks the whole `base` list for every recognised check, so the pass is
+`O(checks × interactions)`. A bound can only come from an interaction that mentions the variable
+(`denseInteractionBound` needs a payload slot holding literally `.var x`), so serving the query from
+a per-variable index returns the identical first match — `denseSubsumedDropF_eq_fast`
+(`Proofs/SubsumedCheck.lean`) proves it and installs the twin via `@[csimp]`. -/
+
+/-- `denseSubsumedDropKeep` with the justification base served from a per-variable index. -/
+def denseSubsumedDropKeepIdx (bs : BusSemantics p) (facts : BusFacts p bs)
+    (f : BusInteraction (DenseExpr p) → Option (VarId × Nat))
+    (witsOf : VarId → List (BusInteraction (DenseExpr p)))
+    (bi : BusInteraction (DenseExpr p)) : Bool :=
+  match f bi with
+  | some (x, B) =>
+    match denseFindVarBound bs facts (witsOf x) x with
+    | some b' => !decide (b' ≤ B)
+    | none => true
+  | none => true
+
+/-- `denseSubsumedDropF` with one index build per invocation. The index is passed as a value with
+    the lookup applied at the use site; a partial application stored elsewhere would rebuild it per
+    query (`agent-docs/log.md` entries 106, 143). -/
+def denseSubsumedDropFFast (bs : BusSemantics p) (facts : BusFacts p bs)
+    (f : BusInteraction (DenseExpr p) → Option (VarId × Nat))
+    (d : DenseConstraintSystem p) : DenseConstraintSystem p :=
+  let witsIdx := denseVarBucket denseBIVars (denseSubsumedDropBase f d)
+  d.filterBus (denseSubsumedDropKeepIdx bs facts f (denseVarBucketLookup witsIdx))
+
 end ApcOptimizer.Dense

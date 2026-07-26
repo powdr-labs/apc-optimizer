@@ -88,6 +88,36 @@ def DenseExpr.vars : DenseExpr p → List VarId
   | .add a b => a.vars ++ b.vars
   | .mul a b => a.vars ++ b.vars
 
+/-! ### `vars` with an accumulator (runtime `@[csimp]` replacement)
+
+`DenseExpr.vars` appends the child lists, so the left subtree's result is copied again at every
+enclosing node: quadratic in the depth of a left-associated chain, which is exactly the shape affine
+reconstruction produces (`((a + b) + c) + d`). `varsAcc` traverses the right subtree into the
+accumulator first, so it allocates only the final list, and `vars_eq_fast` installs it for every
+call site. Every proof keeps using `vars`; the list order is identical. -/
+
+/-- `vars` into an accumulator: `e.varsAcc acc = e.vars ++ acc` (`varsAcc_eq`). -/
+def DenseExpr.varsAcc : DenseExpr p → List VarId → List VarId
+  | .const _, acc => acc
+  | .var i, acc => i :: acc
+  | .add a b, acc => a.varsAcc (b.varsAcc acc)
+  | .mul a b, acc => a.varsAcc (b.varsAcc acc)
+
+def DenseExpr.varsFast (e : DenseExpr p) : List VarId := e.varsAcc []
+
+theorem DenseExpr.varsAcc_eq (e : DenseExpr p) : ∀ acc, e.varsAcc acc = e.vars ++ acc := by
+  induction e with
+  | const n => intro acc; rfl
+  | var i => intro acc; rfl
+  | add a b iha ihb =>
+      intro acc; rw [DenseExpr.varsAcc, ihb, iha, DenseExpr.vars, List.append_assoc]
+  | mul a b iha ihb =>
+      intro acc; rw [DenseExpr.varsAcc, ihb, iha, DenseExpr.vars, List.append_assoc]
+
+@[csimp] theorem DenseExpr.vars_eq_fast : @DenseExpr.vars = @DenseExpr.varsFast := by
+  funext q e
+  rw [DenseExpr.varsFast, DenseExpr.varsAcc_eq, List.append_nil]
+
 /-- All `VarId`s of a dense bus interaction (multiplicity then payload). -/
 def denseBIVars (bi : BusInteraction (DenseExpr p)) : List VarId :=
   bi.multiplicity.vars ++ bi.payload.flatMap DenseExpr.vars

@@ -146,4 +146,89 @@ def denseSubsumedCheckDropPass : DenseVerifiedPassW p :=
 def denseSubsumedRangeDropPass : DenseVerifiedPassW p :=
   denseSubsumedDropPassOf denseSubsumedRangeCheck? denseSubsumedRangeCheck?_sound
 
+/-! ## The indexed bound lookup equals the scan (`@[csimp]` runtime replacement)
+
+`denseInteractionBound` needs a payload slot holding literally `.var x`, so an interaction that does
+not mention `x` can never yield a bound. Restricting the scan to the interactions that mention `x`
+therefore returns the identical first match, and `denseVarBucket` is exactly that restriction
+(`denseVarBucket_lookup_eq`). -/
+
+/-- `denseIsVarOf` only accepts the variable leaf itself. -/
+private theorem denseIsVarOf_mem {x : VarId} {e : DenseExpr p} (h : denseIsVarOf x e = true) :
+    x ∈ e.vars := by
+  cases e with
+  | var j =>
+      have : j = x := of_decide_eq_true (by simpa [denseIsVarOf] using h)
+      subst this; simp [DenseExpr.vars]
+  | const _ => exact absurd h (by simp [denseIsVarOf])
+  | add _ _ => exact absurd h (by simp [denseIsVarOf])
+  | mul _ _ => exact absurd h (by simp [denseIsVarOf])
+
+/-- A payload slot holding `.var x` puts `x` among the payload's variables. -/
+private theorem denseVarSlot_mem {x : VarId} :
+    ∀ (pl : List (DenseExpr p)) {s : Nat}, denseVarSlot x pl = some s →
+      x ∈ pl.flatMap DenseExpr.vars := by
+  intro pl
+  induction pl with
+  | nil => intro s h; exact absurd h (by simp [denseVarSlot])
+  | cons e rest ih =>
+    intro s h
+    rw [denseVarSlot] at h
+    simp only [List.flatMap_cons, List.mem_append]
+    by_cases he : denseIsVarOf x e
+    · exact Or.inl (denseIsVarOf_mem he)
+    · rw [if_neg (by simpa using he)] at h
+      obtain ⟨s', hs', -⟩ := Option.map_eq_some_iff.1 h
+      exact Or.inr (ih hs')
+
+/-- No bound from an interaction that does not mention the variable. -/
+private theorem denseInteractionBound_of_not_mem (bs : BusSemantics p) (facts : BusFacts p bs)
+    (bi : BusInteraction (DenseExpr p)) (x : VarId) (h : x ∉ denseBIVars bi) :
+    denseInteractionBound bs facts bi x = none := by
+  unfold denseInteractionBound
+  split
+  · rfl
+  · split
+    · rfl
+    · split
+      · rfl
+      · rename_i slot hs
+        exact absurd (by
+          simp only [denseBIVars, List.mem_append]
+          exact Or.inr (denseVarSlot_mem bi.payload hs)) h
+
+/-- Restricting the scan to the interactions mentioning `x` leaves the first bound unchanged. -/
+private theorem denseFindVarBound_filter (bs : BusSemantics p) (facts : BusFacts p bs)
+    (x : VarId) :
+    ∀ (l : List (BusInteraction (DenseExpr p))),
+      denseFindVarBound bs facts (l.filter (fun bi => decide (x ∈ denseBIVars bi))) x
+        = denseFindVarBound bs facts l x := by
+  intro l
+  induction l with
+  | nil => rfl
+  | cons bi rest ih =>
+    by_cases hmem : x ∈ denseBIVars bi
+    · rw [List.filter_cons_of_pos (by simpa using hmem), denseFindVarBound, denseFindVarBound]
+      cases denseInteractionBound bs facts bi x with
+      | some b => rfl
+      | none => exact ih
+    · rw [List.filter_cons_of_neg (by simpa using hmem), ih, denseFindVarBound,
+        denseInteractionBound_of_not_mem bs facts bi x hmem]
+
+@[csimp] theorem denseSubsumedDropF_eq_fast :
+    @denseSubsumedDropF = @denseSubsumedDropFFast := by
+  funext q bs facts f d
+  show d.filterBus (denseSubsumedDropKeep bs facts f (denseSubsumedDropBase f d))
+      = d.filterBus (denseSubsumedDropKeepIdx bs facts f
+          (denseVarBucketLookup (denseVarBucket denseBIVars (denseSubsumedDropBase f d))))
+  congr 1
+  funext bi
+  unfold denseSubsumedDropKeep denseSubsumedDropKeepIdx
+  cases hfb : f bi with
+  | none => rfl
+  | some xB =>
+      obtain ⟨x, B⟩ := xB
+      dsimp only
+      rw [denseVarBucket_lookup_eq denseBIVars x, denseFindVarBound_filter bs facts x]
+
 end ApcOptimizer.Dense

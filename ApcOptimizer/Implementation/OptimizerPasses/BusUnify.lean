@@ -91,7 +91,10 @@ def denseCheckPair (shape : MemoryBusShape) (T : DenseTwoRootMap p) (nw : DenseN
 
 /-! ## The pass -/
 
-/-- One `(pre, S, mid, R, post)` split candidate. -/
+/-- One `(revPre, S, mid, R, post)` split candidate. The prefix is stored **reversed** — the sweep
+    already has it that way, and only the proofs read it (as `revPre.reverse`, see `SplitEqC` in
+    `Proofs/BusUnify.lean`), so reversing it here would copy the whole prefix per candidate for
+    nothing. -/
 abbrev DenseSplitCand (p : ℕ) :=
   List (BusInteraction (DenseExpr p)) × BusInteraction (DenseExpr p)
     × List (BusInteraction (DenseExpr p)) × BusInteraction (DenseExpr p)
@@ -155,11 +158,12 @@ structure DenseOpenRec (p : ℕ) where
   i : Nat
 
 /-- Assemble the split candidate for a consumed window, tagged with its send position; `mid` is
-    recovered positionally from the send's stored suffix (`take (j−i−1)`). -/
+    recovered positionally from the send's stored suffix (`take (j−i−1)`). The prefix is passed
+    through still reversed (see `DenseSplitCand`). -/
 def denseEmitCand (w : DenseOpenRec p) (j : Nat) (R : BusInteraction (DenseExpr p))
     (post : List (BusInteraction (DenseExpr p))) : Option (Nat × DenseSplitCand p) :=
   if w.i < j then
-    some (w.i, (w.revPre.reverse, w.S, w.restAfter.take (j - w.i - 1), R, post))
+    some (w.i, (w.revPre, w.S, w.restAfter.take (j - w.i - 1), R, post))
   else none
 
 /-- The sweep: one pass over the interaction list. `acc` collects `(sendPosition, candidate)` pairs,

@@ -168,7 +168,7 @@ theorem denseCheckPair_sound (d : DenseConstraintSystem p) (bs : BusSemantics p)
 threads them across `insert`/`erase`/`getElem?`/`toList`. -/
 
 private abbrev SplitEqC (L : List (BusInteraction (DenseExpr p))) (cand : DenseSplitCand p) : Prop :=
-  L = cand.1 ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2
+  L = cand.1.reverse ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2
 
 private def OpenWF (L : List (BusInteraction (DenseExpr p))) (w : DenseOpenRec p) : Prop :=
   w.revPre.length = w.i ∧ L = w.revPre.reverse ++ w.S :: w.restAfter
@@ -368,7 +368,7 @@ theorem denseSweepGo_split {ops : DenseZModOps p} {shape : MemoryBusShape}
 theorem denseCandidateSplitsSweep_split {shape : MemoryBusShape} {T : Thunk (DenseTwoRootMap p)}
     {nw : Thunk (DenseNonzeroWits p)} (L : List (BusInteraction (DenseExpr p)))
     (cand : DenseSplitCand p) (hcand : cand ∈ denseCandidateSplitsSweep shape T nw L) :
-    L = cand.1 ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2 := by
+    L = cand.1.reverse ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2 := by
   unfold denseCandidateSplitsSweep at hcand
   rw [List.mem_map] at hcand
   obtain ⟨ic, hic, rfl⟩ := hcand
@@ -399,7 +399,7 @@ theorem denseCollectForBus_vars (d : DenseConstraintSystem p)
     (busId : Nat) :
     ∀ (cands : List (DenseSplitCand p)),
     (∀ cand ∈ cands, d.busInteractions.filter (fun bi => bi.busId = busId)
-        = cand.1 ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2) →
+        = cand.1.reverse ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2) →
     ∀ c ∈ denseCollectForBus shape T nw cands, ∀ z ∈ c.vars, z ∈ d.occ := by
   intro cands
   induction cands with
@@ -408,9 +408,9 @@ theorem denseCollectForBus_vars (d : DenseConstraintSystem p)
     intro hsplitc c hc z hz
     obtain ⟨pre, S, mid, R, post⟩ := cand
     have hsplit : d.busInteractions.filter (fun bi => bi.busId = busId)
-        = pre ++ S :: mid ++ R :: post := hsplitc (pre, S, mid, R, post) (List.mem_cons_self ..)
+        = pre.reverse ++ S :: mid ++ R :: post := hsplitc (pre, S, mid, R, post) (List.mem_cons_self ..)
     have hrest : ∀ cand ∈ rest, d.busInteractions.filter (fun bi => bi.busId = busId)
-        = cand.1 ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2 :=
+        = cand.1.reverse ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2 :=
       fun cand h => hsplitc cand (List.mem_cons_of_mem _ h)
     have hSmem : S ∈ d.busInteractions := by
       have h : S ∈ d.busInteractions.filter (fun bi => bi.busId = busId) := by
@@ -465,7 +465,7 @@ theorem denseCollectForBus_sound (d : DenseConstraintSystem p) (bs : BusSemantic
     (denv : VarId → ZMod p) (hadm : d.admissible bs denv) (hsat : d.satisfies bs denv) :
     ∀ (cands : List (DenseSplitCand p)),
     (∀ cand ∈ cands, d.busInteractions.filter (fun bi => bi.busId = busId)
-        = cand.1 ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2) →
+        = cand.1.reverse ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2) →
     ∀ c ∈ denseCollectForBus shape (Thunk.pure T)
         (Thunk.pure (DenseNonzeroWits.build d.algebraicConstraints)) cands,
       c.eval denv = 0 := by
@@ -476,16 +476,16 @@ theorem denseCollectForBus_sound (d : DenseConstraintSystem p) (bs : BusSemantic
     intro hsplitc c hc
     obtain ⟨pre, S, mid, R, post⟩ := cand
     have hsplit : d.busInteractions.filter (fun bi => bi.busId = busId)
-        = pre ++ S :: mid ++ R :: post := hsplitc (pre, S, mid, R, post) (List.mem_cons_self ..)
+        = pre.reverse ++ S :: mid ++ R :: post := hsplitc (pre, S, mid, R, post) (List.mem_cons_self ..)
     have hrest : ∀ cand ∈ rest, d.busInteractions.filter (fun bi => bi.busId = busId)
-        = cand.1 ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2 :=
+        = cand.1.reverse ++ cand.2.1 :: cand.2.2.1 ++ cand.2.2.2.1 :: cand.2.2.2.2 :=
       fun cand h => hsplitc cand (List.mem_cons_of_mem _ h)
     rw [denseCollectForBus] at hc
     split_ifs at hc with hchk
     · rw [List.mem_append] at hc
       rcases hc with hc | hc
-      · exact denseCheckPair_sound d bs facts hp1 reg hcov T hT busId shape hshape pre S mid R post
-          hsplit hchk denv hadm hsat c hc
+      · exact denseCheckPair_sound d bs facts hp1 reg hcov T hT busId shape hshape pre.reverse S mid
+          R post hsplit hchk denv hadm hsat c hc
       · exact ih hrest c hc
     · exact ih hrest c hc
 

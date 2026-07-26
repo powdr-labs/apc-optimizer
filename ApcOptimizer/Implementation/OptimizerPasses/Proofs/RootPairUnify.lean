@@ -802,7 +802,7 @@ private theorem denseVarBucketAdd_getD {α : Type} (a : α) (x : VarId) :
             · exact hxw rfl
             · exact hxs hmem)]
 
-private theorem denseVarBucket_lookup_eq {α : Type} (varsOf : α → List VarId) (x : VarId) :
+theorem denseVarBucket_lookup_eq {α : Type} (varsOf : α → List VarId) (x : VarId) :
     ∀ (items : List α),
       denseVarBucketLookup (denseVarBucket varsOf items) x
         = items.filter (fun a => decide (x ∈ varsOf a)) := by

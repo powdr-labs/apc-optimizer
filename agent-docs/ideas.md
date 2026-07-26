@@ -120,6 +120,50 @@ touching these files anyway):
 
 ## Runtime
 
+**Measure the exponent, not just the time.** `Benchmarks/scaling_bench.py` (entry 145) runs a ladder
+of `k` disjoint replicas of one APC and reports each pass's log-log slope; the `Scaling Bench`
+workflow does it for a PR head against a baseline on one runner. Use it before and after any change
+claimed to help at SHA scale — entries 142–144 cut 524 → 378 s without moving a single exponent, and
+`runtime_bench.py` cannot tell those two kinds of win apart. The ladder holds the cleanup iteration
+count flat (it is reported; a drifting rung is not comparable), which is what separates per-pass cost
+from "bigger circuits need more rounds".
+
+### The exponent is owned by `reencode` and `domainFold` (measured, entry 145)
+
+First ladder run, `openvm-eth/apc_005`, rungs 1–4 (4652 → 18608 constraints), this container, main at
+`ce9a820`. Iterations flat at 5–6, so every number below is per-pass cost, not extra rounds.
+**Total exponent 1.95.**
+
+| pass | k=1 | k=4 | growth for 4× size | exponent |
+|---|---|---|---|---|
+| `reencode` | 2746 ms | 78.3 s | **28.5×** | **2.36** |
+| `domainFold` | 1659 ms | 28.0 s | **16.9×** | **2.07** |
+| `busPairCancel` | 156 ms | 1608 ms | 10.3× | 1.68 |
+| `flagUnify` | 107 ms | 899 ms | 8.4× | 1.54 |
+| `flagFold` | 439 ms | 3213 ms | 7.3× | 1.44 |
+| `gauss` | 565 ms | 2650 ms | 4.7× | 1.13 |
+| everything else | — | — | 4.2–5.5× | 1.05–1.2 |
+
+`reencode` + `domainFold` are **83 % of the k=4 run**. Everything else is at or near the
+allocation floor. So: *stop tuning the small passes; the exponent lives in the candidate-group
+family.*
+
+**Why they are quadratic here, specifically.** Under disjoint replication a variable's index bucket
+does *not* grow — the copies share nothing — so every per-variable lookup (`denseCoveredIdx`,
+`denseUsePositions`, `denseDegPreReject` since entry 142) is constant per target and contributes
+only linearly. What grows is the **per-accept whole-system work**, and the number of accepts scales
+with `k`: `denseReencodeOut` rewrites the entire system, and then the accept rebuilds
+`denseBuildPruned` + `arrCs.toArray` + `HashSet.ofList ro.occ` + `denseBuildUseIdx`, each O(system).
+O(accepts) × O(system) = O(k²). This is exactly the shape entry 109 removed from `domainFold`
+(order-preserving in-place rewrite, `FoldIdx.refresh` with no rebuild, sparse `foldOutIdx`), and R3
+already names `reencode` as the next candidate — it needs the position remap or a
+pruned-completeness argument because its rewrite *adds* bit columns and drops covered constraints.
+That is now the highest-value runtime work in the tree, ahead of everything else in R1–R12.
+
+`domainFold` still measuring 2.07 after #206 says its own per-accept path retains an O(system) term —
+re-check `denseFoldOutArrV`'s `Array.modify` chain for a copy when the array is still shared, and
+`DenseFoldIdx.mk'`/`refresh`.
+
 Rewritten 2026-07-18 from a fresh profiling session (per-pass `profile`, per-cycle timing, gdb
 stack sampling, and a size-scaling sweep — all on this container, serial). **Runtime is
 end-to-end quadratic in circuit size** (openvm-eth sweep: input 2.3k → 8.8k items costs
@@ -213,6 +257,19 @@ these need no new proof.
    - ~~`flagFold` triple `eraseDups` in `btPre`~~ **done (entry 104)**. `singleVarCs`/`btCert`
      still recompute per-constraint `eraseDups`, but only on gate-passing constraints (proofs
      unfold them — rework only if they show up in profiles).
+   - ~~`bytePack`/`bytePackLate` restart their pack scan at the list head per packed pair~~ **done
+     (entry 145)**: `DenseNativeStep.drain`'s generic state carries a resume position (it was sitting
+     at `Unit`). keccak bytePack 596 → 188 ms, bytePackLate 70 → 10 ms. **`tupleRange` has the same
+     shape and is worse** — `denseDrainTuplePacks` re-scans from the head *for every candidate tuple
+     bus* on every drain iteration, Θ(drops × buses × system) — but its drain is hand-rolled
+     (`DensePassCorrect.trans`), so the cursor has to be threaded through that loop instead. 5.7 s on
+     sha256_big.
+   - ~~`subsumedRange`/`subsumedCheck` scan the whole justification base per recognised check~~
+     **done (entry 145)**: exponent 2.24 → per-variable `denseVarBucket`, `@[csimp]` twin, no proof
+     shape change. A bound can only come from an interaction mentioning the variable.
+   - ~~`busUnify` copies the whole prefix per emitted candidate (`denseEmitCand`'s
+     `revPre.reverse`)~~ **done (entry 145)**: the field is never read at runtime, so the candidate
+     stores the reversed prefix and `SplitEqC` states `cand.1.reverse ++ …`.
 
 **R2. domainBatch setup and enumeration**  ·  **mostly done (entries 104, 128–131)**. Entry 129
 skips the Cartesian scan when every active filter is already discharged by
@@ -264,6 +321,11 @@ index gate**  ·  mostly **done (entries 105/107/109)**:
      fails) needs no new proof — only the same survivor *list order* to stay byte-identical.
 
 **R4. Constant-factor levers that touch every pass**  ·  *medium value, cheap*:
+   - ~~`DenseExpr.vars` is `++`-built~~ **done (entry 145)**: the left subtree's list was rebuilt at
+     every enclosing node, quadratic on the left-associated chains affine reconstruction produces.
+     `varsAcc` + `@[csimp] vars_eq_fast`, byte-identical by the theorem, −3% on openvm-eth and keccak.
+     Worth checking the other `++`-built traversals (`denseBIVars`, `DenseExpr.uniqueVars`) for the
+     same shape.
    - **Variable interning-lite, `Implementation/`-only**: parse-time interning is **done (entry
      106)**. The `powdrId?`-first `Hashable Variable` swap was **tried and reverted (entry
      116)**: hash values leak into `Std.HashMap`/`HashSet` iteration orders, and *some* consumer
@@ -346,10 +408,53 @@ lemmas) — is **done (#210)**: sha256_big busPairCancel 107 → 89.5 s, and ent
 justification's domain scans out (89.5 → 50 s). The remaining 50 s is the O(live²) certificate work
 itself — `denseShieldScanSeg` is ~4 % of whole-run CPU: `shieldOk` still evaluates
 `densePreRefuted` over the whole live prefix per candidate send, and `midRefuted` over the
-between-region. Design (b) stands: the busUnify entry-111 treatment — `shieldOk` left-folds
-to a single per-address-key `pending` bit, maintainable across one sweep — but the pass's
-tombstone-and-restart structure (drops invalidate prefix state: removing a consumed receive
-un-shields earlier messages) forces a recompute-on-drop scheme, bounded by #drops × O(B).
+between-region. **Design (b) is now specified, and one tempting alternative is a measured dead end
+(entry 145).**
+
+*Not this:* starting the scan at the last live provable same-address receive `q` instead of at 0. The
+supporting algebra is real — `ok(l)` = "every non-`densePreRefuted` message has a `denseProvRecv`
+strictly to its right", so a provable receive in a suffix makes the head irrelevant — but the win is
+not. Simulating `denseFindCancelGoIdx`'s scan order (resume-at-`dropPos`, both positions tombstoned)
+against the real exports gives Σ(i−q)/Σi = **1.00** on the execution bridge with real positions and
+1.00–1.01× under realistic memory-key models: the pass drops the send *and* its matching receive, so
+the last surviving same-key receive collapses back to the *first* access of that key. (The "gap = 1
+at p100" figure measures the *between*-region `j − i − 1`, a send to its own partner — not the
+distance back to the previous *surviving* receive.) And the hint lookup reintroduces Θ(N): with
+`addressFields = []` every bridge message hashes to one `denseAddrHash` bucket, and "last entry
+`< i`" on a `List` is O(bucket).
+
+*This:* a **monotone per-key watermark**, which the drop protocol does not invalidate. The scan
+frontier only moves forward (a drop tombstones `iP = i` and `jP > i`, and `denseFindCancel` only skips
+forward), and off-bus tombstones are *fold identities* of `denseShieldScan` (`m.busId ≠ busId` ⇒
+`densePreRefuted = true`, `denseProvRecv = false`), so a bus-b watermark survives drops on other
+buses. Thread a per-key map `K → (w, S₀)` carrying, as a `Subtype` invariant,
+`denseShieldOk … S₀ (denseLiveSeg arr alive 0 w) = true`; at a candidate compare address slots in
+O(|addressFields|) and scan only `[w, i)`. Lemmas needed: `hasRecv` distributes over `++`;
+`ok(l₁) = true → ok(l₁ ++ l₂) = ok(l₂)`; the off-bus fold identity; address-slot congruence for the
+five certificates (each reads only `shape.addressFields`, so this is unfolding plus `List.any/all`
+congruence); and `denseLiveSeg_congr` for the `alive → aliveNew` transport. Clear the map on bus
+change and on `emitted`. Modelled at 62× (mixed keys) to 186× (32 keys). A wrong entry costs time,
+never soundness — the O(|addressFields|) slot check is the guard, falling back to `w = 0`.
+
+Two independent wins found alongside.
+
+**(i) `denseAddrNonzeroNeq` on the execution bridge — likely the largest single constant factor left
+in this pass.** `addressFields = []` there (`OpenVmSemantics.lean`), and `[].sublists = [[]]`, so the
+`any` runs exactly once with `T = []`; `denseDiffSumOver S m [] = some ⟨0, []⟩`, so the body reduces
+to `nw.wits.any (fun g => denseIsZeroLin (0 − g) || denseIsZeroLin (0 + g))` — **independent of both
+`S` and `m`**, i.e. a constant for the whole invocation. But it is re-evaluated for *every* prefix
+message of *every* candidate, and each witness costs two `DenseLinExpr` `add`/`scale` allocations.
+`nw.wits` is `constraints.flatMap denseReciprocalWits?`, so on sha256_big (146k constraints) that
+inner scan can be thousands of allocations per message. The bridge is 8006 of sha256's 71k
+interactions and `addressFields = []` makes every message same-address, so this is on the hot path
+for the whole bridge sweep. Fix: carry the `T = []` value once per invocation (a `Bool` alongside the
+witness list) rather than recomputing it. Note it cannot simply be replaced by `false`: a
+syntactically-zero witness would make it `true`, which `DenseNonzeroWits.Sound` only rules out for
+satisfiable systems — so hoist the computation, do not assume its result.
+
+**(ii)** The off-bus fold identity also licenses scanning only the bus's own positions, modelled at
+3.45× on the memory bus — but that one is *trusted*, so it needs a completeness proof for the per-bus
+position index.
 
 **R9a (done, entry 144).** `DenseTwoRootMap.addVars` re-linearized a product's factors per
 variable; `addVarsFast` + `@[csimp] addVars_eq_fast` hoists them. The `@[csimp]` twin is the
@@ -403,6 +508,10 @@ worth a prototype on one index first.
 - **Eager per-sweep variable→bound witness maps in busPairCancel**: ~30× the work of the
   early-exit query-time scan on eth (entry 90). Query-time scans + per-variable *position*
   indexes are the pattern.
+- **Truncating `busPairCancel`'s shield scan at the last same-address receive** (entry 145): measured
+  Σ(i−q)/Σi = 1.00 on the execution bridge with real positions, 1.00–1.01× on modelled memory keys —
+  the pass drops the matching receive, so `q` collapses to each key's first access. The hint lookup
+  also reintroduces Θ(N) on a one-bucket `denseAddrHash`. See R8 for the watermark that does work.
 - **Feeding whole regions into per-query justification arms**: 63 s/case for −3 interactions
   (entry 102). Use a position index or nothing.
 - CI notes (updated 2026-07-24): the effectiveness-matrix runtime row swung **+51 % → +15 % on
