@@ -127,6 +127,30 @@ end-to-end quadratic in circuit size** (openvm-eth sweep: input 2.3k → 8.8k it
 keccak (28.6k constraints / 13.3k interactions / 27.5k vars) takes **252 s**; openvm SHA is ~8×
 keccak, so anything superlinear is fatal there.
 
+### The target, and why it is reachable (vs powdr's Rust optimizer, 2026-07-26)
+
+powdr's timing comparison (`apc-timing/apc_optimizer_timing.json` on its
+`apc-optimizer-timing-comparison` branch: 20 115 APCs, both optimizers on one machine) puts median
+µs **per input variable** at 1248 → 679 for Rust as circuits grow from <500 to 64k–300k variables,
+against 923 → 4083 for this optimizer: **Rust is flat, we grow 4.4×**. Below ~8k variables we are
+1.3–2.6× *faster* than Rust, and summed over all 20 115 APCs we are still 32 % faster; the whole
+problem is the large tail, where one call costs minutes. At ~170k variables (this repo's `sha256`
+case) Rust is ~6× faster.
+
+The structural reason, from reading
+`powdr_autoprecompiles::memory_optimizer::redundant_memory_interactions_indices`: it is a **single
+left-to-right sweep** carrying a `HashMap<Address, MemoryContent>` of live sends, and one sweep's
+drops are applied in one batch — nothing is re-verified against the region between a send and its
+receive, and `IndexedConstraintSystem` makes per-variable lookups O(1) by construction. We *have*
+that sweep (`denseSweepGo` mirrors it), but then re-verify every candidate it proposes, because that
+is the form a machine-checked certificate takes. So the gap is not a port defect: **Θ(system) work
+per candidate, with Θ(N) candidates.** Closing it means proving the sweep's invariant *implies* the
+per-pair conditions instead of re-deriving each pair from the raw list (R8/R10) — or, where the gate
+is untrusted, just indexing it, which needs no proof at all beyond keeping the index complete across
+accepts. The disjoint-replica ladder (`Benchmarks/scaling_bench.py`) is the instrument that tells
+those two cases apart: it holds the fixpoint round count constant while scaling size, so a per-pass
+*exponent* becomes visible.
+
 ### Where the time goes (measured)
 
 - keccak per-pass (254 s profile): domainFold 48 s, domainBatch 48 s, reencode 42 s,
