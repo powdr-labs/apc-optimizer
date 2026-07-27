@@ -220,6 +220,27 @@ theorem denseLiveAllSeg_eq (arr : Array (BusInteraction (DenseExpr p))) (alive :
       · simp
       · cases harr : arr[lo]? <;> simp [Option.elim]
 
+/-- `denseLiveAllSeg` over a derived per-position array (e.g. prepared certificate records), so a
+    per-element preparation is computed once per position instead of once per query. -/
+def denseLiveAllSegP {α : Type} (preArr : Array α) (alive : Array Bool)
+    (P : α → Bool) : (lo n : Nat) → Bool
+  | _, 0 => true
+  | lo, n + 1 =>
+    (if alive[lo]?.getD false then (preArr[lo]?).elim true P else true)
+      && denseLiveAllSegP preArr alive P (lo + 1) n
+
+theorem denseLiveAllSegP_eq {α : Type} (f : BusInteraction (DenseExpr p) → α)
+    (arr : Array (BusInteraction (DenseExpr p))) (alive : Array Bool) (P : α → Bool) :
+    ∀ (lo n : Nat),
+      denseLiveAllSegP (arr.map f) alive P lo n
+        = denseLiveAllSeg arr alive (fun m => P (f m)) lo n := by
+  intro lo n
+  induction n generalizing lo with
+  | zero => rfl
+  | succ n ih =>
+      rw [denseLiveAllSegP, denseLiveAllSeg, ih (lo + 1), Array.getElem?_map]
+      cases arr[lo]? <;> rfl
+
 /-- The logical constraint system at a point in the loop: the original system with its interactions
     replaced by the live projection followed by the checks emitted so far. -/
 def denseMkCs (cs0 : DenseConstraintSystem p) (arr : Array (BusInteraction (DenseExpr p)))

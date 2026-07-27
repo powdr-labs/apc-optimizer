@@ -288,11 +288,14 @@ def denseApplyTimed {p : ℕ} (pass : DenseVerifiedPassW p) (st : DenseProfState
     fixpoint below), threading the dense state and accumulating per-pass elapsed time. -/
 def denseRunCycleTimed {p : ℕ} (passes : List (String × DenseVerifiedPassW p))
     (st : DenseProfState p) (bs : BusSemantics p) (facts : BusFacts p bs)
-    (acc : Std.HashMap String Nat) : IO (DenseProfState p × Std.HashMap String Nat) := do
+    (acc : Std.HashMap String Nat) (verbose : Bool := false) : IO (DenseProfState p × Std.HashMap String Nat) := do
   let mut s := st
   let mut a := acc
   for (name, pass) in passes do
     let (s', dt) ← denseApplyTimed pass s bs facts
+    if verbose && dt ≥ 100 then
+      IO.println s!"    {name}: {dt} ms -> {s'.2.1.varCount} vars, \
+        {s'.2.1.busInteractions.length} bus, {s'.2.1.algebraicConstraints.length} constraints"
     s := s'
     a := a.insert name (a.getD name 0 + dt)
   pure (s, a)
@@ -304,16 +307,17 @@ def denseRunCycleTimed {p : ℕ} (passes : List (String × DenseVerifiedPassW p)
     which strictly decreases at every recursive call — no fuel, no `partial`. -/
 def denseProfileLoop {p : ℕ} (passes : List (String × DenseVerifiedPassW p))
     (st : DenseProfState p) (bs : BusSemantics p) (facts : BusFacts p bs)
-    (acc : Std.HashMap String Nat) (iter : Nat) (k : Nat ×ₗ Nat ×ₗ Nat) :
+    (acc : Std.HashMap String Nat) (iter : Nat) (k : Nat ×ₗ Nat ×ₗ Nat)
+    (verbose : Bool := false) :
     IO (DenseProfState p × Std.HashMap String Nat × Nat) := do
   let t0 ← IO.monoMsNow
-  let (st', acc') ← denseRunCycleTimed passes st bs facts acc
+  let (st', acc') ← denseRunCycleTimed passes st bs facts acc verbose
   let t1 ← IO.monoMsNow
   IO.println s!"  cycle {iter}: {st'.2.1.varCount} vars, {st'.2.1.busInteractions.length} bus, \
     {st'.2.1.algebraicConstraints.length} constraints ({t1 - t0} ms)"
   let k' := st'.2.1.sizeKey
   if h : k' < k then
-    denseProfileLoop passes st' bs facts acc' (iter + 1) k'
+    denseProfileLoop passes st' bs facts acc' (iter + 1) k' verbose
   else
     pure (st, acc', iter)
   termination_by k
@@ -329,7 +333,7 @@ def denseProfileLoop {p : ℕ} (passes : List (String × DenseVerifiedPassW p))
     dense coda list once, decode once at output. Encode and decode are reported on their own lines and
     never charged to any pass. -/
 def profileRun {p : ℕ} (b : DegreeBound) (fileName : String) (cs : ConstraintSystem p)
-    (bs : BusSemantics p) (facts : BusFacts p bs) : IO Unit := do
+    (bs : BusSemantics p) (facts : BusFacts p bs) (verbose : Bool := false) : IO Unit := do
   let t0 ← IO.monoMsNow
   -- Encode once at the pipeline entry (reported on its own line, never charged to a pass).
   let tEnc0 ← IO.monoMsNow
@@ -346,7 +350,7 @@ def profileRun {p : ℕ} (b : DegreeBound) (fileName : String) (cs : ConstraintS
   -- Step the dense cleanup fixpoint (the SAME `cleanupPasses` list the optimizer runs), threading
   -- the registry / dense system / coverage from pass to pass and iteration to iteration.
   let (stF, acc, iters) ←
-    denseProfileLoop (cleanupPasses (p := p) b) st0 bs facts acc 0 st0.2.1.sizeKey
+    denseProfileLoop (cleanupPasses (p := p) b) st0 bs facts acc 0 st0.2.1.sizeKey verbose
   -- Coda (dense, run once).
   let (stF, acc) ← denseRunCycleTimed (codaPasses (p := p) b) stF bs facts acc
   -- Decode once at the pipeline output (reported on its own line).
@@ -363,16 +367,16 @@ def profileRun {p : ℕ} (b : DegreeBound) (fileName : String) (cs : ConstraintS
     IO.println s!"  {name}: {ms} ms"
 
 /-- `profile [vm] <file>`: per-pass optimizer timing for the selected VM. -/
-def cmdProfile (vm fileName : String) : IO Unit := do
+def cmdProfile (vm fileName : String) (verbose : Bool := false) : IO Unit := do
   if isSp1 vm then
     let (cs, busMap) ← parseFileWith parseSp1 fileName
     profileRun ApcOptimizer.SP1.defaultDegreeBound fileName cs
       (ApcOptimizer.SP1.sp1BusSemantics ApcOptimizer.SP1.koalaBear busMap)
-      (ApcOptimizer.SP1.sp1Facts ApcOptimizer.SP1.koalaBear busMap)
+      (ApcOptimizer.SP1.sp1Facts ApcOptimizer.SP1.koalaBear busMap) verbose
   else
     let (cs, busMap) ← parseFileWith parseOpenVm fileName
     profileRun defaultDegreeBound fileName cs
-      (openVmBusSemantics babyBear busMap) (openVmFacts babyBear busMap)
+      (openVmBusSemantics babyBear busMap) (openVmFacts babyBear busMap) verbose
 
 def usage : String :=
   "usage: apc-optimizer run [vm] <file.json[.gz]>\n" ++
@@ -398,6 +402,7 @@ def main (args : List String) : IO Unit := do
   match rest with
   | ["run", fileName] => cmdRun vm fileName
   | ["profile", fileName] => cmdProfile vm fileName
+  | ["profile", "-v", fileName] => cmdProfile vm fileName (verbose := true)
   | ["report", unoptFile, optFile] => cmdReport vm unoptFile optFile
   | ["opt-export", inFile, outFile] => cmdOptExport vm inFile outFile
   | ["compare", unoptFile, optFile] => cmdCompare vm unoptFile optFile

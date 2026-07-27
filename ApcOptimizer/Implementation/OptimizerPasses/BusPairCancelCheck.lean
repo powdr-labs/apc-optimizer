@@ -1,5 +1,6 @@
 import ApcOptimizer.Implementation.OptimizerPasses.BusPairCancelIndex
 import ApcOptimizer.Implementation.OptimizerPasses.BusPairCancelLive
+import ApcOptimizer.Implementation.OptimizerPasses.AddrDiseqPre
 
 set_option autoImplicit false
 
@@ -115,6 +116,103 @@ theorem denseShieldScanSeg_eq (ops : DenseZModOps p) (shape : MemoryBusShape)
           | none =>
               rw [denseLiveSeg, halive, harr, if_pos rfl]
               simp
+
+/-- `denseShieldScan` with the two per-message tests abstracted. -/
+def denseShieldScanW {α : Type} (P Q : α → Bool) : List α → Bool × Bool
+  | [] => (false, true)
+  | m0 :: rest =>
+    let r := denseShieldScanW P Q rest
+    (r.1 || Q m0, r.2 && (P m0 || r.1))
+
+theorem denseShieldScanW_eq (ops : DenseZModOps p) (shape : MemoryBusShape)
+    (T : Thunk (DenseAddrCerts p)) (busId : Nat) (S : BusInteraction (DenseExpr p)) :
+    ∀ l, denseShieldScanW (densePreRefuted ops shape T busId S)
+        (denseProvRecv ops shape busId S) l = denseShieldScan ops shape T busId S l := by
+  intro l
+  induction l with
+  | nil => rfl
+  | cons m0 rest ih => rw [denseShieldScanW, denseShieldScan, ih]
+
+/-- `denseShieldScanW` over a derived per-position array (prepared certificate records), reading
+    the prepared record at each live position. -/
+def denseShieldScanSegP {α : Type} (P Q : α → Bool) (preArr : Array α) (alive : Array Bool) :
+    (lo n : Nat) → Bool × Bool
+  | _, 0 => (false, true)
+  | lo, n + 1 =>
+    let r := denseShieldScanSegP P Q preArr alive (lo + 1) n
+    if alive[lo]?.getD false then
+      match preArr[lo]? with
+      | some m0 => (r.1 || Q m0, r.2 && (P m0 || r.1))
+      | none => r
+    else r
+
+theorem denseShieldScanSegP_eq {α : Type} (f : BusInteraction (DenseExpr p) → α)
+    (P Q : α → Bool) (arr : Array (BusInteraction (DenseExpr p))) (alive : Array Bool) :
+    ∀ (lo n : Nat),
+      denseShieldScanSegP P Q (arr.map f) alive lo n
+        = denseShieldScanW (fun m => P (f m)) (fun m => Q (f m))
+            (denseLiveSeg arr alive lo n) := by
+  intro lo n
+  induction n generalizing lo with
+  | zero => rfl
+  | succ n ih =>
+      rw [denseShieldScanSegP, ih (lo + 1), Array.getElem?_map]
+      cases halive : alive[lo]?.getD false with
+      | false => rw [denseLiveSeg_skip arr alive lo n halive, if_neg (by simp)]
+      | true =>
+          rw [if_pos rfl]
+          cases harr : arr[lo]? with
+          | some m0 =>
+              rw [denseLiveSeg_peel arr alive lo n m0 halive harr]
+              rfl
+          | none =>
+              rw [denseLiveSeg, halive, harr, if_pos rfl]
+              simp
+
+/-! ## The region tests on prepared records (`AddrDiseqPre.lean`) -/
+
+def denseMidRefutedP (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (busId : Nat)
+    (a b : DenseAddrPre p) : Bool :=
+  decide (b.busId ≠ busId) || decide (b.mult.get = some ops.zero) || denseAddrConstsNeqP a b
+    || denseAddrAffineNeqP a b || denseAddrTwoRootNeqP a b || denseAddrNonzeroNeqP nw a b
+
+theorem denseMidRefutedP_eq (ops : DenseZModOps p) (shape : MemoryBusShape)
+    (T : Thunk (DenseAddrCerts p)) (busId : Nat) (S m : BusInteraction (DenseExpr p)) :
+    denseMidRefutedP ops T.get.nonzero busId (denseAddrPrep shape T.get.tworoot S)
+        (denseAddrPrep shape T.get.tworoot m)
+      = denseMidRefuted ops shape T busId S m := by
+  unfold denseMidRefutedP denseMidRefuted
+  rw [denseAddrConstsNeqP_eq, denseAddrAffineNeqP_eq, denseAddrTwoRootNeqP_eq,
+    denseAddrNonzeroNeqP_eq]
+  rfl
+
+def densePreRefutedP (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (busId : Nat)
+    (setMult : ZMod p) (a b : DenseAddrPre p) : Bool :=
+  denseMidRefutedP ops nw busId a b ||
+    (match b.mult.get with
+     | some c => decide (c ≠ setMult)
+     | none => false)
+
+theorem densePreRefutedP_eq (ops : DenseZModOps p) (shape : MemoryBusShape)
+    (T : Thunk (DenseAddrCerts p)) (busId : Nat) (S m : BusInteraction (DenseExpr p)) :
+    densePreRefutedP ops T.get.nonzero busId (denseSetNewMult ops shape)
+        (denseAddrPrep shape T.get.tworoot S) (denseAddrPrep shape T.get.tworoot m)
+      = densePreRefuted ops shape T busId S m := by
+  unfold densePreRefutedP densePreRefuted
+  rw [denseMidRefutedP_eq]
+  rfl
+
+def denseProvRecvP (busId : Nat) (getPrevMult : ZMod p) (a b : DenseAddrPre p) : Bool :=
+  decide (b.busId = busId) && denseAddrConstsEqP a b && decide (b.mult.get = some getPrevMult)
+
+theorem denseProvRecvP_eq (ops : DenseZModOps p) (shape : MemoryBusShape)
+    (T : DenseTwoRootMap p) (busId : Nat) (S m : BusInteraction (DenseExpr p)) :
+    denseProvRecvP busId (denseGetPreviousMult ops shape) (denseAddrPrep shape T S)
+        (denseAddrPrep shape T m)
+      = denseProvRecv ops shape busId S m := by
+  unfold denseProvRecvP denseProvRecv
+  rw [denseAddrConstsEqP_eq]
+  rfl
 
 /-- Single-value byte check on `e`, emitted through `spec` (multiplicity `1`). -/
 def denseMkByteCheck (spec : ByteXorSpec p) (busId : Nat) (e : DenseExpr p) :
