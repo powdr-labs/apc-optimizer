@@ -4991,3 +4991,62 @@ accept; and a *sequential* A/B of the two binaries showed a 2–6 % "win" that i
 entirely — run-ordering bias on this box is larger than the effect being measured. Always interleave.
 
 **Worked locally: yes** (byte-identical `opt-export` on 8 of 9 fixtures; `apc_020` size-identical).
+
+### 146. Runtime: reencode's accept path skips items the rewrite cannot change
+
+`denseReencodeOut` — the system an accepted re-encoding produces — maps `denseGroupRewrite` over
+**every** constraint and interaction, allocating a fresh node per node. gdb attribution on the
+replica ladder's `k=4` rung (35 samples, all inside `denseReencodeStep`) charged the rewrite 17 % of
+the pass, inside a per-accept total of ~70 %.
+
+It cannot simply skip items sharing no variable with the group, and that is the whole subtlety:
+`varsInF xs` holds **vacuously** on a variable-free node, so `denseGroupRewrite` replaces such a node
+by its constant even in an item the group does not touch. Adding that as a second condition —
+`denseReencodeTouchesCs`/`denseReencodeTouchesBi` = *shares a variable with the group* **or** *still
+has a variable-free node* — makes the rewrite provably the identity on everything skipped. So the
+sparse form needs no side condition and no fall-back: `@[csimp] denseReencodeOut_eq_sparse` is an
+unconditional equality, and the output is byte-identical by construction. Per item it trades one
+allocating traversal for one read-only one.
+
+Proof chain: `denseVarsInF_false_of_disjoint` (a variable outside the group defeats `varsInF`) →
+`denseCoveredBy_false_of_disjoint` and `denseGroupRewrite_id_of_disjoint` → `denseSparseOut_eq` →
+the `@[csimp]`. State the list-level step over an **abstract** rewrite/keep pair, as
+`denseSparseOut_eq` does: with the concrete `denseGroupRewrite …` terms in place the unifier looks
+inside them and the theorem does not elaborate even at 1M heartbeats. The same commit shares
+`denseBuildPruned`'s per-item variable list between the prune test and the bucket insert, which it
+computed twice (`denseBuildPruned_eq_fast`).
+
+**Measured — and the honest answer is "below this box's resolution".** All interleaved against a
+binary built from the same `main`, on one 4-core container:
+
+| fixture | rounds (main → this) | ratio |
+|---|---|---|
+| ladder `apc_005` ×4 | 84.2→86.2, 83.4→78.8, 80.8→84.0 s | 1.02 / 0.95 / 1.04 |
+| keccak | 33.4→32.7, 34.5→33.9 s | **0.98 / 0.98** |
+| wasm-eth apc_036 | 41.9→41.3, 43.3→42.7 s | **0.99 / 0.99** |
+| sha256 | 618.6→600.1, 593.7→602.7 s | 0.97 / 1.02 |
+
+keccak and wasm-eth move ~1.5–2 % in the same direction in both rounds; the ladder and sha256 are
+noise, with ±13 % round-to-round on sha256's `reencode` row alone. The attribution predicts about
+this size and no more: the rewrite is 17 % of a pass that is ~28 % of sha256, so ~5 % of a run is the
+ceiling. **`Runtime Bench` on a quiet 32-core runner is the instrument that can resolve it; if it
+comes back flat, this should be dropped rather than carried.**
+
+**Two measurement traps paid for in this session, both worth remembering.** First, an intermediate
+version gated the skip on a separate whole-system `denseSystemFoldNormal` sweep; it measured as pure
+noise, because the added read-only sweep cost about what the sparse rewrite saved. Fusing the two
+tests into the per-item decision is what removed it — and it also removed the precondition, the
+fall-back branch and two lemmas. Second, the first numbers for this change looked like **0.71× on the
+total**, which was nonsense: the baseline binary predated entry 145, so the comparison was
+double-counting `domainFold`'s gate. Rebuild the baseline from the current `main` every time, and
+distrust any runtime win that is suspiciously close to the last one.
+
+**Not landed, and why.** The index-threaded version reuses the posting index the degree pre-gate
+already builds, so it skips the per-item test too. It needs the loop to thread
+`use.get = denseBuildUseIdx d` and hence "a rejecting step leaves `d` alone", which needs
+"an accepted candidate mints at least one bit" (`Nat.clog_pos`, plus a `List.range` foldl induction
+for `denseRegisterBits`'s length). All three were proved during this session and then dropped when
+the item-test design made them unnecessary; the traps in re-deriving them are recorded in
+`ideas.md` R3.
+
+**Worked locally: byte-identical by construction** (the `@[csimp]` equality is unconditional).
