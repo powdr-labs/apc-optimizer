@@ -5149,11 +5149,18 @@ the covered set once (was twice) and decides freshness in one system walk agains
 
 **Numbers** (this 4-core box, clean serial `profile` runs; per-pass dt totals, which exclude the
 `-v` printing overhead). Baseline main `f2d2c62`: busPairCancel 58.2, reencode 59.3, gauss 37.8,
-domainBatch 37.4, busUnify 33.5, flagFold 32.4, total 409.2 s. Final head: **busPairCancel 32.5
-(0.56×; the heavy-drop cycle 47.5→21.6 s)**, reencode 56.1, gauss 37.7, domainBatch 38.9,
-busUnify 33.7, flagFold 31.1. keccak `run` output identical (2021/186/1748) and every sha256
-cycle's `(vars, bus, constraints)` triple identical to main. CI Runtime Bench on PR #223
-(`-f benchmark=sha256`) dispatched for same-runner totals.
+domainBatch 37.4, busUnify 33.5, flagFold 32.4, total 409.2 s. Final head: **busPairCancel 30.9
+(0.53×; the heavy-drop cycle's dt 47.5→21.6 s)**, reencode 57.7, gauss 37.0, domainBatch 38.3,
+busUnify 33.3, flagFold 30.9. keccak `run` output identical (2021/186/1748) and every sha256
+cycle's `(vars, bus, constraints)` triple identical to main. The CI effectiveness matrix over all
+six sets reports **per-case circuit sizes identical** to main. CI Runtime Bench of the
+intermediate head `07ea18f` (prepared certificates + buckets + reencode twin, before the sparse
+scans): total 0.99× with reencode 0.87× and busPairCancel 1.08× — the prep-only regression is far
+smaller on the 32-core runner than on this box; the sparse-scan head's run in flight.
+
+A follow-up in the same session moved `pointwiseDupDrop`'s (flagFold part C) domain lookups to
+`denseVarBucket` buckets as well — output-identical, but **no measured sha256 effect** (flagFold
+31.1 → 30.9, noise): flagFold's cycle-0 cost is elsewhere (suspects in ideas.md).
 
 **Measurement lessons.** (1) A `-v` profile run is not comparable to a non-verbose one on totals
 or cycle times (the per-pass varCount printing adds ~8–10 s per big cycle); only per-pass dt
