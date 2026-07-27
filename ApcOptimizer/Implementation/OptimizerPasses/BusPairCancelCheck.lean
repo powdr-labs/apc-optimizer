@@ -78,45 +78,6 @@ def denseShieldOk (ops : DenseZModOps p) (shape : MemoryBusShape)
     (S : BusInteraction (DenseExpr p)) (l : List (BusInteraction (DenseExpr p))) : Bool :=
   (denseShieldScan ops shape T busId S l).2
 
-/-- `denseShieldScan` over a live array segment, structurally mirrored — no intermediate list. -/
-def denseShieldScanSeg (ops : DenseZModOps p) (shape : MemoryBusShape)
-    (T : Thunk (DenseAddrCerts p)) (busId : Nat) (S : BusInteraction (DenseExpr p))
-    (arr : Array (BusInteraction (DenseExpr p))) (alive : Array Bool) :
-    (lo n : Nat) → Bool × Bool
-  | _, 0 => (false, true)
-  | lo, n + 1 =>
-    let r := denseShieldScanSeg ops shape T busId S arr alive (lo + 1) n
-    if alive[lo]?.getD false then
-      match arr[lo]? with
-      | some m0 =>
-          (r.1 || denseProvRecv ops shape busId S m0,
-            r.2 && (densePreRefuted ops shape T busId S m0 || r.1))
-      | none => r
-    else r
-
-theorem denseShieldScanSeg_eq (ops : DenseZModOps p) (shape : MemoryBusShape)
-    (T : Thunk (DenseAddrCerts p)) (busId : Nat) (S : BusInteraction (DenseExpr p))
-    (arr : Array (BusInteraction (DenseExpr p))) (alive : Array Bool) :
-    ∀ (lo n : Nat),
-      denseShieldScanSeg ops shape T busId S arr alive lo n
-        = denseShieldScan ops shape T busId S (denseLiveSeg arr alive lo n) := by
-  intro lo n
-  induction n generalizing lo with
-  | zero => rfl
-  | succ n ih =>
-      rw [denseShieldScanSeg, ih (lo + 1)]
-      cases halive : alive[lo]?.getD false with
-      | false => rw [denseLiveSeg_skip arr alive lo n halive, if_neg (by simp)]
-      | true =>
-          rw [if_pos rfl]
-          cases harr : arr[lo]? with
-          | some m0 =>
-              rw [denseLiveSeg_peel arr alive lo n m0 halive harr]
-              rfl
-          | none =>
-              rw [denseLiveSeg, halive, harr, if_pos rfl]
-              simp
-
 /-- `denseShieldScan` with the two per-message tests abstracted. -/
 def denseShieldScanW {α : Type} (P Q : α → Bool) : List α → Bool × Bool
   | [] => (false, true)
