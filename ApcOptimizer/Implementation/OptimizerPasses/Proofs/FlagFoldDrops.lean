@@ -180,52 +180,52 @@ def denseBoxTautoDropPass (pw : PrimeWitness p) : DenseVerifiedPassW p :=
 
 /-- Joint-box agreement soundness: agreement at every box point gives agreement on every assignment
     zeroing the single-variable constraints. -/
-theorem denseBoxAgree_sound [Fact p.Prime] (singles : List (DenseExpr p)) (R R' : DenseExpr p)
-    (h : denseBoxAgree singles R R' = true) (denv : VarId → ZMod p)
-    (hdom : ∀ c ∈ singles, c.eval denv = 0) : R.eval denv = R'.eval denv := by
+theorem denseBoxAgree_sound [Fact p.Prime] (domIdx : Std.HashMap VarId (List (DenseExpr p))) (R R' : DenseExpr p)
+    (h : denseBoxAgree domIdx R R' = true) (denv : VarId → ZMod p)
+    (hdom : ∀ v, ∀ c ∈ denseVarBucketLookup domIdx v, c.eval denv = 0) : R.eval denv = R'.eval denv := by
   unfold denseBoxAgree at h
   simp only [Bool.and_eq_true, decide_eq_true_eq] at h
   obtain ⟨⟨hcover, _hcap⟩, hall⟩ := h
   have hmemdoms : ∀ vd ∈ (R.vars ++ R'.vars).eraseDups.filterMap (fun v =>
-      (denseFindDomainAlg singles v).map (fun dm => (v, dm))), denv vd.1 ∈ vd.2 := by
+      (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun dm => (v, dm))), denv vd.1 ∈ vd.2 := by
     intro vd hvd
     obtain ⟨v, _hv, hvd'⟩ := List.mem_filterMap.1 hvd
-    cases hfd : denseFindDomainAlg singles v with
+    cases hfd : denseFindDomainAlg (denseVarBucketLookup domIdx v) v with
     | none => rw [hfd] at hvd'; simp at hvd'
     | some dm =>
         rw [hfd] at hvd'
         simp only [Option.map_some, Option.some.injEq] at hvd'
         obtain rfl := hvd'.symm
-        exact denseFindDomainAlg_sound denv singles v dm hfd hdom
+        exact denseFindDomainAlg_sound denv (denseVarBucketLookup domIdx v) v dm hfd (hdom v)
   have hpt := mem_denseAssignments ((R.vars ++ R'.vars).eraseDups.filterMap (fun v =>
-    (denseFindDomainAlg singles v).map (fun dm => (v, dm)))) denv hmemdoms
+    (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun dm => (v, dm)))) denv hmemdoms
   have hagree : ∀ v, v ∈ (R.vars ++ R'.vars).eraseDups →
       denseEnvOfFast (((R.vars ++ R'.vars).eraseDups.filterMap (fun v =>
-        (denseFindDomainAlg singles v).map (fun dm => (v, dm)))).map
+        (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun dm => (v, dm)))).map
           (fun vd => (vd.1, denv vd.1))) v = denv v := by
     intro v hv
     refine denseEnvOfFast_map _ denv v ?_
     rw [show (((R.vars ++ R'.vars).eraseDups.filterMap (fun v =>
-      (denseFindDomainAlg singles v).map (fun dm => (v, dm)))).map Prod.fst)
+      (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun dm => (v, dm)))).map Prod.fst)
       = (R.vars ++ R'.vars).eraseDups from hcover]
     exact hv
   have hRR := of_decide_eq_true (List.all_eq_true.mp hall _ hpt)
   have hRa : R.eval (denseEnvOfFast (((R.vars ++ R'.vars).eraseDups.filterMap
-      (fun v => (denseFindDomainAlg singles v).map (fun dm => (v, dm)))).map
+      (fun v => (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun dm => (v, dm)))).map
         (fun vd => (vd.1, denv vd.1)))) = R.eval denv :=
     DenseExpr.eval_congr R _ denv (fun v hv =>
       hagree v (List.mem_eraseDups.2 (List.mem_append_left _ hv)))
   have hRa' : R'.eval (denseEnvOfFast (((R.vars ++ R'.vars).eraseDups.filterMap
-      (fun v => (denseFindDomainAlg singles v).map (fun dm => (v, dm)))).map
+      (fun v => (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun dm => (v, dm)))).map
         (fun vd => (vd.1, denv vd.1)))) = R'.eval denv :=
     DenseExpr.eval_congr R' _ denv (fun v hv =>
       hagree v (List.mem_eraseDups.2 (List.mem_append_right _ hv)))
   rw [← hRa, ← hRa', hRR]
 
 /-- Slot-pair certificate soundness (`denseSlotEqCert`). -/
-theorem denseSlotEqCert_sound [Fact p.Prime] (singles : List (DenseExpr p)) (e e' : DenseExpr p)
-    (h : denseSlotEqCert singles e e' = true) (denv : VarId → ZMod p)
-    (hdom : ∀ c ∈ singles, c.eval denv = 0) : e.eval denv = e'.eval denv := by
+theorem denseSlotEqCert_sound [Fact p.Prime] (domIdx : Std.HashMap VarId (List (DenseExpr p))) (e e' : DenseExpr p)
+    (h : denseSlotEqCert domIdx e e' = true) (denv : VarId → ZMod p)
+    (hdom : ∀ v, ∀ c ∈ denseVarBucketLookup domIdx v, c.eval denv = 0) : e.eval denv = e'.eval denv := by
   unfold denseSlotEqCert at h
   rw [Bool.or_eq_true] at h
   rcases h with heq | hany
@@ -245,13 +245,13 @@ theorem denseSlotEqCert_sound [Fact p.Prime] (singles : List (DenseExpr p)) (e e
             obtain ⟨hk2, hba⟩ := hx
             rw [DenseExpr.splitAt_eval x e k R hsX denv,
                 DenseExpr.splitAt_eval x e' k2 R' hsY denv, eq_of_beq hk2,
-                denseBoxAgree_sound singles R R' hba denv hdom]
+                denseBoxAgree_sound domIdx R R' hba denv hdom]
 
 /-- Full-message certificate soundness: the two interactions evaluate to the same message. -/
-theorem denseMsgEqCert_sound [Fact p.Prime] (singles : List (DenseExpr p))
-    (bi bi' : BusInteraction (DenseExpr p)) (h : denseMsgEqCert singles bi bi' = true)
+theorem denseMsgEqCert_sound [Fact p.Prime] (domIdx : Std.HashMap VarId (List (DenseExpr p)))
+    (bi bi' : BusInteraction (DenseExpr p)) (h : denseMsgEqCert domIdx bi bi' = true)
     (denv : VarId → ZMod p)
-    (hdom : ∀ c ∈ singles, c.eval denv = 0) : denseBIEval bi denv = denseBIEval bi' denv := by
+    (hdom : ∀ v, ∀ c ∈ denseVarBucketLookup domIdx v, c.eval denv = 0) : denseBIEval bi denv = denseBIEval bi' denv := by
   unfold denseMsgEqCert at h
   rw [Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true] at h
   obtain ⟨⟨⟨hbus, hmult⟩, hlen⟩, hslots⟩ := h
@@ -279,15 +279,15 @@ theorem denseMsgEqCert_sound [Fact p.Prime] (singles : List (DenseExpr p))
       exact List.getElem_mem _
     have hcert := List.all_eq_true.mp hslots _ hz
     simp only [List.getElem_map]
-    exact denseSlotEqCert_sound singles _ _ hcert denv hdom
+    exact denseSlotEqCert_sound domIdx _ _ hcert denv hdom
   show denseBIEval bi denv = denseBIEval bi' denv
   unfold denseBIEval
   rw [eq_of_beq hbus, hmm, hpay]
 
 /-- A first-of-class interaction is always kept — the depth-1 justification for `densePdKeep`. -/
-theorem densePdFirst_keep (bs : BusSemantics p) (singles : List (DenseExpr p))
+theorem densePdFirst_keep (bs : BusSemantics p) (domIdx : Std.HashMap VarId (List (DenseExpr p)))
     (bis : List (BusInteraction (DenseExpr p))) (b : BusInteraction (DenseExpr p))
-    (h : densePdFirst bs singles bis b = true) : densePdKeep bs singles bis b = true := by
+    (h : densePdFirst bs domIdx bis b = true) : densePdKeep bs domIdx bis b = true := by
   unfold densePdKeep
   rw [Bool.or_eq_true]
   right
@@ -300,9 +300,9 @@ theorem densePdFirst_keep (bs : BusSemantics p) (singles : List (DenseExpr p))
       rw [Bool.not_eq_true']
       by_contra hany
       have hany' : ((bis.take i).any (fun b' => !bs.isStateful b'.busId
-          && denseMsgEqCert singles b' b && densePdFirst bs singles bis b')) = true := by
+          && denseMsgEqCert domIdx b' b && densePdFirst bs domIdx bis b')) = true := by
         by_cases hh : ((bis.take i).any (fun b' => !bs.isStateful b'.busId
-            && denseMsgEqCert singles b' b && densePdFirst bs singles bis b')) = true
+            && denseMsgEqCert domIdx b' b && densePdFirst bs domIdx bis b')) = true
         · exact hh
         · exact absurd (by simpa using hh) hany
       obtain ⟨b'', hb''mem, hb''⟩ := List.any_eq_true.1 hany'
@@ -325,7 +325,7 @@ theorem DensePassCorrect.densePointwiseDupDrop [Fact p.Prime]
     (d : DenseConstraintSystem p) (bs : BusSemantics p) (isInput : VarId → Bool)
     (keep : BusInteraction (DenseExpr p) → Bool)
     (hkeep : ∀ bi ∈ d.busInteractions, keep bi = false →
-      densePdKeep bs (denseSingleVarCs d.algebraicConstraints) d.busInteractions bi = false) :
+      densePdKeep bs (denseVarBucket DenseExpr.vars (denseSingleVarCs d.algebraicConstraints)) d.busInteractions bi = false) :
     DensePassCorrect isInput d (d.filterBus keep) [] bs := by
   refine DensePassCorrect.denseFilterBusEntailed d bs isInput keep ?_ ?_
   · intro bi hbimem hkf
@@ -347,9 +347,9 @@ theorem DensePassCorrect.densePointwiseDupDrop [Fact p.Prime]
         rw [Bool.and_eq_true, Bool.and_eq_true] at hb
         obtain ⟨⟨hnst, hcert⟩, hfirst⟩ := hb
         have hbcs : b ∈ d.busInteractions := List.mem_of_mem_take hbmem
-        have hbkeep : densePdKeep bs (denseSingleVarCs d.algebraicConstraints)
+        have hbkeep : densePdKeep bs (denseVarBucket DenseExpr.vars (denseSingleVarCs d.algebraicConstraints))
             d.busInteractions b = true :=
-          densePdFirst_keep bs (denseSingleVarCs d.algebraicConstraints) d.busInteractions b hfirst
+          densePdFirst_keep bs (denseVarBucket DenseExpr.vars (denseSingleVarCs d.algebraicConstraints)) d.busInteractions b hfirst
         have hbkept : keep b = true := by
           by_contra hkb
           have := hkeep b hbcs (by simpa using hkb)
@@ -357,11 +357,14 @@ theorem DensePassCorrect.densePointwiseDupDrop [Fact p.Prime]
           exact absurd hbkeep (by simp)
         have hbout : b ∈ (d.filterBus keep).busInteractions :=
           List.mem_filter.2 ⟨hbcs, hbkept⟩
-        have hdom : ∀ c ∈ denseSingleVarCs d.algebraicConstraints, c.eval denv = 0 := by
-          intro c hc
-          exact hsat.1 c (List.mem_of_mem_filter hc)
+        have hdom : ∀ v, ∀ c ∈ denseVarBucketLookup
+            (denseVarBucket DenseExpr.vars (denseSingleVarCs d.algebraicConstraints)) v,
+            c.eval denv = 0 := by
+          intro v c hc
+          exact hsat.1 c (List.mem_of_mem_filter
+            (denseVarBucket_mem DenseExpr.vars (denseSingleVarCs d.algebraicConstraints) v c hc))
         have heq : denseBIEval b denv = denseBIEval bi denv :=
-          denseMsgEqCert_sound (denseSingleVarCs d.algebraicConstraints) b bi hcert denv hdom
+          denseMsgEqCert_sound (denseVarBucket DenseExpr.vars (denseSingleVarCs d.algebraicConstraints)) b bi hcert denv hdom
         have hob := hsat.2 b hbout
         rw [heq] at hob
         exact hob hm

@@ -78,10 +78,10 @@ def denseBoxTautoDropF (pw : PrimeWitness p) (_bs : BusSemantics p)
 
 /-- Joint-box agreement: every joint variable of `R`/`R'` has a proven finite domain, the box is
     small, and the two expressions agree at every box point. -/
-def denseBoxAgree (singles : List (DenseExpr p)) (R R' : DenseExpr p) : Bool :=
+def denseBoxAgree (domIdx : Std.HashMap VarId (List (DenseExpr p))) (R R' : DenseExpr p) : Bool :=
   let jv := (R.vars ++ R'.vars).eraseDups
   let doms := jv.filterMap (fun v =>
-    (denseFindDomainAlg singles v).map (fun d => (v, d)))
+    (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))
   decide (doms.map Prod.fst = jv) &&
   decide ((doms.map (fun vd => vd.2.length)).prod ≤ 32) &&
   (denseAssignments doms).all (fun pt =>
@@ -89,40 +89,40 @@ def denseBoxAgree (singles : List (DenseExpr p)) (R R' : DenseExpr p) : Bool :=
 
 /-- Slot-pair certificate: the two expressions are syntactically equal, or decompose over the same
     carrier with the same constant coefficient and offsets agreeing on the joint domain box. -/
-def denseSlotEqCert (singles : List (DenseExpr p)) (e e' : DenseExpr p) : Bool :=
+def denseSlotEqCert (domIdx : Std.HashMap VarId (List (DenseExpr p))) (e e' : DenseExpr p) : Bool :=
   e == e' ||
   e.vars.eraseDups.any (fun x =>
     e'.mentions x &&
     match e.splitAt x, e'.splitAt x with
-    | some (k, R), some (k2, R') => k2 == k && denseBoxAgree singles R R'
+    | some (k, R), some (k2, R') => k2 == k && denseBoxAgree domIdx R R'
     | _, _ => false)
 
 /-- Full-message certificate: same bus, same constant multiplicity, pointwise-equal payloads. -/
-def denseMsgEqCert (singles : List (DenseExpr p)) (bi bi' : BusInteraction (DenseExpr p)) : Bool :=
+def denseMsgEqCert (domIdx : Std.HashMap VarId (List (DenseExpr p))) (bi bi' : BusInteraction (DenseExpr p)) : Bool :=
   bi.busId == bi'.busId &&
   (match bi.multiplicity.constValue?, bi'.multiplicity.constValue? with
    | some m, some m' => m == m'
    | _, _ => false) &&
   bi.payload.length == bi'.payload.length &&
-  (bi.payload.zip bi'.payload).all (fun ee => denseSlotEqCert singles ee.1 ee.2)
+  (bi.payload.zip bi'.payload).all (fun ee => denseSlotEqCert domIdx ee.1 ee.2)
 
 /-- Is `bi` the first of its pointwise class (no earlier certified twin)? -/
-def densePdFirst (bs : BusSemantics p) (singles : List (DenseExpr p))
+def densePdFirst (bs : BusSemantics p) (domIdx : Std.HashMap VarId (List (DenseExpr p)))
     (bis : List (BusInteraction (DenseExpr p))) (bi : BusInteraction (DenseExpr p)) : Bool :=
   match bis.findIdx? (fun b => b == bi) with
   | none => true
-  | some i => (bis.take i).all (fun b => bs.isStateful b.busId || !(denseMsgEqCert singles b bi))
+  | some i => (bis.take i).all (fun b => bs.isStateful b.busId || !(denseMsgEqCert domIdx b bi))
 
 /-- Keep unless a *first-of-class* earlier stateless twin exists (depth-1 rule: the twin that
     justifies a drop is itself provably kept, so no chain induction is needed). -/
-def densePdKeep (bs : BusSemantics p) (singles : List (DenseExpr p))
+def densePdKeep (bs : BusSemantics p) (domIdx : Std.HashMap VarId (List (DenseExpr p)))
     (bis : List (BusInteraction (DenseExpr p))) (bi : BusInteraction (DenseExpr p)) : Bool :=
   bs.isStateful bi.busId ||
   (match bis.findIdx? (fun b => b == bi) with
    | none => true
    | some i =>
-     !((bis.take i).any (fun b => !bs.isStateful b.busId && denseMsgEqCert singles b bi
-         && densePdFirst bs singles bis b)))
+     !((bis.take i).any (fun b => !bs.isStateful b.busId && denseMsgEqCert domIdx b bi
+         && densePdFirst bs domIdx bis b)))
 
 /-! ### The fast duplicate analysis (dense)
 
@@ -160,7 +160,7 @@ structure DensePdEntry (p : ℕ) where
 
 /-- The value-keyed set of interactions the sweep decides to drop — the same set `densePdKeep`
     would drop (drops are value-based: `findIdx?` evaluates each duplicate at its first occurrence). -/
-def densePdDropSet (bs : BusSemantics p) (singles : List (DenseExpr p))
+def densePdDropSet (bs : BusSemantics p) (domIdx : Std.HashMap VarId (List (DenseExpr p)))
     (bis : List (BusInteraction (DenseExpr p))) :
     Std.HashMap UInt64 (List (BusInteraction (DenseExpr p))) := Id.run do
   -- Per coarse key (bus id, constant multiplicity, payload length), keep only the first-of-class
@@ -185,7 +185,7 @@ def densePdDropSet (bs : BusSemantics p) (singles : List (DenseExpr p))
           let (key, sigs) := densePdKeySigs bi m
           let entries := reps.getD key []
           if entries.any (fun e =>
-              densePdSigsCompatible e.sigs sigs && denseMsgEqCert singles e.bi bi) then
+              densePdSigsCompatible e.sigs sigs && denseMsgEqCert domIdx e.bi bi) then
             let vk := densePdValHash bi
             drops := drops.insert vk (bi :: (drops.getD vk []))
           else
@@ -206,10 +206,10 @@ def densePdDropSet (bs : BusSemantics p) (singles : List (DenseExpr p))
           match bi.payload with
           | [] =>
             (repsEmpty.getD key []).any (fun e =>
-              densePdSigsCompatible e.sigs sigs && denseMsgEqCert singles e.bi bi)
+              densePdSigsCompatible e.sigs sigs && denseMsgEqCert domIdx e.bi bi)
           | e0 :: _ =>
             let check := fun (e : DensePdEntry p) =>
-              densePdSigsCompatible e.sigs sigs && denseMsgEqCert singles e.bi bi
+              densePdSigsCompatible e.sigs sigs && denseMsgEqCert domIdx e.bi bi
             (repsByHash.getD (key, e0.bHash) []).any check ||
               (HashedDedup.hashedEraseDups (hash ·) e0.vars).any (fun v =>
                 (repsByVar.getD (key, v) []).any check)
@@ -256,15 +256,15 @@ theorem densePdVerdictKeep_false {p : ℕ} {P : BusInteraction (DenseExpr p) →
 def densePointwiseDupDropF (pw : PrimeWitness p) (bs : BusSemantics p)
     (d : DenseConstraintSystem p) : DenseConstraintSystem p :=
   if pw.isPrime = true then
-    let singles := denseSingleVarCs d.algebraicConstraints
-    let drops := densePdDropSet bs singles d.busInteractions
-    -- `singles` is reused in the re-verification below: spelling the filter out again inside the
-    -- `filterMap` closure would recompute the O(system) single-variable scan per proposed drop.
+    let domIdx := denseVarBucket DenseExpr.vars (denseSingleVarCs d.algebraicConstraints)
+    let drops := densePdDropSet bs domIdx d.busInteractions
+    -- `domIdx` is reused in the re-verification below, so the bucket index is built once, not
+    -- per proposed drop.
     let verdicts : Std.HashMap UInt64 (List { b : BusInteraction (DenseExpr p) //
-        densePdKeep bs singles d.busInteractions b = false }) :=
+        densePdKeep bs domIdx d.busInteractions b = false }) :=
       drops.fold (init := ∅) fun m h l =>
         m.insert h (l.eraseDups.filterMap (fun b =>
-          if hpd : densePdKeep bs singles d.busInteractions b = false
+          if hpd : densePdKeep bs domIdx d.busInteractions b = false
           then some ⟨b, hpd⟩ else none))
     d.filterBus (densePdVerdictKeep verdicts)
   else d
