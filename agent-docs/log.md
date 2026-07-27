@@ -5156,7 +5156,11 @@ cycle's `(vars, bus, constraints)` triple identical to main. The CI effectivenes
 six sets reports **per-case circuit sizes identical** to main. CI Runtime Bench of the
 intermediate head `07ea18f` (prepared certificates + buckets + reencode twin, before the sparse
 scans): total 0.99× with reencode 0.87× and busPairCancel 1.08× — the prep-only regression is far
-smaller on the 32-core runner than on this box; the sparse-scan head's run in flight.
+smaller on the 32-core runner than on this box. **CI Runtime Bench of the sparse-scan head
+(same runner, target vs main): total 244.4 → 221.0 s (0.90×); busPairCancel 31.2 → 16.8 s
+(0.54×), reencode 54.7 → 49.4 s (0.90×), everything else ≈ 1.00×.**
+Composed with entries 146–147, the big case stands at roughly 511.9 × 0.72 × 0.95 × 0.90 ≈ 315 s
+in the 2026-07-26 comparison's units vs powdr's 113.6 s — the 4.5× case gap is down to ~2.8×.
 
 A follow-up in the same session moved `pointwiseDupDrop`'s (flagFold part C) domain lookups to
 `denseVarBucket` buckets as well — output-identical, but **no measured sha256 effect** (flagFold
