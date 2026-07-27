@@ -31,7 +31,7 @@ structure DenseFuData (p : ℕ) where
 /-- The pair-level half of the certificate: slot decompositions, fact bounds, no-wrap checks,
     domain cover, and the per-point offset bounds — computed once per matched pair. Reads
     `facts.slotBound` at runtime. -/
-def denseFuPairData? (bs : BusSemantics p) (facts : BusFacts p bs) (domCs : List (DenseExpr p))
+def denseFuPairData? (bs : BusSemantics p) (facts : BusFacts p bs) (domIdx : Std.HashMap VarId (List (DenseExpr p)))
     (biX biY : BusInteraction (DenseExpr p)) (x : VarId) : Option (DenseFuData p) :=
   match biX.multiplicity.constValue?, biY.multiplicity.constValue? with
   | some mx, some my =>
@@ -49,7 +49,7 @@ def denseFuPairData? (bs : BusSemantics p) (facts : BusFacts p bs) (domCs : List
                  m.val * (bY - 1) + (m.val - 1) < p then
                let jointVars := (RX.vars ++ RY.vars).eraseDups
                let doms := jointVars.filterMap (fun v =>
-                 (denseFindDomainAlg domCs v).map (fun d => (v, d)))
+                 (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))
                if doms.map Prod.fst = jointVars ∧
                    (doms.map (fun vd => vd.2.length)).prod ≤ 32 then
                  let pts0 := denseAssignments doms
@@ -79,9 +79,9 @@ def denseFuCheckWith (d : DenseFuData p) (vx vy : VarId) : Bool :=
 /-- Decidable certificate that `biX`, `biY` are scaled range checks of the same carrier `x` whose
     offset parts pin `vy` (in `biY`) to `vx` (in `biX`). Not called by `denseFuLoop`; provided for
     the prover's soundness lemmas. -/
-def denseFuCheck (bs : BusSemantics p) (facts : BusFacts p bs) (domCs : List (DenseExpr p))
+def denseFuCheck (bs : BusSemantics p) (facts : BusFacts p bs) (domIdx : Std.HashMap VarId (List (DenseExpr p)))
     (biX biY : BusInteraction (DenseExpr p)) (x vx vy : VarId) : Bool :=
-  match denseFuPairData? bs facts domCs biX biY x with
+  match denseFuPairData? bs facts domIdx biX biY x with
   | some d => denseFuCheckWith d vx vy
   | none => false
 
@@ -136,7 +136,7 @@ def denseFuTargets (biX biY : BusInteraction (DenseExpr p)) (x : VarId) :
 
 /-- Scan the interactions: for each scaled-check candidate, find an earlier twin with the same key
     and adopt every flag pair the certificate confirms, accumulating into `DenseSolved`. -/
-def denseFuLoop (bs : BusSemantics p) (facts : BusFacts p bs) (domCs : List (DenseExpr p)) :
+def denseFuLoop (bs : BusSemantics p) (facts : BusFacts p bs) (domIdx : Std.HashMap VarId (List (DenseExpr p))) :
     List (BusInteraction (DenseExpr p)) → Std.HashMap UInt64 (List (DenseFUSeen p)) →
       DenseSolved p → DenseSolved p
   | [], _, σ => σ
@@ -147,19 +147,19 @@ def denseFuLoop (bs : BusSemantics p) (facts : BusFacts p bs) (domCs : List (Den
           if e.key == xk.2 then some (e, xk.1) else none)) with
     | some ex =>
         -- pair-level work once; per-target checks share it (definitionally `denseFuCheck`)
-        match denseFuPairData? bs facts domCs ex.1.bi c ex.2 with
+        match denseFuPairData? bs facts domIdx ex.1.bi c ex.2 with
         | none =>
-            denseFuLoop bs facts domCs rest
+            denseFuLoop bs facts domIdx rest
               (denseFuInsertAll seen (cands.map (fun xk => (⟨c, xk.1, xk.2⟩ : DenseFUSeen p)))) σ
         | some d =>
         let pairs := (denseFuTargets ex.1.bi c ex.2).filterMap (fun t =>
           if denseFuCheckWith d t.2 t.1
           then some (t.1, DenseExpr.var t.2) else none)
-        denseFuLoop bs facts domCs rest
+        denseFuLoop bs facts domIdx rest
           (denseFuInsertAll seen (cands.map (fun xk => (⟨c, xk.1, xk.2⟩ : DenseFUSeen p))))
           (σ.insertAll pairs)
     | none =>
-        denseFuLoop bs facts domCs rest
+        denseFuLoop bs facts domIdx rest
           (denseFuInsertAll seen (cands.map (fun xk => (⟨c, xk.1, xk.2⟩ : DenseFUSeen p)))) σ
 
 /-- Flag unification across duplicate scaled range checks. When two checks decompose over the same
@@ -169,7 +169,7 @@ def denseFuLoop (bs : BusSemantics p) (facts : BusFacts p bs) (domCs : List (Den
 def denseFlagUnifyF (pw : PrimeWitness p) (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) : DenseConstraintSystem p :=
   if pw.isPrime = true then
-    let σ := denseFuLoop bs facts d.algebraicConstraints d.busInteractions ∅ DenseSolved.empty
+    let σ := denseFuLoop bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints) d.busInteractions ∅ DenseSolved.empty
     if σ.map.isEmpty then d else d.substF σ.fn
   else d
 

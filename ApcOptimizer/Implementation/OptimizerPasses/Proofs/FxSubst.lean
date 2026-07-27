@@ -19,13 +19,13 @@ variable {p : ℕ}
     forces every variable of `E` into `biX`'s payload variables (needed for occurrence closure of
     the adopted `vy := E`). -/
 theorem denseFxCheck_vars (bs : BusSemantics p) (facts : BusFacts p bs)
-    (domCs : List (DenseExpr p)) (biX biY : BusInteraction (DenseExpr p))
+    (domIdx : Std.HashMap VarId (List (DenseExpr p))) (biX biY : BusInteraction (DenseExpr p))
     (x : VarId) (E : DenseExpr p) (vy : VarId)
-    (h : denseFxCheck bs facts domCs biX biY x E vy = true) :
+    (h : denseFxCheck bs facts domIdx biX biY x E vy = true) :
     ∀ v ∈ E.vars, v ∈ biX.payload.flatMap DenseExpr.vars := by
   intro v hv
   unfold denseFxCheck at h
-  cases hd : denseFuPairData? bs facts domCs biX biY x with
+  cases hd : denseFuPairData? bs facts domIdx biX biY x with
   | none => rw [hd] at h; simp at h
   | some d =>
     rw [hd] at h
@@ -75,18 +75,18 @@ theorem denseFxCheck_vars (bs : BusSemantics p) (facts : BusFacts p bs)
     Same pair-level residue argument as `flagUnify`'s `denseFuCheck_sound`, with the interpolation
     `E` as the certificate's target in place of the twin flag. -/
 theorem denseFxCheck_sound [Fact p.Prime] (bs : BusSemantics p) (facts : BusFacts p bs)
-    (domCs : List (DenseExpr p)) (biX biY : BusInteraction (DenseExpr p))
+    (domIdx : Std.HashMap VarId (List (DenseExpr p))) (biX biY : BusInteraction (DenseExpr p))
     (x : VarId) (E : DenseExpr p) (vy : VarId)
-    (h : denseFxCheck bs facts domCs biX biY x E vy = true)
+    (h : denseFxCheck bs facts domIdx biX biY x E vy = true)
     (denv : VarId → ZMod p)
-    (hdom : ∀ c ∈ domCs, c.eval denv = 0)
+    (hdom : ∀ v, ∀ c ∈ denseVarBucketLookup domIdx v, c.eval denv = 0)
     (hobX : (denseBIEval biX denv).multiplicity ≠ 0 →
       bs.violatesConstraint (denseBIEval biX denv) = false)
     (hobY : (denseBIEval biY denv).multiplicity ≠ 0 →
       bs.violatesConstraint (denseBIEval biY denv) = false) :
     denv vy = E.eval denv := by
   unfold denseFxCheck at h
-  cases hd : denseFuPairData? bs facts domCs biX biY x with
+  cases hd : denseFuPairData? bs facts domIdx biX biY x with
   | none => rw [hd] at h; simp at h
   | some d =>
     rw [hd] at h
@@ -177,35 +177,35 @@ theorem denseFxCheck_sound [Fact p.Prime] (bs : BusSemantics p) (facts : BusFact
                       linear_combination -h1
                     -- the environment restricted to the joint flag box is an enumerated point
                     have hmemdoms : ∀ vd ∈ (RX.vars ++ RY.vars).eraseDups.filterMap (fun v =>
-                        (denseFindDomainAlg domCs v).map (fun d => (v, d))), denv vd.1 ∈ vd.2 := by
+                        (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d))), denv vd.1 ∈ vd.2 := by
                       intro vd hvd
                       obtain ⟨v, _hv, hvd'⟩ := List.mem_filterMap.1 hvd
-                      cases hfd : denseFindDomainAlg domCs v with
+                      cases hfd : denseFindDomainAlg (denseVarBucketLookup domIdx v) v with
                       | none => rw [hfd] at hvd'; simp at hvd'
                       | some dm =>
                         rw [hfd] at hvd'
                         simp only [Option.map_some, Option.some.injEq] at hvd'
                         obtain rfl := hvd'.symm
-                        exact denseFindDomainAlg_sound denv domCs v dm hfd hdom
+                        exact denseFindDomainAlg_sound denv (denseVarBucketLookup domIdx v) v dm hfd (hdom v)
                     have hpt := mem_denseAssignments ((RX.vars ++ RY.vars).eraseDups.filterMap
-                      (fun v => (denseFindDomainAlg domCs v).map (fun d => (v, d)))) denv hmemdoms
+                      (fun v => (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))) denv hmemdoms
                     have hagree : ∀ v, v ∈ (RX.vars ++ RY.vars).eraseDups →
                         denseEnvOfFast (((RX.vars ++ RY.vars).eraseDups.filterMap (fun v =>
-                          (denseFindDomainAlg domCs v).map (fun d => (v, d)))).map
+                          (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))).map
                             (fun vd => (vd.1, denv vd.1))) v = denv v := by
                       intro v hv
                       refine denseEnvOfFast_map _ denv v ?_
                       rw [show (((RX.vars ++ RY.vars).eraseDups.filterMap (fun v =>
-                        (denseFindDomainAlg domCs v).map (fun d => (v, d)))).map Prod.fst)
+                        (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))).map Prod.fst)
                         = (RX.vars ++ RY.vars).eraseDups from hcover]
                       exact hv
                     have hRXagree : RX.eval (denseEnvOfFast (((RX.vars ++ RY.vars).eraseDups.filterMap
-                        (fun v => (denseFindDomainAlg domCs v).map (fun d => (v, d)))).map
+                        (fun v => (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))).map
                           (fun vd => (vd.1, denv vd.1)))) = RX.eval denv :=
                       DenseExpr.eval_congr RX _ denv (fun v hv =>
                         hagree v (List.mem_eraseDups.2 (List.mem_append_left _ hv)))
                     have hRYagree : RY.eval (denseEnvOfFast (((RX.vars ++ RY.vars).eraseDups.filterMap
-                        (fun v => (denseFindDomainAlg domCs v).map (fun d => (v, d)))).map
+                        (fun v => (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))).map
                           (fun vd => (vd.1, denv vd.1)))) = RY.eval denv :=
                       DenseExpr.eval_congr RY _ denv (fun v hv =>
                         hagree v (List.mem_eraseDups.2 (List.mem_append_right _ hv)))
@@ -242,35 +242,35 @@ theorem denseFxCheck_sound [Fact p.Prime] (bs : BusSemantics p) (facts : BusFact
                         (hvalX.symm.trans hvalY) hWXlt hWYlt
                     -- the target condition at the environment's point
                     have hmempts : (((RX.vars ++ RY.vars).eraseDups.filterMap (fun v =>
-                          (denseFindDomainAlg domCs v).map (fun d => (v, d)))).map
+                          (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))).map
                             (fun vd => (vd.1, denv vd.1)),
                         decide (((-m) * RX.eval (denseEnvOfFast
                             (((RX.vars ++ RY.vars).eraseDups.filterMap
-                          (fun v => (denseFindDomainAlg domCs v).map (fun d => (v, d)))).map
+                          (fun v => (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))).map
                             (fun vd => (vd.1, denv vd.1))))).val
                           = ((-m) * RY.eval (denseEnvOfFast
                             (((RX.vars ++ RY.vars).eraseDups.filterMap
-                          (fun v => (denseFindDomainAlg domCs v).map (fun d => (v, d)))).map
+                          (fun v => (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))).map
                             (fun vd => (vd.1, denv vd.1))))).val))
                         ∈ ((denseAssignments ((RX.vars ++ RY.vars).eraseDups.filterMap (fun v =>
-                          (denseFindDomainAlg domCs v).map (fun d => (v, d))))).map
+                          (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d))))).map
                             (fun pt => (pt, decide (((-m) * RX.eval (denseEnvOfFast pt)).val
                               = ((-m) * RY.eval (denseEnvOfFast pt)).val)))) :=
                       List.mem_map.2 ⟨_, hpt, rfl⟩
                     have horb := List.all_eq_true.mp hcw _ hmempts
                     have hb : decide (((-m) * RX.eval (denseEnvOfFast (((RX.vars
                         ++ RY.vars).eraseDups.filterMap (fun v =>
-                          (denseFindDomainAlg domCs v).map (fun d => (v, d)))).map
+                          (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))).map
                             (fun vd => (vd.1, denv vd.1))))).val
                         = ((-m) * RY.eval (denseEnvOfFast
                             (((RX.vars ++ RY.vars).eraseDups.filterMap
-                          (fun v => (denseFindDomainAlg domCs v).map (fun d => (v, d)))).map
+                          (fun v => (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))).map
                             (fun vd => (vd.1, denv vd.1))))).val) = true :=
                       decide_eq_true (by rw [hRXagree, hRYagree]; exact hres)
                     simp only [hb, Bool.not_true, Bool.false_or, decide_eq_true_eq] at horb
                     -- the built expression agrees on the box point (all its vars are joint flags)
                     have hEagree : E.eval (denseEnvOfFast (((RX.vars ++ RY.vars).eraseDups.filterMap
-                        (fun v => (denseFindDomainAlg domCs v).map (fun d => (v, d)))).map
+                        (fun v => (denseFindDomainAlg (denseVarBucketLookup domIdx v) v).map (fun d => (v, d)))).map
                           (fun vd => (vd.1, denv vd.1)))) = E.eval denv := by
                       refine DenseExpr.eval_congr E _ denv (fun v hv => ?_)
                       refine hagree v (List.mem_eraseDups.2 ?_)
@@ -294,9 +294,9 @@ theorem denseFxLoop_sound [Fact p.Prime] (bs : BusSemantics p)
       (∀ denv, d.satisfies bs denv → ∀ i t, σ.fn i = some t → denv i = t.eval denv) →
       (∀ i t, σ.fn i = some t → ∀ z ∈ t.vars, z ∈ d.occ) →
       (∀ denv, d.satisfies bs denv → ∀ i t,
-          (denseFxLoop bs facts d.algebraicConstraints pending seen σ).fn i
+          (denseFxLoop bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints) pending seen σ).fn i
             = some t → denv i = t.eval denv) ∧
-      (∀ i t, (denseFxLoop bs facts d.algebraicConstraints pending seen σ).fn i
+      (∀ i t, (denseFxLoop bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints) pending seen σ).fn i
           = some t → ∀ z ∈ t.vars, z ∈ d.occ) := by
   intro pending
   induction pending with
@@ -324,7 +324,7 @@ theorem denseFxLoop_sound [Fact p.Prime] (bs : BusSemantics p)
           exact ih _ σ hrest hseen' hσs hσv
       | some ex =>
           simp only []
-          cases hd0 : denseFuPairData? bs facts d.algebraicConstraints ex.1.bi c ex.2 with
+          cases hd0 : denseFuPairData? bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints) ex.1.bi c ex.2 with
           | none =>
               simp only []
               exact ih _ σ hrest hseen' hσs hσv
@@ -350,11 +350,11 @@ theorem denseFxLoop_sound [Fact p.Prime] (bs : BusSemantics p)
                     simp only [Option.some.injEq] at hpif
                     rw [← hpif]
                     show denv vy = (denseBuildE d0 vy).eval denv
-                    have hfc : denseFxCheck bs facts d.algebraicConstraints
+                    have hfc : denseFxCheck bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints)
                         ex.1.bi c ex.2 (denseBuildE d0 vy) vy = true := by
                       unfold denseFxCheck; rw [hd0]; exact hck
-                    exact denseFxCheck_sound bs facts d.algebraicConstraints ex.1.bi c ex.2
-                      (denseBuildE d0 vy) vy hfc denv hsat.1 (hsat.2 ex.1.bi hexbi) (hsat.2 c hcmem)
+                    exact denseFxCheck_sound bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints) ex.1.bi c ex.2
+                      (denseBuildE d0 vy) vy hfc denv (fun v c' hc' => hsat.1 c' (denseVarBucket_mem DenseExpr.vars d.algebraicConstraints v c' hc')) (hsat.2 ex.1.bi hexbi) (hsat.2 c hcmem)
                   · rw [if_neg hck] at hpif
                     exact absurd hpif (by simp)
                 · -- (b) occurrence closure of the updated map
@@ -368,12 +368,12 @@ theorem denseFxLoop_sound [Fact p.Prime] (bs : BusSemantics p)
                     simp only [Option.some.injEq] at hpif
                     rw [← hpif]
                     intro z hz
-                    have hfc : denseFxCheck bs facts d.algebraicConstraints
+                    have hfc : denseFxCheck bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints)
                         ex.1.bi c ex.2 (denseBuildE d0 vy) vy = true := by
                       unfold denseFxCheck; rw [hd0]; exact hck
                     exact DenseConstraintSystem.mem_occ_of_bi hexbi (by
                       simp only [denseBIVars, List.mem_append]
-                      exact Or.inr (denseFxCheck_vars bs facts d.algebraicConstraints
+                      exact Or.inr (denseFxCheck_vars bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints)
                         ex.1.bi c ex.2 (denseBuildE d0 vy) vy hfc z hz))
                   · rw [if_neg hck] at hpif
                     exact absurd hpif (by simp)
@@ -388,9 +388,9 @@ theorem denseFxSubstF_eq (pw : PrimeWitness p) (bs : BusSemantics p) (facts : Bu
     (d : DenseConstraintSystem p) :
     denseFxSubstF pw bs facts d
       = (if pw.isPrime = true then
-          (if (denseFxLoop bs facts d.algebraicConstraints d.busInteractions ∅
+          (if (denseFxLoop bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints) d.busInteractions ∅
                 DenseSolved.empty).map.isEmpty then d
-           else d.substF (denseFxLoop bs facts d.algebraicConstraints d.busInteractions ∅
+           else d.substF (denseFxLoop bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints) d.busInteractions ∅
                 DenseSolved.empty).fn)
          else d) := rfl
 
@@ -399,9 +399,9 @@ theorem denseFxSubstF_eq (pw : PrimeWitness p) (bs : BusSemantics p) (facts : Bu
 theorem denseFxSubst_loop_invariant [Fact p.Prime] (bs : BusSemantics p)
     (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
     (∀ denv, d.satisfies bs denv → ∀ i t,
-        (denseFxLoop bs facts d.algebraicConstraints d.busInteractions ∅
+        (denseFxLoop bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints) d.busInteractions ∅
           DenseSolved.empty).fn i = some t → denv i = t.eval denv) ∧
-    (∀ i t, (denseFxLoop bs facts d.algebraicConstraints d.busInteractions ∅
+    (∀ i t, (denseFxLoop bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints) d.busInteractions ∅
         DenseSolved.empty).fn i = some t → ∀ z ∈ t.vars, z ∈ d.occ) := by
   refine denseFxLoop_sound bs facts d d.busInteractions ∅ DenseSolved.empty
     (fun _ h => h) ?_ ?_ ?_

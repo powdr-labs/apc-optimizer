@@ -1,5 +1,6 @@
 import ApcOptimizer.Implementation.OptimizerPasses.DomainBatch
 import ApcOptimizer.Implementation.OptimizerPasses.DomainFold
+import ApcOptimizer.Implementation.OptimizerPasses.AddrDiseq
 
 set_option autoImplicit false
 
@@ -188,6 +189,97 @@ def denseCheckReencode (d : DenseConstraintSystem p) (xs bits : List VarId)
       d.algebraicConstraints.all (fun c => !c.mentions b) &&
       d.busInteractions.all (fun bi =>
         !bi.multiplicity.mentions b && bi.payload.all (fun e => !e.mentions b)))
+
+/-! ### Compiled twin of the certificate
+
+`denseCheckReencode` walks the whole system once per bit for the freshness conjunct and scans the
+covered set twice; the twin computes the covered set once and decides freshness in a single walk
+against the bit set. -/
+
+theorem DenseExpr.mentionsAny_ofList_false_iff (bits : List VarId) (e : DenseExpr p) :
+    e.mentionsAny (Std.HashSet.ofList bits) = false ↔ ∀ b ∈ bits, e.mentions b = false := by
+  induction e with
+  | const c => simp [DenseExpr.mentionsAny, DenseExpr.mentions]
+  | var y =>
+      simp only [DenseExpr.mentionsAny, DenseExpr.mentions, Std.HashSet.contains_ofList]
+      constructor
+      · intro h b hb
+        cases hyb : y == b with
+        | false => rfl
+        | true =>
+            rw [show y = b from eq_of_beq hyb] at h
+            rw [List.contains_eq_mem, decide_eq_false_iff_not] at h
+            exact absurd hb h
+      · intro h
+        rw [List.contains_eq_mem, decide_eq_false_iff_not]
+        intro hy
+        exact absurd (h y hy) (by simp)
+  | add a b iha ihb =>
+      simp only [DenseExpr.mentionsAny, DenseExpr.mentions, Bool.or_eq_false_iff, iha, ihb]
+      constructor
+      · rintro ⟨ha, hb⟩ x hx
+        exact ⟨ha x hx, hb x hx⟩
+      · exact fun h => ⟨fun x hx => (h x hx).1, fun x hx => (h x hx).2⟩
+  | mul a b iha ihb =>
+      simp only [DenseExpr.mentionsAny, DenseExpr.mentions, Bool.or_eq_false_iff, iha, ihb]
+      constructor
+      · rintro ⟨ha, hb⟩ x hx
+        exact ⟨ha x hx, hb x hx⟩
+      · exact fun h => ⟨fun x hx => (h x hx).1, fun x hx => (h x hx).2⟩
+
+theorem denseFreshFused_eq (d : DenseConstraintSystem p) (bits : List VarId) :
+    (d.algebraicConstraints.all (fun c => !c.mentionsAny (Std.HashSet.ofList bits)) &&
+      d.busInteractions.all (fun bi =>
+        !bi.multiplicity.mentionsAny (Std.HashSet.ofList bits) &&
+        bi.payload.all (fun e => !e.mentionsAny (Std.HashSet.ofList bits))))
+      = bits.all (fun b =>
+          d.algebraicConstraints.all (fun c => !c.mentions b) &&
+          d.busInteractions.all (fun bi =>
+            !bi.multiplicity.mentions b && bi.payload.all (fun e => !e.mentions b))) := by
+  have hiff : ∀ {a b : Bool}, ((a = true) ↔ (b = true)) → a = b := by
+    intro a b h; cases a <;> cases b <;> simp_all
+  apply hiff
+  simp only [List.all_eq_true, Bool.and_eq_true, Bool.not_eq_true',
+    DenseExpr.mentionsAny_ofList_false_iff]
+  constructor
+  · rintro ⟨hcs, hbis⟩ b hb
+    exact ⟨fun c hc => hcs c hc b hb, fun bi hbi =>
+      ⟨(hbis bi hbi).1 b hb, fun e he => (hbis bi hbi).2 e he b hb⟩⟩
+  · intro h
+    exact ⟨fun c hc b hb => (h b hb).1 c hc, fun bi hbi =>
+      ⟨fun b hb => ((h b hb).2 bi hbi).1, fun e he b hb => ((h b hb).2 bi hbi).2 e he⟩⟩
+
+/-- `denseCheckReencode` with the covered set shared between the domain and soundness conjuncts
+    and the freshness conjunct decided in one system walk. -/
+def denseCheckReencodeFast (d : DenseConstraintSystem p) (xs bits : List VarId)
+    (hm : Std.HashMap VarId (DenseExpr p)) : Bool :=
+  let es := denseCoveredCsOf d xs
+  match denseGroupDoms es xs with
+  | none => false
+  | some doms =>
+    let survs := denseGroupSurvivorsE es doms
+    let patts := denseAssignments (denseBitBox bits)
+    decide ((doms.map (fun yd => yd.2.length)).prod ≤ 256) &&
+    decide (2 ≤ survs.length) &&
+    decide (bits.length < xs.length) &&
+    decide (bits.Nodup) &&
+    xs.all (fun x =>
+      ((DenseExpr.var x).substF (denseGroupSubst xs hm)).vars.all (fun v => bits.contains v)) &&
+    survs.all (fun s => patts.any (fun aβ =>
+      xs.all (fun x =>
+        decide (((DenseExpr.var x).substF (denseGroupSubst xs hm)).evalFast (denseEnvOfFast aβ)
+          = denseEnvOfFast s x)))) &&
+    patts.all (fun aβ => es.all (fun c =>
+      decide ((c.substF (denseGroupSubst xs hm)).evalFast (denseEnvOfFast aβ) = 0))) &&
+    (d.algebraicConstraints.all (fun c => !c.mentionsAny (Std.HashSet.ofList bits)) &&
+      d.busInteractions.all (fun bi =>
+        !bi.multiplicity.mentionsAny (Std.HashSet.ofList bits) &&
+        bi.payload.all (fun e => !e.mentionsAny (Std.HashSet.ofList bits))))
+
+@[csimp] theorem denseCheckReencode_eq_fast : @denseCheckReencode = @denseCheckReencodeFast := by
+  funext q d xs bits hm
+  unfold denseCheckReencode denseCheckReencodeFast
+  simp only [denseFreshFused_eq]
 
 /-! ## Derived-variable methods for the fresh bits
 

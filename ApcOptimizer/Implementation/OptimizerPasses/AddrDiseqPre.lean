@@ -48,84 +48,147 @@ theorem denseAddrPrep_slots_zip (shape : MemoryBusShape) (T : DenseTwoRootMap p)
           ((S.payload[slot]?).map (denseSlotPrep T), (m.payload[slot]?).map (denseSlotPrep T))) := by
   simp [denseAddrPrep, List.zip_map']
 
-/-! ## The prepared certificate twins -/
+/-! ## The prepared certificate twins
+
+The hot three (`ConstsNeq`/`ConstsEq`/`AffineNeq`/`TwoRootNeq`) recurse over the two slot lists
+directly — a mid-scan runs them once per compared pair, so a `zip` there allocates on every
+test. -/
+
+def denseConstsNeqSlots : List (Option (DenseSlotPre p)) → List (Option (DenseSlotPre p)) → Bool
+  | some sa :: as, some sb :: bs =>
+      (match sa.cval.get, sb.cval.get with
+       | some c, some c' => decide (c ≠ c')
+       | _, _ => false) || denseConstsNeqSlots as bs
+  | _ :: as, _ :: bs => denseConstsNeqSlots as bs
+  | _, _ => false
 
 def denseAddrConstsNeqP (a b : DenseAddrPre p) : Bool :=
-  (a.slots.zip b.slots).any (fun s =>
-    match s with
-    | (some sa, some sb) =>
-        (match sa.cval.get, sb.cval.get with
-         | some c, some c' => decide (c ≠ c')
-         | _, _ => false)
-    | _ => false)
+  denseConstsNeqSlots a.slots b.slots
+
+theorem denseConstsNeqSlots_eq (T : DenseTwoRootMap p) (S m : BusInteraction (DenseExpr p)) :
+    ∀ fields : List Nat,
+      denseConstsNeqSlots (fields.map (fun slot => (S.payload[slot]?).map (denseSlotPrep T)))
+          (fields.map (fun slot => (m.payload[slot]?).map (denseSlotPrep T)))
+        = fields.any (fun slot =>
+            match S.payload[slot]?, m.payload[slot]? with
+            | some e, some e' =>
+              (match e.constValue?, e'.constValue? with
+               | some c, some c' => decide (c ≠ c')
+               | _, _ => false)
+            | _, _ => false)
+  | [] => rfl
+  | slot :: rest => by
+      simp only [List.map_cons, List.any_cons]
+      rw [← denseConstsNeqSlots_eq T S m rest]
+      cases S.payload[slot]? <;> cases m.payload[slot]? <;> rfl
 
 theorem denseAddrConstsNeqP_eq (shape : MemoryBusShape) (T : DenseTwoRootMap p)
     (S m : BusInteraction (DenseExpr p)) :
     denseAddrConstsNeqP (denseAddrPrep shape T S) (denseAddrPrep shape T m)
-      = denseAddrConstsNeq shape S m := by
-  unfold denseAddrConstsNeqP denseAddrConstsNeq
-  rw [denseAddrPrep_slots_zip, List.any_map]
-  refine congrArg _ (funext fun slot => ?_)
-  simp only [Function.comp_apply]
-  cases S.payload[slot]? <;> cases m.payload[slot]? <;> rfl
+      = denseAddrConstsNeq shape S m :=
+  denseConstsNeqSlots_eq T S m shape.addressFields
+
+def denseConstsEqSlots : List (Option (DenseSlotPre p)) → List (Option (DenseSlotPre p)) → Bool
+  | some sa :: as, some sb :: bs =>
+      (decide (sa.expr = sb.expr) ||
+       (match sa.cval.get, sb.cval.get with
+        | some c, some c' => c = c'
+        | _, _ => false)) && denseConstsEqSlots as bs
+  | _ :: as, _ :: bs => false && denseConstsEqSlots as bs
+  | _, _ => true
 
 def denseAddrConstsEqP (a b : DenseAddrPre p) : Bool :=
-  (a.slots.zip b.slots).all (fun s =>
-    match s with
-    | (some sa, some sb) =>
-        decide (sa.expr = sb.expr) ||
-        (match sa.cval.get, sb.cval.get with
-         | some c, some c' => c = c'
-         | _, _ => false)
-    | _ => false)
+  denseConstsEqSlots a.slots b.slots
+
+theorem denseConstsEqSlots_eq (T : DenseTwoRootMap p) (S m : BusInteraction (DenseExpr p)) :
+    ∀ fields : List Nat,
+      denseConstsEqSlots (fields.map (fun slot => (S.payload[slot]?).map (denseSlotPrep T)))
+          (fields.map (fun slot => (m.payload[slot]?).map (denseSlotPrep T)))
+        = fields.all (fun slot =>
+            match S.payload[slot]?, m.payload[slot]? with
+            | some e, some e' =>
+              decide (e = e') ||
+              (match e.constValue?, e'.constValue? with
+               | some c, some c' => c = c'
+               | _, _ => false)
+            | _, _ => false)
+  | [] => rfl
+  | slot :: rest => by
+      simp only [List.map_cons, List.all_cons]
+      rw [← denseConstsEqSlots_eq T S m rest]
+      cases S.payload[slot]? <;> cases m.payload[slot]? <;> rfl
 
 theorem denseAddrConstsEqP_eq (shape : MemoryBusShape) (T : DenseTwoRootMap p)
     (S m : BusInteraction (DenseExpr p)) :
     denseAddrConstsEqP (denseAddrPrep shape T S) (denseAddrPrep shape T m)
-      = denseAddrConstsEq shape S m := by
-  unfold denseAddrConstsEqP denseAddrConstsEq
-  rw [denseAddrPrep_slots_zip, List.all_map]
-  refine congrArg _ (funext fun slot => ?_)
-  simp only [Function.comp_apply]
-  cases S.payload[slot]? <;> cases m.payload[slot]? <;> rfl
+      = denseAddrConstsEq shape S m :=
+  denseConstsEqSlots_eq T S m shape.addressFields
+
+def denseAffineNeqSlots : List (Option (DenseSlotPre p)) → List (Option (DenseSlotPre p)) → Bool
+  | some sa :: as, some sb :: bs =>
+      (match sa.lin.get, sb.lin.get with
+       | some L, some L' => denseConstDiffNZ L L'
+       | _, _ => false) || denseAffineNeqSlots as bs
+  | _ :: as, _ :: bs => denseAffineNeqSlots as bs
+  | _, _ => false
 
 def denseAddrAffineNeqP (a b : DenseAddrPre p) : Bool :=
-  (a.slots.zip b.slots).any (fun s =>
-    match s with
-    | (some sa, some sb) =>
-        (match sa.lin.get, sb.lin.get with
-         | some L, some L' => denseConstDiffNZ L L'
-         | _, _ => false)
-    | _ => false)
+  denseAffineNeqSlots a.slots b.slots
+
+theorem denseAffineNeqSlots_eq (T : DenseTwoRootMap p) (S m : BusInteraction (DenseExpr p)) :
+    ∀ fields : List Nat,
+      denseAffineNeqSlots (fields.map (fun slot => (S.payload[slot]?).map (denseSlotPrep T)))
+          (fields.map (fun slot => (m.payload[slot]?).map (denseSlotPrep T)))
+        = fields.any (fun slot =>
+            match S.payload[slot]?, m.payload[slot]? with
+            | some e, some e' =>
+              (match denseLinearize e, denseLinearize e' with
+               | some L, some L' => denseConstDiffNZ L L'
+               | _, _ => false)
+            | _, _ => false)
+  | [] => rfl
+  | slot :: rest => by
+      simp only [List.map_cons, List.any_cons]
+      rw [← denseAffineNeqSlots_eq T S m rest]
+      cases S.payload[slot]? <;> cases m.payload[slot]? <;> rfl
 
 theorem denseAddrAffineNeqP_eq (shape : MemoryBusShape) (T : DenseTwoRootMap p)
     (S m : BusInteraction (DenseExpr p)) :
     denseAddrAffineNeqP (denseAddrPrep shape T S) (denseAddrPrep shape T m)
-      = denseAddrAffineNeq shape S m := by
-  unfold denseAddrAffineNeqP denseAddrAffineNeq
-  rw [denseAddrPrep_slots_zip, List.any_map]
-  refine congrArg _ (funext fun slot => ?_)
-  simp only [Function.comp_apply]
-  cases S.payload[slot]? <;> cases m.payload[slot]? <;> rfl
+      = denseAddrAffineNeq shape S m :=
+  denseAffineNeqSlots_eq T S m shape.addressFields
+
+def denseTwoRootNeqSlots : List (Option (DenseSlotPre p)) → List (Option (DenseSlotPre p)) → Bool
+  | some sa :: as, some sb :: bs =>
+      sa.reds.get.any (fun red => sb.reds.get.any (fun red' =>
+        denseConstDiffNZ red.1 red'.1 && denseConstDiffNZ red.1 red'.2 &&
+        denseConstDiffNZ red.2 red'.1 && denseConstDiffNZ red.2 red'.2))
+      || denseTwoRootNeqSlots as bs
+  | _ :: as, _ :: bs => denseTwoRootNeqSlots as bs
+  | _, _ => false
 
 def denseAddrTwoRootNeqP (a b : DenseAddrPre p) : Bool :=
-  (a.slots.zip b.slots).any (fun s =>
-    match s with
-    | (some sa, some sb) =>
-        sa.reds.get.any (fun red => sb.reds.get.any (fun red' =>
-          denseConstDiffNZ red.1 red'.1 && denseConstDiffNZ red.1 red'.2 &&
-          denseConstDiffNZ red.2 red'.1 && denseConstDiffNZ red.2 red'.2))
-    | _ => false)
+  denseTwoRootNeqSlots a.slots b.slots
+
+theorem denseTwoRootNeqSlots_eq (T : DenseTwoRootMap p) (S m : BusInteraction (DenseExpr p)) :
+    ∀ fields : List Nat,
+      denseTwoRootNeqSlots (fields.map (fun slot => (S.payload[slot]?).map (denseSlotPrep T)))
+          (fields.map (fun slot => (m.payload[slot]?).map (denseSlotPrep T)))
+        = fields.any (fun slot =>
+            match S.payload[slot]?, m.payload[slot]? with
+            | some e, some e' => denseExprTwoRootNeq T e e'
+            | _, _ => false)
+  | [] => rfl
+  | slot :: rest => by
+      simp only [List.map_cons, List.any_cons]
+      rw [← denseTwoRootNeqSlots_eq T S m rest]
+      cases S.payload[slot]? <;> cases m.payload[slot]? <;> rfl
 
 theorem denseAddrTwoRootNeqP_eq (shape : MemoryBusShape) (T : DenseTwoRootMap p)
     (S m : BusInteraction (DenseExpr p)) :
     denseAddrTwoRootNeqP (denseAddrPrep shape T S) (denseAddrPrep shape T m)
-      = denseAddrTwoRootNeq shape T S m := by
-  unfold denseAddrTwoRootNeqP denseAddrTwoRootNeq
-  rw [denseAddrPrep_slots_zip, List.any_map]
-  refine congrArg _ (funext fun slot => ?_)
-  simp only [Function.comp_apply]
-  cases S.payload[slot]? <;> cases m.payload[slot]? <;> rfl
+      = denseAddrTwoRootNeq shape T S m :=
+  denseTwoRootNeqSlots_eq T S m shape.addressFields
 
 /-- `denseDiffSumOver` over prepared slot pairs (same fold, linearizations read from the prep). -/
 def denseDiffSumP : List (Option (DenseSlotPre p) × Option (DenseSlotPre p)) →

@@ -39,17 +39,17 @@ def denseFxCheckWith (d : DenseFuData p) (E : DenseExpr p) (vy : VarId) : Bool :
   d.pts.all (fun ptb => !ptb.2 || decide (denseEnvOfFast ptb.1 vy = E.eval (denseEnvOfFast ptb.1)))
 
 /-- The full certificate, defined through the shared pair data `denseFuPairData?`. -/
-def denseFxCheck (bs : BusSemantics p) (facts : BusFacts p bs) (domCs : List (DenseExpr p))
+def denseFxCheck (bs : BusSemantics p) (facts : BusFacts p bs) (domIdx : Std.HashMap VarId (List (DenseExpr p)))
     (biX biY : BusInteraction (DenseExpr p)) (x : VarId) (E : DenseExpr p)
     (vy : VarId) : Bool :=
-  match denseFuPairData? bs facts domCs biX biY x with
+  match denseFuPairData? bs facts domIdx biX biY x with
   | some d => denseFxCheckWith d E vy
   | none => false
 
 /-! ## The scan loop and the substitution pass (dense) -/
 
 /-- Scan for matched scaled-check pairs and adopt every certified interpolation `vy := E`. -/
-def denseFxLoop (bs : BusSemantics p) (facts : BusFacts p bs) (domCs : List (DenseExpr p)) :
+def denseFxLoop (bs : BusSemantics p) (facts : BusFacts p bs) (domIdx : Std.HashMap VarId (List (DenseExpr p))) :
     List (BusInteraction (DenseExpr p)) → Std.HashMap UInt64 (List (DenseFUSeen p)) →
       DenseSolved p → DenseSolved p
   | [], _, σ => σ
@@ -60,19 +60,19 @@ def denseFxLoop (bs : BusSemantics p) (facts : BusFacts p bs) (domCs : List (Den
           if e.key == xk.2 then some (e, xk.1) else none)) with
     | some ex =>
         -- pair-level work once per match; per-target checks share it (see `denseFxCheck`)
-        match denseFuPairData? bs facts domCs ex.1.bi c ex.2 with
+        match denseFuPairData? bs facts domIdx ex.1.bi c ex.2 with
         | none =>
-            denseFxLoop bs facts domCs rest
+            denseFxLoop bs facts domIdx rest
               (denseFuInsertAll seen (cands.map (fun xk => (⟨c, xk.1, xk.2⟩ : DenseFUSeen p)))) σ
         | some d =>
         let pairs := (d.ryVars.eraseDups.filter (fun v => !(v ∈ d.rxVars))).filterMap (fun vy =>
           if denseFxCheckWith d (denseBuildE d vy) vy
           then some (vy, denseBuildE d vy) else none)
-        denseFxLoop bs facts domCs rest
+        denseFxLoop bs facts domIdx rest
           (denseFuInsertAll seen (cands.map (fun xk => (⟨c, xk.1, xk.2⟩ : DenseFUSeen p))))
           (σ.insertAll pairs)
     | none =>
-        denseFxLoop bs facts domCs rest
+        denseFxLoop bs facts domIdx rest
           (denseFuInsertAll seen (cands.map (fun xk => (⟨c, xk.1, xk.2⟩ : DenseFUSeen p)))) σ
 
 /-- Entailed nonlinear substitution. When two bus interactions match up to a scaled range check,
@@ -82,7 +82,7 @@ def denseFxLoop (bs : BusSemantics p) (facts : BusFacts p bs) (domCs : List (Den
 def denseFxSubstF (pw : PrimeWitness p) (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) : DenseConstraintSystem p :=
   if pw.isPrime = true then
-    let σ := denseFxLoop bs facts d.algebraicConstraints d.busInteractions ∅ DenseSolved.empty
+    let σ := denseFxLoop bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints) d.busInteractions ∅ DenseSolved.empty
     if σ.map.isEmpty then d else d.substF σ.fn
   else d
 
