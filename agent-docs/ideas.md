@@ -513,3 +513,30 @@ worth a prototype on one index first.
 - **Runtime is a de-facto merge criterion**: build per-invocation indexes once; keep expensive
   arms out of hot per-query paths; put once-suffices passes in the coda.
 - **Check open PRs / recent `claude/*` branches for duplicates before implementing.**
+
+## Runtime ideas (2026-07-27 session, entry 148)
+
+- **Per-drop `alive` copies in busPairCancel**: with the region scans now sparse, the heavy-drop
+  cycle's residual includes `(alive.setIfInBounds iP false).setIfInBounds jP false` copying the
+  71k-entry array per drop (alive is shared by the scan closures). ~12k drops ≈ 1.7 GB of copies.
+  A persistent-friendly representation (e.g. a `Std.HashSet Nat` of tombstones consulted alongside
+  a stable array, or batching drops per findCancel sweep) could cut most of it.
+- **busUnify same-key mid verification**: `denseCheckPair` re-verifies each candidate's whole mid
+  window (`mid.all`). The same constant-key argument as entry 148 applies: mid messages with a
+  different constant key are refuted by the ConstsNeq arm. Needs the window's positions (the sweep
+  recovers mid positionally from the stored suffix), so it wants the sweep to carry position
+  ranges plus a `DenseKeyIdx`-style lookup; the sweep's `denseStepTest` per open symbolic window
+  is the other half.
+- **reencode cycle 0 (42–47 s to remove 128 vars)**: the remaining big certificate costs are the
+  per-candidate covered-set scans (`denseCoveredCsOf d xs`, a full pass over d per candidate —
+  the cached state's buckets could serve it with a threaded invariant) and the per-accept
+  full-system gated rewrite (`denseReencodeOutFast` — the state's `useCs` buckets + `foldCs` cover
+  exactly the positions the gate can fire on; needs a positions-driven twin with the state
+  invariant threaded, ~200-400 lines).
+- **domainBatch cycle 0 (26–28 s for 2.6k vars)**: gathers are bucket-served already; the cost is
+  hot-variable buckets × many candidate groups. Maybe gate groups on a cheap upper bound of the
+  gather size, or dedupe overlapping groups before gathering.
+- **flagFold cycle 0 (24 s, zero effect)**: NOT the domain lookups (bucketing them changed
+  nothing). Suspect `denseFuCandidates`' per-interaction `O.vars.eraseDups × splitAt` on large
+  first-slot payloads, or the per-matched-pair box evaluation in `denseFuPairData?`. Sample the
+  window before building anything.

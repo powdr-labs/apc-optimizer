@@ -5109,4 +5109,58 @@ prepared-`S` record out of `denseLiveAllSeg`'s and `denseShieldScanSeg`'s inner 
 `O(candidates + messages)`; `denseShieldScanSeg` needs a closure-parameterized twin
 (`denseShieldScanSegW pre prov …`, one induction) so the caller can supply the prepared tests.
 
-**Worked: yes.**
+**Worked: yes.**### 148. Runtime: sparse same-key region scans for busPairCancel (58 → 32 s on the 168k-var sha256 case)
+
+Targeting the >3x runtime gap vs powdr on the 168k-var sha256 case (timing comparison of
+2026-07-26: the sha256 set is 3.83x slower in Lean, 95 % of it this one case). A new `profile -v`
+mode (per-pass sizes and times inside each cleanup cycle) produced the pass×cycle matrix, and
+gdb sampling (`thread apply all` — the work happens on a worker thread, `bt` alone samples the
+main thread's join) attributed the hot windows.
+
+**The wrong first theory, kept for the record.** Entry 147 attributed ~42 % of busPairCancel to
+re-deriving certificate algebra per compared pair, so the first cut prepared per-interaction
+address data once (`DenseAddrPre`, AddrDiseqPre.lean: slot constants, linear forms, two-root
+reductions as memoizing thunks) and served the mid/shield scans from it. Measured cleanly, that
+REGRESSED busPairCancel (58.2 → 73.1 s zipped, 67.8 s after de-zipping the per-slot tests) while
+only the light cycles improved: the heavy-drop cycle's real cost is scan *volume*, not per-test
+algebra — ~12k accepted drops each re-scan an O(prefix) shield region ≈ 4×10⁸ steps, so any
+per-step constant dominates and extra indirection makes it worse. Sampling the cycle-1 window
+confirmed `denseShieldScanSegP`/`densePreRefutedP` on top.
+
+**The actual fix: sparse same-key scans (`BusPairCancelKeyIdx.lean`).** For a candidate whose
+address slots are all constants, a region message can only fail the region tests if it is on the
+same bus and either shares the candidate's constant key or has a symbolic key — every other
+position is refuted by the bus-id or constant-disequality arm and contributes the identity to the
+scan fold. `DenseKeyIdx` buckets each declared bus's positions by constant address key (ascending,
+`sym` for non-constant keys), built once per invocation on the stable array and threaded next to
+the prepared-certificate arrays. The sparse scans visit only the same-key bucket and `sym`
+filtered to the region; `denseRegionTests` packages the decision with the proof converting it
+back to the full-region forms `denseMkDropResult` consumes (builder completeness/ordering in
+`denseKeyIdxBuild_sound`, skipped-position refutations from `denseAddrKeyOf_ne_*`). Symbolic
+candidate keys fall back to the full scans. Region tests are now
+O(same-cell accesses + symbolic positions) per candidate instead of O(prefix).
+
+Also in this change set (each output-identical): busUnify's `denseCheckPair` verifier prepares
+the candidate side once per candidate and each mid message once (csimp twin); flagUnify/fxSubst
+domain lookups moved to `denseVarBucket` per-variable buckets (entry 143's pattern — hypothesis
+shape `∀ v, ∀ c ∈ lookup domIdx v, …` via `denseVarBucket_mem`); reencode's certificate computes
+the covered set once (was twice) and decides freshness in one system walk against the bit set
+(`mentionsAny`) instead of one walk per bit.
+
+**Numbers** (this 4-core box, clean serial `profile` runs; per-pass dt totals, which exclude the
+`-v` printing overhead). Baseline main `f2d2c62`: busPairCancel 58.2, reencode 59.3, gauss 37.8,
+domainBatch 37.4, busUnify 33.5, flagFold 32.4, total 409.2 s. Final head: **busPairCancel 32.5
+(0.56×; the heavy-drop cycle 47.5→21.6 s)**, reencode 56.1, gauss 37.7, domainBatch 38.9,
+busUnify 33.7, flagFold 31.1. keccak `run` output identical (2021/186/1748) and every sha256
+cycle's `(vars, bus, constraints)` triple identical to main. CI Runtime Bench on PR #223
+(`-f benchmark=sha256`) dispatched for same-runner totals.
+
+**Measurement lessons.** (1) A `-v` profile run is not comparable to a non-verbose one on totals
+or cycle times (the per-pass varCount printing adds ~8–10 s per big cycle); only per-pass dt
+totals compare. (2) Never run builds or other benchmarks concurrently with a measurement on this
+box — a keccak run plus two probe compiles inflated one busPairCancel reading by 15 s. (3) The
+remaining busPairCancel cost sits in the heavy-drop cycle's non-scan work: per-drop `alive` array
+copies (the array is shared by the scan closures, so `Array.set` copies 71k entries per drop),
+`denseCheckCancel`, and `denseFirstMatchAt`.
+
+**Worked: yes (busPairCancel 0.56×, output identity verified locally; PR #223).**
