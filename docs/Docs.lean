@@ -268,7 +268,7 @@ def Derivations.witgen (ds : Derivations p)
 
 ## The full completeness property
 
-Putting the pieces together, we define what it means for an optimized circuit to be a _complete_ replacement for an original circuit. Structurally, the returned derivations must contain no unused entries and must cover every output variable from the input variables, even if the original circuit has no admissible satisfying assignment. Semantically, every admissible satisfying input assignment must produce a satisfying and admissible output assignment with equivalent side effects.
+Putting the pieces together, we define what it means for an optimized circuit to be a _complete_ replacement for an original circuit. Structurally, the returned derivations must contain no unused entries and must cover every output variable from the input variables. Semantically, every admissible satisfying input assignment must produce a satisfying and admissible output assignment with equivalent side effects.
 
 ```anchor isCompleteReplacementOf
 /-- Whether an optimized circuit is a complete replacement for an original one. -/
