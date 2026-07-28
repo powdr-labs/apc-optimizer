@@ -293,21 +293,20 @@ def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
 -- ANCHOR_END: isSoundReplacementOf
 
 -- ANCHOR: isCompleteReplacementOf
-/-- Whether an optimized circuit is a complete replacement for an original one.
-    Assuming every input variable carries a powdr ID, `ds` contains only methods
-    for output variables and covers every output variable from the input,
-    independently of whether the original circuit has a real trace. For every
-    admissible satisfying input assignment, witness generation produces a
-    satisfying and admissible output assignment with equivalent side effects. -/
+/-- Whether an optimized circuit is a complete replacement for an original one. -/
 def Circuit.isCompleteReplacementOf
     (optimizedCircuit originalCircuit : Circuit p)
     (busSemantics : BusSemantics p) (ds : Derivations p) : Prop :=
-  -- Every variable in the original circuit must carry a powdr ID.
+  -- ASSUMPTION: every variable in the original circuit has a powdr ID.
   (∀ v ∈ originalCircuit.vars, v.powdrId?.isSome) →
-  -- These structural obligations hold even when the original circuit has no
-  -- admissible satisfying assignment.
+  -- `ds` does not contain unused derivations.
   (∀ derivation ∈ ds, derivation.1 ∈ optimizedCircuit.vars) ∧
+  -- The optimized circuit variables can be derived from the original circuit
+  -- variables, and the return derivations.
   ds.cover originalCircuit.vars optimizedCircuit.vars ∧
+  -- For any admissible satisfying assignment of the original circuit, the
+  -- optimized circuit is also satisfied and admissible, with equivalent side
+  -- effects, under the assignment produced by witness generation.
   ∀ assignment,
     originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
