@@ -161,14 +161,25 @@ theorem pipeline_respectsDeg (b : DegreeBound) : RespectsDeg b (pipeline (p := p
     (VarRegistry.empty.encodeCS cs).2 (VarRegistry.empty.encodeCS_covered cs) bs facts
     (by rw [VarRegistry.empty.decodeCS_encodeCS cs]; exact hin)
 
+/-- Use `ds`'s method for `v` when it reads only `inputVars`; otherwise use a constant fallback. -/
+def Derivations.safeMethod (ds : Derivations p) (inputVars : List Variable) (v : Variable) :
+    ComputationMethod p :=
+  match ds.methodFor v with
+  | some cm => if ∀ x ∈ cm.vars, x ∈ inputVars then cm else .const 0
+  | none => .const 0
+
+/-- Keep one structurally safe derivation for each no-ID output variable. -/
+def Derivations.forOutput (ds : Derivations p) (inputVars outputVars : List Variable) :
+    Derivations p :=
+  (outputVars.filter (fun v => v.powdrId?.isNone)).eraseDups.map
+    (fun v => (v, ds.safeMethod inputVars v))
+
 /-- The fact-aware circuit optimizer: given proven `BusFacts` (which fixes the implicit `bs`), run
     the pipeline and return the output system with the `Derivations` for its new variables. -/
 def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
     (cs : Circuit p) : Circuit p × Derivations p :=
   let r := pipeline b cs bs facts
-  -- Drop derivations for variables absent from the output: dead, and the spec requires every
-  -- recorded derivation to name an output variable.
-  (r.out, r.derivs.filter (fun d => decide (d.1 ∈ r.out.vars)))
+  (r.out, r.derivs.forOutput cs.vars r.out.vars)
 
 /-! ## Evaluation depends only on a system's variables
 
@@ -216,23 +227,49 @@ theorem Circuit.sideEffects_congr {cs : Circuit p} {bs : BusSemantics p}
   refine List.map_congr_left (fun bi hbi => ?_)
   simp only [Circuit.busEval_congr h (List.mem_of_mem_filter hbi)]
 
-/-- Pruning derivations to those naming a variable in `out` leaves `methodFor` unchanged on any
-    variable in `out`. -/
-theorem Derivations.methodFor_filter {out : List Variable} {v : Variable} (hv : v ∈ out)
-    (ds : Derivations p) :
-    Derivations.methodFor (ds.filter (fun d => decide (d.1 ∈ out))) v
-      = Derivations.methodFor ds v := by
-  induction ds with
+theorem Derivations.methodFor_map_same (vs : List Variable)
+    (f : Variable → ComputationMethod p) (v : Variable) :
+    Derivations.methodFor (vs.map (fun u => (u, f u))) v =
+      if v ∈ vs then some (f v) else none := by
+  induction vs with
   | nil => rfl
-  | cons hd tl ih =>
-    obtain ⟨u, cm⟩ := hd
-    by_cases hu : u ∈ out
-    · rw [List.filter_cons_of_pos (by simpa using hu)]
-      simp only [Derivations.methodFor, ih]
-    · rw [List.filter_cons_of_neg (by simpa using hu)]
-      rw [ih, Derivations.methodFor]
-      have hne : ¬ u = v := fun h => hu (h ▸ hv)
-      simp [hne]
+  | cons u rest ih =>
+      simp only [List.map_cons, Derivations.methodFor, ih, List.mem_cons]
+      by_cases hvrest : v ∈ rest
+      · simp [hvrest]
+      · by_cases huv : u = v
+        · subst u
+          simp [hvrest]
+        · have hvu : ¬v = u := fun h => huv h.symm
+          simp [hvrest, huv, hvu]
+
+theorem Derivations.forOutput_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
+    {v : Variable} (hv : v ∈ outputVars) (hpw : v.powdrId? = none) :
+    (ds.forOutput inputVars outputVars).methodFor v = some (ds.safeMethod inputVars v) := by
+  unfold Derivations.forOutput
+  rw [Derivations.methodFor_map_same, if_pos]
+  simp [hv, hpw]
+
+theorem Derivations.safeMethod_vars (ds : Derivations p) (inputVars : List Variable) (v : Variable) :
+    ∀ x ∈ (ds.safeMethod inputVars v).vars, x ∈ inputVars := by
+  cases hm : ds.methodFor v with
+  | none =>
+      intro x hx
+      simp [Derivations.safeMethod, hm, ComputationMethod.vars] at hx
+  | some cm =>
+      simp only [Derivations.safeMethod, hm]
+      by_cases hsafe : ∀ x ∈ cm.vars, x ∈ inputVars
+      · rw [if_pos hsafe]
+        exact hsafe
+      · rw [if_neg hsafe]
+        simp [ComputationMethod.vars]
+
+theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List Variable}
+    {v : Variable} {cm : ComputationMethod p} (hm : ds.methodFor v = some cm)
+    (hvars : ∀ x ∈ cm.vars, x ∈ inputVars) :
+    ds.safeMethod inputVars v = cm := by
+  simp only [Derivations.safeMethod, hm]
+  rw [if_pos hvars]
 
 /-- The fact-aware optimizer is correct: its output soundly replaces the input and completely
     replaces the input's real-trace executions (`witgen` on any admissible input trace reproduces a
@@ -243,11 +280,25 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
       (optimizerWithBusFacts b facts cs).1.isCompleteReplacementOf cs bs (optimizerWithBusFacts b facts cs).2 := by
   refine ⟨(pipeline b cs bs facts).correct.toSound, ?_⟩
   intro hpow
-  refine ⟨?_, ?_⟩
-  · -- Every recorded derivation names an output variable — that is exactly the pruning predicate,
-    -- so this needs no assignment.
+  refine ⟨?_, ?_, ?_⟩
+  · -- `forOutput` records only no-ID variables occurring in the output.
     intro d hd
-    simpa using (List.mem_filter.mp hd).2
+    change d ∈ (pipeline b cs bs facts).derivs.forOutput cs.vars
+      (pipeline b cs bs facts).out.vars at hd
+    change d.1 ∈ (pipeline b cs bs facts).out.vars
+    rw [Derivations.forOutput, List.mem_map] at hd
+    obtain ⟨v, hv, rfl⟩ := hd
+    exact List.mem_of_mem_filter (List.mem_eraseDups.mp hv)
+  · -- Every output variable is either reused from the input or has a safe method.
+    intro v hv
+    cases hpw : v.powdrId? with
+    | some w =>
+        obtain ⟨_himpl, _hinv, hS, _hcomp⟩ := (pipeline b cs bs facts).correct
+        exact hS v hv (by simp [hpw])
+    | none =>
+        exact ⟨(pipeline b cs bs facts).derivs.safeMethod cs.vars v,
+          Derivations.forOutput_methodFor hv hpw,
+          Derivations.safeMethod_vars _ _ _⟩
   intro env hadm hsat
   obtain ⟨_himpl, _hinv, hS, hcomp⟩ := (pipeline b cs bs facts).correct
   obtain ⟨env', hsat', hadm', hse, hA, hR⟩ := hcomp env hadm hsat
@@ -257,43 +308,33 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
       fun u hu hunone => absurd (hpow u hu) (by simp [hunone])
     simpa using hR cs.vars (fun v hv _ => hv) [] hrec0
   have hagree : ∀ v ∈ (pipeline b cs bs facts).out.vars,
-      Derivations.witgen (pipeline b cs bs facts).derivs env v = env' v := by
+      Derivations.witgen ((pipeline b cs bs facts).derivs.forOutput cs.vars
+        (pipeline b cs bs facts).out.vars) env v = env' v := by
     intro v hv
     cases hpw : v.powdrId? with
     | some w =>
         simp only [Derivations.witgen, hpw]
         exact (hA v (by simp [hpw])).symm
     | none =>
-        obtain ⟨cm, hm, hxpow, _hxinput, heq⟩ := hrec v hv hpw
-        simp only [Derivations.witgen, hpw, hm]
+        obtain ⟨cm, hm, hxpow, hxinput, heq⟩ := hrec v hv hpw
+        have hsafe : (pipeline b cs bs facts).derivs.safeMethod cs.vars v = cm :=
+          Derivations.safeMethod_eq hm hxinput
+        have hm' := Derivations.forOutput_methodFor
+          (ds := (pipeline b cs bs facts).derivs) (inputVars := cs.vars)
+          (outputVars := (pipeline b cs bs facts).out.vars) hv hpw
+        rw [hsafe] at hm'
+        simp only [Derivations.witgen, hpw, hm']
         rw [← heq]
         exact ComputationMethod.eval_congr cm env env' (fun x hx => (hA x (hxpow x hx)).symm)
-  -- Pruning leaves `witgen` unchanged on output vars (`methodFor_filter`), so `hagree` transports.
-  have hagree' : ∀ v ∈ (pipeline b cs bs facts).out.vars,
-      Derivations.witgen ((pipeline b cs bs facts).derivs.filter
-        (fun d => decide (d.1 ∈ (pipeline b cs bs facts).out.vars))) env v = env' v := by
-    intro v hv
-    rw [show Derivations.witgen ((pipeline b cs bs facts).derivs.filter
-          (fun d => decide (d.1 ∈ (pipeline b cs bs facts).out.vars))) env v
-        = Derivations.witgen (pipeline b cs bs facts).derivs env v by
-      simp only [Derivations.witgen, Derivations.methodFor_filter hv]]
-    exact hagree v hv
-  refine ⟨?_, (Circuit.satisfies_congr hagree').mpr hsat',
-    (Circuit.admissible_congr hagree').mpr hadm', ?_⟩
-  · -- `ds` covers the output columns: reused ones exist in the input (`hS`); derived ones have a
-    -- method reading only powdr-ID columns, preserved by the pruning.
-    intro v hv
-    cases hpw : v.powdrId? with
-    | some w => exact hS v hv (by simp [hpw])
-    | none =>
-        obtain ⟨cm, hm, _hxpow, hxinput, _⟩ := hrec v hv hpw
-        exact ⟨cm, (Derivations.methodFor_filter hv _).trans hm, hxinput⟩
-  · show cs.sideEffects bs env
-        ≈ (pipeline b cs bs facts).out.sideEffects bs (Derivations.witgen
-            ((pipeline b cs bs facts).derivs.filter
-              (fun d => decide (d.1 ∈ (pipeline b cs bs facts).out.vars))) env)
-    rw [Circuit.sideEffects_congr hagree']
-    exact hse
+  refine ⟨(Circuit.satisfies_congr hagree).mpr hsat',
+    (Circuit.admissible_congr hagree).mpr hadm', ?_⟩
+  · have hse' : cs.sideEffects bs env
+          ≈ (pipeline b cs bs facts).out.sideEffects bs (Derivations.witgen
+              ((pipeline b cs bs facts).derivs.forOutput cs.vars
+                (pipeline b cs bs facts).out.vars) env) := by
+        rw [Circuit.sideEffects_congr hagree]
+        exact hse
+    simpa only [optimizerWithBusFacts] using hse'
 
 /-- The fact-aware optimizer never pushes a within-bound circuit past the zkVM's degree
     bound (every pass is degree-guarded). -/

@@ -268,30 +268,27 @@ def Derivations.witgen (ds : Derivations p)
 
 ## The full completeness property
 
-Putting the pieces together, we define what it means for an optimized circuit to be a _complete_ replacement for an original circuit: For any admissible satisfying assignment of the original circuit, there must exist a computable assignment of the optimized circuit that is itself satisfying and admissible, with equivalent side effects.
+Putting the pieces together, we define what it means for an optimized circuit to be a _complete_ replacement for an original circuit. Structurally, the returned derivations must contain no unused entries and must cover every output variable from the input variables, even if the original circuit has no admissible satisfying assignment. Semantically, every admissible satisfying input assignment must produce a satisfying and admissible output assignment with equivalent side effects.
 
 ```anchor isCompleteReplacementOf
 /-- Whether an optimized circuit is a complete replacement for an original one.
-    Assuming every input variable carries a powdr ID, then `ds` derives nothing
-    the optimized circuit does not use, and for any admissible satisfying
-    assignment of the original circuit, there is a computable assignment of the
-    optimized circuit that is itself satisfying and admissible, with equivalent
-    side effects. -/
+    Assuming every input variable carries a powdr ID, `ds` contains only methods
+    for output variables and covers every output variable from the input,
+    independently of whether the original circuit has a real trace. For every
+    admissible satisfying input assignment, witness generation produces a
+    satisfying and admissible output assignment with equivalent side effects. -/
 def Circuit.isCompleteReplacementOf
     (optimizedCircuit originalCircuit : Circuit p)
     (busSemantics : BusSemantics p) (ds : Derivations p) : Prop :=
+  -- Every variable in the original circuit must carry a powdr ID.
   (∀ v ∈ originalCircuit.vars, v.powdrId?.isSome) →
-  -- `ds` records no derivation for a variable the optimized circuit does not
-  -- have. A property of the optimizer's output alone, so it is stated here
-  -- rather than per assignment below.
+  -- These structural obligations hold even when the original circuit has no
+  -- admissible satisfying assignment.
   (∀ derivation ∈ ds, derivation.1 ∈ optimizedCircuit.vars) ∧
-  ∀ assignment, originalCircuit.admissible busSemantics assignment →
+  ds.cover originalCircuit.vars optimizedCircuit.vars ∧
+  ∀ assignment,
+    originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
-    -- `cover` mentions no assignment either, but it stays here on purpose: a
-    -- derivation's method is only known to reproduce its variable against an
-    -- actual satisfying assignment, so there is nothing to establish it from
-    -- for an input circuit that has no real trace.
-    ds.cover originalCircuit.vars optimizedCircuit.vars ∧
     let assignment' := Derivations.witgen ds assignment
     optimizedCircuit.satisfies busSemantics assignment' ∧
       optimizedCircuit.admissible busSemantics assignment' ∧

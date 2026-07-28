@@ -38,6 +38,10 @@ its last entry — duplicates are allowed, the later one wins) reading only inpu
 exactly what lets witness generation extend an input trace to an output trace. (The requirement is
 only demanded when the input's columns all carry powdr IDs — the intended shape of an exported
 circuit; a variable with no powdr ID cannot be read from the input trace.)
+The structural half — every returned derivation names an output variable, and `cover` reconstructs
+all output variables from input columns — holds even when the input has no admissible satisfying
+assignment. Only the value-agreement, satisfaction, admissibility, and side-effect clauses are
+gated by a real trace.
 
 `optimizerMaintainsCorrectness bs opt` bundles `refines`, preservation of
 `guaranteesInvariants`, and staying within the VM's degree bound — for a *given* bus semantics
@@ -123,7 +127,10 @@ with no cap a large basic block could exceed — the recursion is guarded by exa
 decrease `decreasing_by` needs. Two free corollaries: the loop is size-monotone by construction
 (`denseIterateToFixpoint_monotone` — the optimizer can only shrink the circuit), and correctness is the
 usual `PassCorrect` composition (each kept cycle refines; stopping returns the input). Applied to
-proven facts, `optimizerWithBusFacts` is a
+proven facts, `optimizerWithBusFacts` canonicalizes the accumulated methods to one derivation per
+distinct no-ID output variable. It keeps a pipeline method when that method reads only input
+variables and otherwise uses a constant fallback; real-trace reconstruction proves that the
+fallback is never selected for a variable whose value matters to completeness. The result is a
 circuit-to-circuit map; `simpleOptimizer` is the trivial-facts instance (`BusFacts.trivial`). The
 audited `ApcOptimizer/Optimizer.lean` proves the master theorem
 `optimizerWithBusFacts_maintainsCorrectness` (correctness for *every* bus semantics and choice of
