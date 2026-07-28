@@ -242,7 +242,13 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
     (optimizerWithBusFacts b facts cs).1.isSoundReplacementOf cs bs ∧
       (optimizerWithBusFacts b facts cs).1.isCompleteReplacementOf cs bs (optimizerWithBusFacts b facts cs).2 := by
   refine ⟨(pipeline b cs bs facts).correct.toSound, ?_⟩
-  intro hpow env hadm hsat
+  intro hpow
+  refine ⟨?_, ?_⟩
+  · -- Every recorded derivation names an output variable — that is exactly the pruning predicate,
+    -- so this needs no assignment.
+    intro d hd
+    simpa using (List.mem_filter.mp hd).2
+  intro env hadm hsat
   obtain ⟨_himpl, _hinv, hS, hcomp⟩ := (pipeline b cs bs facts).correct
   obtain ⟨env', hsat', hadm', hse, hA, hR⟩ := hcomp env hadm hsat
   have hrec : (pipeline b cs bs facts).out.reconstructs cs.vars
@@ -272,7 +278,7 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
         = Derivations.witgen (pipeline b cs bs facts).derivs env v by
       simp only [Derivations.witgen, Derivations.methodFor_filter hv]]
     exact hagree v hv
-  refine ⟨?_, ?_, (Circuit.satisfies_congr hagree').mpr hsat',
+  refine ⟨?_, (Circuit.satisfies_congr hagree').mpr hsat',
     (Circuit.admissible_congr hagree').mpr hadm', ?_⟩
   · -- `ds` covers the output columns: reused ones exist in the input (`hS`); derived ones have a
     -- method reading only powdr-ID columns, preserved by the pruning.
@@ -282,9 +288,6 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
     | none =>
         obtain ⟨cm, hm, _hxpow, hxinput, _⟩ := hrec v hv hpw
         exact ⟨cm, (Derivations.methodFor_filter hv _).trans hm, hxinput⟩
-  · -- Every recorded derivation names an output variable — that is exactly the pruning predicate.
-    intro d hd
-    simpa using (List.mem_filter.mp hd).2
   · show cs.sideEffects bs env
         ≈ (pipeline b cs bs facts).out.sideEffects bs (Derivations.witgen
             ((pipeline b cs bs facts).derivs.filter

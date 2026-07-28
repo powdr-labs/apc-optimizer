@@ -272,18 +272,26 @@ Putting the pieces together, we define what it means for an optimized circuit to
 
 ```anchor isCompleteReplacementOf
 /-- Whether an optimized circuit is a complete replacement for an original one.
-    Assuming every input variable carries a powdr ID, then for any admissible
-    satisfying assignment of the original circuit, there is a computable
-    assignment of the optimized circuit that is itself satisfying and
-    admissible, with equivalent side effects. -/
+    Assuming every input variable carries a powdr ID, then `ds` derives nothing
+    the optimized circuit does not use, and for any admissible satisfying
+    assignment of the original circuit, there is a computable assignment of the
+    optimized circuit that is itself satisfying and admissible, with equivalent
+    side effects. -/
 def Circuit.isCompleteReplacementOf
     (optimizedCircuit originalCircuit : Circuit p)
     (busSemantics : BusSemantics p) (ds : Derivations p) : Prop :=
   (∀ v ∈ originalCircuit.vars, v.powdrId?.isSome) →
+  -- `ds` records no derivation for a variable the optimized circuit does not
+  -- have. A property of the optimizer's output alone, so it is stated here
+  -- rather than per assignment below.
+  (∀ derivation ∈ ds, derivation.1 ∈ optimizedCircuit.vars) ∧
   ∀ assignment, originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
+    -- `cover` mentions no assignment either, but it stays here on purpose: a
+    -- derivation's method is only known to reproduce its variable against an
+    -- actual satisfying assignment, so there is nothing to establish it from
+    -- for an input circuit that has no real trace.
     ds.cover originalCircuit.vars optimizedCircuit.vars ∧
-    (∀ derivation ∈ ds, derivation.1 ∈ optimizedCircuit.vars) ∧
     let assignment' := Derivations.witgen ds assignment
     optimizedCircuit.satisfies busSemantics assignment' ∧
       optimizedCircuit.admissible busSemantics assignment' ∧
