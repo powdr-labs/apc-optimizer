@@ -115,10 +115,10 @@ def denseNeverZeroB (ops : DenseZModOps p) (B : Std.HashMap VarId Nat) (e : Dens
     becomes `x-5 = 0`. Recurses into the surviving factor. -/
 def denseResolveExpr (ops : DenseZModOps p) (B : Std.HashMap VarId Nat) :
     DenseExpr p → DenseExpr p
-  | .mul f g =>
+  | e@(.mul f g) =>
       if denseNeverZeroB ops B g then denseResolveExpr ops B f
       else if denseNeverZeroB ops B f then denseResolveExpr ops B g
-      else .mul f g
+      else e
   | e => e
 
 theorem denseResolveExpr_vars (ops : DenseZModOps p) (B : Std.HashMap VarId Nat) (e : DenseExpr p) :
