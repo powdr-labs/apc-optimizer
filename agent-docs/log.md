@@ -7187,3 +7187,54 @@ unused theorem. All six twins verified live and chain-free in the C — the `Imp
 
 **Worked: yes** (xorEqExtract, digitFold, subsumedCheck, splitBytePair); **no** for subsumedRange and
 IdentitySubst, both dropped.
+
+### 181. Runtime: lockstep degree guard with `withPtrEq` identity shortcuts (0.94–0.96x end-to-end)
+
+R5's guard half — the lockstep design the 2026-08-04 profiling session called for. `guardDegree`
+re-ran `withinDegreeB` (a full degree walk, three closure allocations per call, a boxed `Bool` per
+item) on every pass output, including the ~62 % of invocations that return their input untouched.
+The check now runs in lockstep against the pass *input*: `withPtrEq` identity shortcuts at the
+whole-system and per-item level skip the walk for anything that *is* the input object, and each
+paired position tests `outOk || !inOk` — `true` on identical items by Bool excluded middle, which
+is exactly `withPtrEq`'s proof obligation, so the change is axiom-free (no `unsafe`, no
+`implemented_by`; the integrity script still reports the three standard axioms). On the
+within-bound inputs the guarded pipeline maintains, `outOk || !inOk` decides exactly `outOk`
+(`denseWithinDegreeLK_sound`), which is what `guardDegree_respectsDeg` consumes; unpaired output
+items (appends, length changes) get the plain check, so the guard never rejects a within-bound
+output.
+
+Two implementation notes that will bite anyone touching this:
+- **`denseWithinDegreeLK` must stay `@[irreducible]`.** `optimizerWithBusFacts_correct`'s `change`
+  tactics whnf through the folded 40-pass pipeline; with the fatter guard body that reduction blew
+  past 16x the heartbeat budget. Irreducible makes the reducer stop at the guard's `if` instead of
+  evaluating the check against the whole pipeline prefix; no `maxHeartbeats` change anywhere.
+- The unfolding lemmas (`denseWithinDegreeLK_def`, the `_eq` pair) are proven *before* the
+  attribute flips; everything downstream goes through them, never through delta.
+
+LANDED (interleaved, 3 reps + one sha256 shot, 20-core box, serial): sha256 `apc_001`
+**20.79 → 20.01 s (0.962x)**, wasm-eth `apc_012` **0.940x**, keccak `apc_001` **0.963x**, wasm-eth
+`apc_036` ~0.95x. Per-pass, the rebuilt cheap sweeps that were mostly guard collapse: degenRange
+22 → 7 ms, hintCollapse 15 → 9, bytePack 18 → 10 on the representatives; sha256 flagFold
+1094 → 1028, domainFold 1191 → 1124. Output identical on wasm-eth `apc_012`/`apc_036`, OpenVM
+keccak and SP1 keccak, and sha256's final sizes.
+
+What this does NOT cover of R5: the `unchanged : Option (out = d ∧ derivs = [])` field — the
+fixpoint's per-cycle `sizeKey` skip and the guard's `inc_ref`/restore branch. Alone it is now
+sub-bar (the guard walk it mostly existed to skip is skipped); it is the substrate for R15's
+cross-cycle skip memo (per-pass verdicts + a pass state channel, R14) and should be sized as one
+unit with that.
+
+DROPPED, measured the same session, do not retry as stated (details in the dead-ends list):
+- **Shrink-first pre-cycle**: effectiveness-identical but sha256 a wash (the heavy passes got
+  20–30 % cheaper on the pre-shrunk system and the pre-stage consumed exactly what they saved) and
+  wasm-eth `apc_012` **2.0x** — its main-cycle gauss exploded 215 ms → 2.7 s (basis/shape
+  sensitivity, the entry-134 hazard). Rescheduling relocates first-time shrink work; it does not
+  shrink it.
+- **De-boxing the guard loop without lockstep** (proven csimp, verified live in the C): **flat**
+  (±1–2 % representatives, sha256 +1.5 %). The guard's cost is the walk's memory latency, not the
+  loop machinery. A first variant returning `Option Nat` was **4–7 % slower everywhere** — an
+  allocation per tree node dwarfs any dispatch it saves.
+- **Reencode seed capacity slack** (`toArray`-seeded `cs`/`cvs` pay a full copy on the first
+  `pushBool`): **flat** — ~11 pointer-word memcpys per run; `copy_expand` is ~0.7 % of the run.
+
+**Worked: yes** (the lockstep guard); the three DROPPED items are recorded dead ends.

@@ -454,6 +454,13 @@ where a pass has already been rebuilt to a cheap sweep: zeroMultBus **76 %**, on
 hintCollapse 39 %, bytePack 34 %, xorEqExtract 26 %, degenRange 16 %, carryBranch 14 %, and 3–8 % for
 the big passes. `DenseExpr.degree` is 5.4 % of whole-run samples and `guardDegree` is 21 % of all
 `lean_dec_ref_cold` callers (`List.all` boxes a closure and a `Bool` per item).
+**The guard half landed (entry 181): `guardDegree` now checks in lockstep against the pass input,
+with axiom-free `withPtrEq` identity shortcuts** — 0.94–0.96x end-to-end on every representative
+and sha256, output-identical. What remains of R5 — the `unchanged` field, the fixpoint `sizeKey`
+skip, the guard's `inc_ref`/restore branch — is sub-bar alone; treat it as the substrate of the
+R15 cross-cycle skip memo (with R14's state channel) and size the three together. Note the guard's
+`dec_ref` attribution was mostly the old-generation free cascade landing in its frame, not
+`List.all` boxing — de-boxing alone measured flat (entry 181's DROPPED list).
 
 **R6. Cross-cycle dirtiness (the real fix for no-op rescans)**  ·  *large refactor; the cheap
 slice is now a measured dead end*. **Do not build a cross-cycle negative-memo for domainBatch**:
@@ -977,6 +984,23 @@ instead of 256 (~30× on those scans). It needs a per-item degree analysis and a
 are non-survivors" argument (`a·y + b = 0` has at most one root when `a ≠ 0`).
 
 ### Runtime dead ends (measured; do not re-propose without new evidence)
+
+- **A shrink-first pre-cycle** (entry 181: a `gauss → normalize → constFold → dedup →
+  trivialConstr` fixpoint between prelude and cleanup, so the heavy passes see a smaller system):
+  effectiveness-identical, but sha256 is a wash — the heavy passes get 20–30 % cheaper and the
+  pre-stage consumes exactly what they save — and wasm-eth `apc_012` regresses **2.0x**, its
+  main-cycle gauss exploding 215 ms → 2.7 s on the pre-shrunk system (basis/shape sensitivity, the
+  entry-134 hazard). First-time shrink work costs the same wherever it runs; any revival needs a
+  pre-stage strictly cheaper than the passes themselves (a fused-sweep shape) with gauss kept out.
+- **De-boxing the guard loop without lockstep** (entry 181: monomorphic `all` loops + a capped
+  allocation-free degree walk, proven csimp, verified live in the C): **flat** — the guard's cost
+  is the tree walk's memory latency, not closures/`lean_apply_1`/Bool boxing. A variant returning
+  `Option Nat` per node was 4–7 % *slower* everywhere: never introduce a per-node ctor return on a
+  hot walk.
+- **Capacity slack for reencode's `pushBool` seeds** (entry 181): the first push onto a
+  `toArray`-seeded array copies it whole (24 % of `Array.push` samples), but that is ~11
+  pointer-word memcpys per run — **flat**. `copy_expand` is ~0.7 % of the run; its other sites are
+  amortized doubling on small buckets.
 
 - **Deferring a per-invocation index's force to its first query** (entry 174, busPairCancel's
   `cands`): the counters say it is queried 2 498 times in sha256 cycle 1, 0 times in cycles 8–10 and
