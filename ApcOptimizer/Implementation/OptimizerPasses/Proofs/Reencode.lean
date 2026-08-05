@@ -3525,7 +3525,9 @@ theorem denseRncBuild_state (ctx : DenseRncCtx p) (reg : VarRegistry) (st : Dens
     (xs : List VarId) (fb : String) :
     (denseRncBuild ctx reg st xs fb).2.2 = (denseRncDoms ctx.ops st xs #[]).2 := by
   unfold denseRncBuild
-  split <;> next h => rw [h]
+  split
+  · next h => rw [h]
+  · next h => rw [h]; split <;> rfl
 
 theorem denseRncBuild_core (ctx : DenseRncCtx p) (reg : VarRegistry) (st : DenseRncState p)
     (xs : List VarId) (fb : String) : DenseRncCore st (denseRncBuild ctx reg st xs fb).2.2 := by
@@ -3570,9 +3572,16 @@ theorem denseRncBuild_spec (ctx : DenseRncCtx p) (reg : VarRegistry) (st : Dense
   split
   · exact ⟨VarRegistry.Extends.refl reg, fun _ => rfl, fun cd hcd => absurd hcd (by simp)⟩
   · next doms st' hd =>
-      obtain ⟨hext, hii, hcd⟩ := denseRncBuildCand_spec ctx reg st'
-        (denseCoveredIdxPos st.anchor st.cs xs) doms xs fb
-      exact ⟨hext, hii, hcd⟩
+      split
+      · exact ⟨VarRegistry.Extends.refl reg, fun _ => rfl, fun cd hcd => absurd hcd (by simp)⟩
+      · obtain ⟨hext, hii, hcd⟩ := denseRncBuildCand_spec ctx reg st'
+          (denseCoveredIdxPos st'.anchor st'.cs xs) doms xs fb
+        have hcore := denseRncCore_doms ctx.ops xs st #[]
+        rw [hd] at hcore
+        refine ⟨hext, hii, fun cd hc => ?_⟩
+        obtain ⟨h1, h2, h3, h4, h5⟩ := hcd cd hc
+        rw [hcore.anchor, hcore.cs] at h1
+        exact ⟨h1, h2, h3, h4, h5⟩
 
 /-! ### The write's freshness fields
 

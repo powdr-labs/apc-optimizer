@@ -1294,17 +1294,22 @@ def denseRncBuildCand (ctx : DenseRncCtx p) (reg : VarRegistry) (st : DenseRncSt
             (rb.1, some { bits := bits, k := k, vals := vals, hm := hm, patts := patts,
                           pattsA := pattsA, imgs := imgs, es := es, ces := ces, survs := survs })
 
-/-- Gather the covered set, look up the domains (updating the memo), then build the candidate.
-    Proof-free — `denseRncCert` re-verifies. -/
+/-- Look up the domains (updating the memo), gate on the box size, and only then gather the
+    covered set and build the candidate — an undomained or big-box group never pays the
+    `denseCoveredIdxPos` gather. The gather reads `st'` (whose `anchor`/`cs` equal `st`'s,
+    `denseRncCore_doms`), never `st`: a pending `st` use would un-share the memo arrays inside
+    `denseRncDoms`. Proof-free — `denseRncCert` re-verifies. -/
 def denseRncBuild (ctx : DenseRncCtx p) (reg : VarRegistry) (st : DenseRncState p)
     (xs : List VarId) (freshBase : String) :
     VarRegistry × Option (DenseRncCand p) × DenseRncState p :=
-  let planned := denseCoveredIdxPos st.anchor st.cs xs
   match denseRncDoms ctx.ops st xs #[] with
   | (none, st') => (reg, none, st')
   | (some doms, st') =>
-    let r := denseRncBuildCand ctx reg st' planned doms xs freshBase
-    (r.1, r.2, st')
+    if doms.foldl (fun n dd => n * dd.size) 1 > 256 then (reg, none, st')
+    else
+      let planned := denseCoveredIdxPos st'.anchor st'.cs xs
+      let r := denseRncBuildCand ctx reg st' planned doms xs freshBase
+      (r.1, r.2, st')
 
 /-! ### The checked certificate
 
