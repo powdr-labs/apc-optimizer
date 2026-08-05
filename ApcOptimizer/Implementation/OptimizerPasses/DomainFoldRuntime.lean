@@ -498,7 +498,9 @@ termination_by i touched => touched.size - i
 decreasing_by all_goals omega
 
 /-- One target: domains, box gate, survivors, and the items it rewrites. Reads the system arrays
-    only — the caller applies the changes, so a rejected target costs no copy. -/
+    only — the caller applies the changes, so a rejected target costs no copy. A target that
+    touches nothing rewritable (no fold position, no touched interaction) skips the enumeration:
+    both collect results would be empty regardless of the survivors. -/
 def dfPlan (ix : DfIdx p) (keys : Array VarId) (cs : Array (DenseExpr p))
     (bis : Array (BusInteraction (DenseExpr p))) :
     List (Nat × DenseExpr p) × List (Nat × BusInteraction (DenseExpr p)) :=
@@ -508,12 +510,15 @@ def dfPlan (ix : DfIdx p) (keys : Array VarId) (cs : Array (DenseExpr p))
     if doms.foldl (fun n d => n * d.length) 1 > 256 then ([], [])
     else
       let fs := dfCovScan keys ix.src cs (dfTouched ix.csB keys) 0 [] []
-      let survs := dfEnumGo (zmodZeroP p)
-        (dfLevels keys.size fs.2 (Array.replicate keys.size [])) doms keys.size 0 #[[]]
-      if survs.isEmpty then ([], [])
+      let touchedBis := dfTouched ix.bisB keys
+      if fs.1.isEmpty && touchedBis.isEmpty then ([], [])
       else
-        let ctx : DfCtx p := ⟨keys, dfColRes survs keys.size⟩
-        (dfCollectCs ctx cs fs.1 [], dfCollectBis ctx bis 0 (dfTouched ix.bisB keys) [])
+        let survs := dfEnumGo (zmodZeroP p)
+          (dfLevels keys.size fs.2 (Array.replicate keys.size [])) doms keys.size 0 #[[]]
+        if survs.isEmpty then ([], [])
+        else
+          let ctx : DfCtx p := ⟨keys, dfColRes survs keys.size⟩
+          (dfCollectCs ctx cs fs.1 [], dfCollectBis ctx bis 0 touchedBis [])
 
 def dfApplyCs (cs : Array (DenseExpr p)) (ch : List (Nat × DenseExpr p)) : Array (DenseExpr p) :=
   match ch with

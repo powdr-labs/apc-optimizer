@@ -1611,7 +1611,9 @@ theorem dfPlan_correct [Fact p.Prime] (bs : BusSemantics p) (isInput : VarId →
     · dsimp only
       split
       · exact DensePassCorrect_refl isInput _ bs
-      · rename_i hbox _
+      · split
+        · exact DensePassCorrect_refl isInput _ bs
+        rename_i hbox _ _
         set touched := dfTouched ix.csB keys with htouched
         set fs := dfCovScan keys ix.src cs touched 0 [] [] with hfs
         set survs := dfEnumGo (zmodZeroP p)
@@ -1801,7 +1803,9 @@ theorem dfLoop_covered (reg : VarRegistry) (csB bisB : Array (Array Nat))
             · dsimp only
               split
               · exact hcs
-              · exact dfApplyCs_covered reg _ (fun j => dfColRes_e? _ _ j) cs _ hcs
+              · split
+                · exact hcs
+                · exact dfApplyCs_covered reg _ (fun j => dfColRes_e? _ _ j) cs _ hcs
         · rw [dfPlan]
           split
           · exact hbis
@@ -1810,7 +1814,9 @@ theorem dfLoop_covered (reg : VarRegistry) (csB bisB : Array (Array Nat))
             · dsimp only
               split
               · exact hbis
-              · exact dfApplyBis_covered reg _ (fun j => dfColRes_e? _ _ j) bis _ hbis
+              · split
+                · exact hbis
+                · exact dfApplyBis_covered reg _ (fun j => dfColRes_e? _ _ j) bis _ hbis
 
 /-! ## The pass -/
 
