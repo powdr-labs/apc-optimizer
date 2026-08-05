@@ -1002,6 +1002,23 @@ are non-survivors" argument (`a·y + b = 0` has at most one root when `a ≠ 0`)
   pointer-word memcpys per run — **flat**. `copy_expand` is ~0.7 % of the run; its other sites are
   amortized doubling on small buckets.
 
+- **carryBranch candidate-restricted bounds build at per-invocation cost** (entry 182):
+  `denseBuildWith (some keep)` is behavior-identical for any keep ⊇ the certifiable factors'
+  variables, but *computing* keep per invocation loses on the big case however it is cut —
+  crude (all vars under mul roots): keccak pass 0.70x but sha256 1.11x (the set covers nearly
+  everything, ~1 M inserts of pure overhead); refined (affine-nonzero-const factors only):
+  sha256 1.32x (an `Option`-per-node classifier over the factor forest, factors re-walked
+  through nested spines). Viable only with the classification amortized once per run over
+  prepared interactions — the P1 static-tables substrate. The `e@` scrutinee return landed.
+- **reencode `denseRegisterBits` deferral past the degree pre-gate** (entry 182, spec):
+  rejected candidates register ~13.6 k × k phantom bit names per sha256 no-op invocation
+  (`Reencode.lean` `denseRncBuildCand`), growing `reg.byId.size` monotonically (which sizes
+  three `Array.replicate nVar` allocations per invocation) and making `denseRncNameTaken` force
+  the cross-cycle `varSeen` build. Deferring registration until after `denseRncDegPre` removes
+  all of it, but restructures `denseRncBuildCand`'s candidate record (bits feed the accept
+  thunks) and `denseRncStep`'s gate order, so `denseRncBuildCand_spec` and the `fun_cases` walk
+  in `denseRncStep_correct` need re-deriving. Real but bounded (~1 % sha256); do it if that
+  proof region is ever open for other reasons.
 - **Deferring a per-invocation index's force to its first query** (entry 174, busPairCancel's
   `cands`): the counters say it is queried 2 498 times in sha256 cycle 1, 0 times in cycles 8–10 and
   the coda, and **once in the whole keccak run**, so its 198 ms of build looks pure waste. Passing

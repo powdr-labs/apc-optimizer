@@ -7252,3 +7252,46 @@ the walk's own `_self` lemma mid-recursion — no threaded proof, no framework t
 rebased on the same main): sha256 0.940 vs 0.948–0.956, apc_036 0.933 vs 0.959, keccak 0.931 vs
 0.954, apc_012 0.962 vs 0.922 (#281's one consistent edge — unexplained, noted in its close-out).
 #281 closed in favour of this branch with credit for both walk ideas.
+### 182. Runtime: three no-op-prologue fixes — domainFold skips empty-target enumeration, carryBranch stops rebuilding unresolved products, reencode gates its covered-set gather (0.94–1.00x per pass, small cases 0.990–0.995x)
+
+Three contained fixes to work passes do before discovering they have nothing to do, from a
+recognizer-level analysis of the no-op wall (~30 % of cleanup pass time is passes finding
+nothing; cross-pass gating and cross-cycle memoization of that wall were both prototyped and
+measured dead — the surviving lever is making each pass's own discovery cheaper).
+
+- **domainFold** (`dfPlan`): the ≤256-point box enumeration and `dfColRes` ran even when
+  `dfCovScan` had already produced no fold position and no touched interaction — the collects
+  were empty regardless of the survivors. Bail first. 0.94–0.97x on the pass.
+- **carryBranch** (`denseResolveExpr`): the unresolved-product fallthrough rebuilt `.mul f g`
+  — ~157 k reallocated roots per sha256 invocation, and no unchanged constraint ever
+  pointer-identical, so downstream per-item pointer shortcuts (the lockstep guard) can never
+  fire for this pass. `e@(.mul f g) => … else e` returns the original node. 0.97–0.99x now;
+  the guard-walk share lands when the lockstep guard does.
+- **reencode** (`denseRncBuild`): `denseCoveredIdxPos` (bucket union → `HashSet` → `mergeSort`
+  → a `denseCoveredBy` walk per candidate position) ran before the domain lookup and box gate
+  that reject a group for free. Reorder — with the gather reading `st'` (post-doms), because a
+  pending use of `st` un-shares the memo arrays inside `denseRncDoms` and turns its in-place
+  array updates into full `nVar`-sized copies: the first version read `st` and measured **2x
+  on the pass** (keccak 103 → 205 ms) before the aliasing was fixed. 0.97–1.00x on the pass.
+
+Corpus spot totals (interleaved, 3 reps): wasm apc_012 0.990x, apc_036 0.993x, keccak 0.995x,
+sha256 neutral. Output bit-identical on all four cases; proof-integrity clean. Proof cost: two
+extra `split` arms in `Proofs/DomainFold.lean`, an anchor/cs rewrite through `DenseRncCore` in
+`denseRncBuild_spec`, zero for carryBranch (the `@`-pattern is definitionally transparent).
+
+DROPPED, measured, do not retry as stated:
+- **carryBranch candidate-restricted bounds build** (`denseBuildWith (some keep)`): correct
+  (`denseAddAllWith`'s key-independence held — output identical) but the keep-set is the wrong
+  side of the trade at per-invocation cost. Crude keep (all vars under mul roots): keccak
+  carryBranch 0.70x but sha256 **1.11x** — 157 k of 200 k sha256 constraints are mul-rooted, so
+  the set covers nearly everything and its ~1 M-insert build is pure overhead. Refined keep
+  (affine-nonzero-const factors only): sha256 **1.32x** — the classifier walks the whole factor
+  forest with an `Option` per node and re-walks factors through nested spines. The restriction
+  only pays if the classification is computed once per run on prepared interactions (the P1
+  substrate), not per invocation.
+- **reencode `denseRegisterBits` deferral past the degree pre-gate** (rejected candidates mint
+  ~13.6 k × k phantom registry names per sha256 no-op invocation, grow the registry
+  monotonically, and force the cross-cycle `varSeen` build): not attempted here — it
+  restructures `denseRncStep`'s gate sequence and `denseRncBuildCand`'s candidate record, and
+  the `fun_cases` walk in `denseRncStep_correct` plus `denseRncBuildCand_spec` would need a
+  full re-derivation. Spec'd in ideas.md; the win is real but bounded (~1 % sha256).
