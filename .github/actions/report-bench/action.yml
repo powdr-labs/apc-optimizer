@@ -13,6 +13,12 @@ inputs:
   note:
     description: Trailing italic note appended to the PR comment (not to the job summary)
     default: ""
+  note-file:
+    description: >-
+      File holding the note, for callers whose note text comes from an artifact — passing such text
+      through an input would route it via GITHUB_ENV/GITHUB_OUTPUT, which its own content can spoof.
+      Takes precedence over `note`.
+    default: ""
   pr:
     description: PR number to comment on (empty = job summary only)
     default: ""
@@ -36,13 +42,18 @@ runs:
         MD: ${{ inputs.md-file }}
         MARKER: ${{ inputs.marker }}
         NOTE: ${{ inputs.note }}
+        NOTE_FILE: ${{ inputs.note-file }}
         PR: ${{ inputs.pr }}
       run: |
         body="$RUNNER_TEMP/sticky-comment-body.md"
         {
           echo "$MARKER"
           cat "$MD"
-          if [ -n "$NOTE" ]; then printf '\n_%s_\n' "$NOTE"; fi
+          if [ -n "$NOTE_FILE" ] && [ -s "$NOTE_FILE" ]; then
+            printf '\n_%s_\n' "$(cat "$NOTE_FILE")"
+          elif [ -n "$NOTE" ]; then
+            printf '\n_%s_\n' "$NOTE"
+          fi
         } > "$body"
         cid=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
           --jq '.[] | select(.body | startswith(env.MARKER)) | .id' | head -n 1)

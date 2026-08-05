@@ -264,8 +264,13 @@ jobs:
           path: rt-*.json
           if-no-files-found: ignore
 
-  # One sticky comment: per set an effectiveness table (with a report-only runtime row) and, for
-  # openvm-eth, the collapsed runtime detail from bench-runtime. Runs even if a job was skipped.
+  # One report: per set an effectiveness table (with a report-only runtime row) and, for openvm-eth,
+  # the collapsed runtime detail from bench-runtime. Runs even if a job was skipped.
+  #
+  # This job publishes -- it does not comment. A `pull_request` run of a fork gets a read-only
+  # GITHUB_TOKEN and public repos have no setting that changes that, so a comment step here is
+  # unpostable on exactly the PRs that most need the report. Instead the markdown goes to the job
+  # summary and to an artifact, and the `PR Report Comment` workflow posts it from base-repo context.
   report:
     if: always() && github.event_name == 'pull_request'
     needs: [baseline, effectiveness, bench-runtime]
@@ -273,7 +278,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       # Two artifacts per group cell (both sides, benched on that cell's runner); merge each side's
@@ -331,15 +335,9 @@ jobs:
             fi
             printf '\n' >> bench.md
           done
-      - name: Report
-        uses: ./.github/actions/report-bench
-        with:
-          md-file: bench.md
-          marker: "<!-- runtime-bench-quick -->"
-          # Comment on same-repo PRs only: fork PRs get a read-only token.
-          pr: ${{ github.event.pull_request.head.repo.full_name == github.repository
-                  && github.event.number || '' }}
-          note: >-
+      - name: Publish the report
+        env:
+          NOTE: >-
             openvm-eth + wasm-eth + keccak + sha256 + sp1/rsp + sp1/keccak,
             PR `${{ steps.note.outputs.pr_sha }}`
             ${{ steps.note.outputs.benched_sha
@@ -349,4 +347,13 @@ jobs:
             Effectiveness is exact. Each set's two sides are benched back to back on one runner, so
             the runtime row is comparable -- but coarse: benchmark.py runs cases in parallel. For
             per-pass detail: `gh workflow run "Runtime Bench" -f pr=${{ github.event.number }}`.
-          token: ${{ github.token }}
+        run: |
+          cat bench.md >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$NOTE" > note.md
+      # Consumed by `PR Report Comment` (pr_report_comment.yml) via this run's id.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-bench-report
+          path: |
+            bench.md
+            note.md

@@ -1,0 +1,74 @@
+name: PR Report Comment
+
+# Post the Lean Action CI bench report to its pull request as a sticky comment — one comment per
+# PR, updated in place on every push.
+#
+# The `report` job in Lean Action CI cannot post it itself. A `pull_request` run of a fork's branch
+# gets a read-only GITHUB_TOKEN, and on a public repository there is no setting that grants a write
+# token there (the "send write tokens to fork pull requests" option exists only for private repos).
+# So that job publishes the markdown as an artifact and this workflow — triggered by `workflow_run`,
+# which always runs in base-repo context, from the default branch's copy of this file, with the
+# permissions declared here — posts it. Same-repo and fork PRs go through the identical path.
+#
+# The trust boundary: this job holds a write token and must not run PR code. It checks out the
+# default branch (never the PR head), runs no build, and takes only markdown from the upstream run.
+# The PR number is resolved from the `workflow_run` payload's head repo and branch, both set by
+# GitHub, so a fork cannot aim the comment at another PR by writing a number into the artifact.
+# The report body itself is derived from PR code, as any bench result must be.
+
+on:
+  workflow_run:
+    workflows: ["Lean Action CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+concurrency:
+  group: pr-report-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      # Absent when `report` failed before uploading, or when the whole run was cancelled; then
+      # there is nothing to post and the job simply ends.
+      - name: Download the report
+        id: report
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: pr-bench-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: report
+      - name: Resolve the PR
+        id: pr
+        if: steps.report.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # `<owner>:<branch>` of the run that produced the report — the `head` filter's format.
+          HEAD: ${{ github.event.workflow_run.head_repository.owner.login }}:${{ github.event.workflow_run.head_branch }}
+        run: |
+          num=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$HEAD" \
+            --jq '.[0].number // empty')
+          if [ -z "$num" ]; then
+            echo "::notice::no open PR for $HEAD; nothing to comment on"
+          fi
+          echo "number=$num" >> "$GITHUB_OUTPUT"
+      - name: Sticky comment
+        if: steps.pr.outputs.number != ''
+        uses: ./.github/actions/report-bench
+        with:
+          md-file: report/bench.md
+          note-file: report/note.md
+          marker: "<!-- runtime-bench-quick -->"
+          pr: ${{ steps.pr.outputs.number }}
+          token: ${{ github.token }}
