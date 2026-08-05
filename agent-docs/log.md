@@ -7238,3 +7238,17 @@ DROPPED, measured the same session, do not retry as stated (details in the dead-
   `pushBool`): **flat** — ~11 pointer-word memcpys per run; `copy_expand` is ~0.7 % of the run.
 
 **Worked: yes** (the lockstep guard); the three DROPPED items are recorded dead ends.
+
+**Addendum (same session): the walk upgraded with PR #281's two refinements, certificate-free.**
+A parallel draft (#281) had independently built the same guard idea around a threaded degree
+certificate (`DenseGuardedPassW`, 4 files). A three-way A/B on current main showed its edge over
+the plain lockstep guard (sha256 0.94x vs 0.97x) came from its *walk*, not its certificate: a
+remaining-list `withPtrEq` at every step (one compare retires a shared tail — 35–45 % of guard
+nodes sit in one, per #281's probe) and monomorphic per-item walkers (no closure per interaction).
+Both fit the certificate-free design: `denseDegItemsFast`/`denseDegBisFast` return
+`{ r : Bool // r = denseDegItemsLK … }` so the list-level `withPtrEq` obligation is discharged by
+the walk's own `_self` lemma mid-recursion — no threaded proof, no framework type change,
+`denseWithinDegreeLK`'s interface and everything downstream unchanged. Hybrid vs #281 (medians,
+rebased on the same main): sha256 0.940 vs 0.948–0.956, apc_036 0.933 vs 0.959, keccak 0.931 vs
+0.954, apc_012 0.962 vs 0.922 (#281's one consistent edge — unexplained, noted in its close-out).
+#281 closed in favour of this branch with credit for both walk ideas.

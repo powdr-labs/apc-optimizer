@@ -108,14 +108,23 @@ private theorem denseDegItemLK_eq (bnd : Nat) (cIn cOut : DenseExpr p) :
     denseDegItemLK bnd cIn cOut
       = (decide (cOut.degree ≤ bnd) || !decide (cIn.degree ≤ bnd)) := rfl
 
+/-- The payload degree check without the closure `List.all` allocates per interaction. -/
+def denseDegExprsOk (bnd : Nat) : List (DenseExpr p) → Bool
+  | [] => true
+  | e :: rest => decide (e.degree ≤ bnd) && denseDegExprsOk bnd rest
+
+private theorem denseDegExprsOk_eq (bnd : Nat) (l : List (DenseExpr p)) :
+    denseDegExprsOk bnd l = l.all (fun e => decide (e.degree ≤ bnd)) := by
+  induction l with
+  | nil => rfl
+  | cons e rest ih => rw [denseDegExprsOk, ih, List.all_cons]
+
 /-- One lockstep interaction check (multiplicity and payload together); see `denseDegItemLK`. -/
 def denseDegBiLK (bnd : Nat) (bIn bOut : BusInteraction (DenseExpr p)) : Bool :=
   withPtrEq bOut bIn
     (fun _ =>
-      (decide (bOut.multiplicity.degree ≤ bnd)
-          && bOut.payload.all (fun e => decide (e.degree ≤ bnd)))
-        || !(decide (bIn.multiplicity.degree ≤ bnd)
-          && bIn.payload.all (fun e => decide (e.degree ≤ bnd))))
+      (decide (bOut.multiplicity.degree ≤ bnd) && denseDegExprsOk bnd bOut.payload)
+        || !(decide (bIn.multiplicity.degree ≤ bnd) && denseDegExprsOk bnd bIn.payload))
     (fun h => by subst h; exact bool_or_not_self _)
 
 private theorem denseDegBiLK_eq (bnd : Nat) (bIn bOut : BusInteraction (DenseExpr p)) :
@@ -123,7 +132,10 @@ private theorem denseDegBiLK_eq (bnd : Nat) (bIn bOut : BusInteraction (DenseExp
       = ((decide (bOut.multiplicity.degree ≤ bnd)
             && bOut.payload.all (fun e => decide (e.degree ≤ bnd)))
           || !(decide (bIn.multiplicity.degree ≤ bnd)
-            && bIn.payload.all (fun e => decide (e.degree ≤ bnd)))) := rfl
+            && bIn.payload.all (fun e => decide (e.degree ≤ bnd)))) := by
+  show ((decide (bOut.multiplicity.degree ≤ bnd) && denseDegExprsOk bnd bOut.payload)
+      || !(decide (bIn.multiplicity.degree ≤ bnd) && denseDegExprsOk bnd bIn.payload)) = _
+  rw [denseDegExprsOk_eq, denseDegExprsOk_eq]
 
 def denseDegItemsLK (bnd : Nat) : List (DenseExpr p) → List (DenseExpr p) → Bool
   | cIn :: din, cOut :: dout => denseDegItemLK bnd cIn cOut && denseDegItemsLK bnd din dout
@@ -151,6 +163,39 @@ private theorem denseDegBisLK_self (bnd : Nat) (l : List (BusInteraction (DenseE
   | cons bi rest ih =>
       show (denseDegBiLK bnd bi bi && denseDegBisLK bnd rest rest) = true
       rw [denseDegBiLK_eq, bool_or_not_self, ih, Bool.and_self]
+
+/-- `denseDegItemsLK` with a remaining-list identity shortcut at every step: a shared tail is
+    retired by one pointer compare (`denseDegItemsLK_self` is `withPtrEq`'s obligation there).
+    The `Subtype` carries the walk's own specification so that obligation can be discharged while
+    the recursion is elaborated; its only runtime field is the `Bool`. -/
+def denseDegItemsFast (bnd : Nat) : (din dout : List (DenseExpr p)) →
+    { r : Bool // r = denseDegItemsLK bnd din dout }
+  | cIn :: din, cOut :: dout =>
+      have hval : (denseDegItemLK bnd cIn cOut && (denseDegItemsFast bnd din dout).1)
+          = denseDegItemsLK bnd (cIn :: din) (cOut :: dout) := by
+        rw [(denseDegItemsFast bnd din dout).2]; rfl
+      ⟨withPtrEq (cOut :: dout) (cIn :: din)
+        (fun _ => denseDegItemLK bnd cIn cOut && (denseDegItemsFast bnd din dout).1)
+        (fun h => by
+          rw [hval, show cIn :: din = cOut :: dout from h.symm]
+          exact denseDegItemsLK_self bnd _),
+       hval⟩
+  | din, dout => ⟨denseDegItemsLK bnd din dout, rfl⟩
+
+/-- `denseDegItemsFast` for the interaction lists. -/
+def denseDegBisFast (bnd : Nat) : (din dout : List (BusInteraction (DenseExpr p))) →
+    { r : Bool // r = denseDegBisLK bnd din dout }
+  | bIn :: din, bOut :: dout =>
+      have hval : (denseDegBiLK bnd bIn bOut && (denseDegBisFast bnd din dout).1)
+          = denseDegBisLK bnd (bIn :: din) (bOut :: dout) := by
+        rw [(denseDegBisFast bnd din dout).2]; rfl
+      ⟨withPtrEq (bOut :: dout) (bIn :: din)
+        (fun _ => denseDegBiLK bnd bIn bOut && (denseDegBisFast bnd din dout).1)
+        (fun h => by
+          rw [hval, show bIn :: din = bOut :: dout from h.symm]
+          exact denseDegBisLK_self bnd _),
+       hval⟩
+  | din, dout => ⟨denseDegBisLK bnd din dout, rfl⟩
 
 private theorem denseDegItemsLK_sound (bnd : Nat) (din dout : List (DenseExpr p))
     (hin : din.all (fun c => decide (c.degree ≤ bnd)) = true)
@@ -198,16 +243,20 @@ private theorem denseDegBisLK_sound (bnd : Nat) (din dout : List (BusInteraction
 def denseWithinDegreeLK (dIn dOut : DenseConstraintSystem p) (b : DegreeBound) : Bool :=
   withPtrEq dOut dIn
     (fun _ =>
-      denseDegItemsLK b.identities dIn.algebraicConstraints dOut.algebraicConstraints
-        && denseDegBisLK b.busInteractions dIn.busInteractions dOut.busInteractions)
+      (denseDegItemsFast b.identities dIn.algebraicConstraints dOut.algebraicConstraints).1
+        && (denseDegBisFast b.busInteractions dIn.busInteractions dOut.busInteractions).1)
     (fun h => by
       subst h
-      rw [denseDegItemsLK_self, denseDegBisLK_self, Bool.and_self])
+      rw [(denseDegItemsFast ..).2, (denseDegBisFast ..).2,
+        denseDegItemsLK_self, denseDegBisLK_self, Bool.and_self])
 
 private theorem denseWithinDegreeLK_def (dIn dOut : DenseConstraintSystem p) (b : DegreeBound) :
     denseWithinDegreeLK dIn dOut b
       = (denseDegItemsLK b.identities dIn.algebraicConstraints dOut.algebraicConstraints
-          && denseDegBisLK b.busInteractions dIn.busInteractions dOut.busInteractions) := rfl
+          && denseDegBisLK b.busInteractions dIn.busInteractions dOut.busInteractions) := by
+  show ((denseDegItemsFast b.identities dIn.algebraicConstraints dOut.algebraicConstraints).1
+      && (denseDegBisFast b.busInteractions dIn.busInteractions dOut.busInteractions).1) = _
+  rw [(denseDegItemsFast ..).2, (denseDegBisFast ..).2]
 
 /-- A `true` lockstep verdict on a within-bound input puts the output within the bound. -/
 private theorem denseWithinDegreeLK_sound (dIn dOut : DenseConstraintSystem p) (b : DegreeBound)
