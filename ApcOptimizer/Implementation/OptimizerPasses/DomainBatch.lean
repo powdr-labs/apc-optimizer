@@ -1808,6 +1808,151 @@ def dbBuildCtx (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstrain
     biVarlessCount := biSummary.1, biVarlessInformative := biSummary.2.1,
     biVarlessDomRed := biSummary.2.2.1, constOk := biSummary.2.2.2 }
 
+/-! ## The fused context build
+
+`dbBuildCtx` makes eleven passes over the system (two `toArray`s, two var-list maps, two `dbNvOf`
+folds, four table/item phases, two `zipIdx` bucket folds). The fused build makes four, walking
+the lists directly: constraints (vars + roots + the running variable bound in one pass),
+interactions (vars + resolved facts + slot bounds in one pass), then — once the table is final —
+one item pass per side that also fills the buckets and the varless summaries in place. The
+domain table grows on demand (`insertG`), since the variable bound is not known until the walks
+finish; every read is a `getD`, so a short table reads exactly like the `nv`-sized one. -/
+
+def DbTab.insertG (T : DbTab p) (i : Nat) (d : DbDom) : DbTab p :=
+  let ⟨dom⟩ := T
+  let dom := if i < dom.size then dom
+    else dom ++ Array.replicate (max (dom.size * 2) (i + 1) - dom.size) none
+  match dom.getD i none with
+  | some d0 => if d.size < d0.size then ⟨dom.set! i (some d)⟩ else ⟨dom⟩
+  | none => ⟨dom.set! i (some d)⟩
+
+def dbAddConstraintVarsG (e : DenseExpr p) (vs : Array VarId) (k : Nat) (T : DbTab p) :
+    DbTab p :=
+  if h : k < vs.size then
+    match dbRootsAt vs k e with
+    | some rs =>
+      dbAddConstraintVarsG e vs (k + 1) (T.insertG vs[k].index (.explicit (rs.map ZMod.val).toArray))
+    | none => dbAddConstraintVarsG e vs (k + 1) T
+  else T
+  termination_by vs.size - k
+  decreasing_by all_goals omega
+
+def dbBusSlotsG {bs : BusSemantics p} (facts : BusFacts p bs) (bi : BusInteraction (DenseExpr p))
+    (mult? : Option (ZMod p)) (pat : List (Option (ZMod p))) :
+    List (DenseExpr p) → List (Option (ZMod p)) → Nat → Array VarId → Bool → DbTab p →
+      Bool × DbTab p
+  | [], _, _, _, inf, T => (inf, T)
+  | e :: rest, ps, slot, seen, inf, T =>
+    let pRest := ps.tail
+    match e with
+    | .var i =>
+      if seen.contains i then dbBusSlotsG facts bi mult? pat rest pRest (slot + 1) seen inf T
+      else
+        match dbSlotBound facts bi mult? pat slot with
+        | none => dbBusSlotsG facts bi mult? pat rest pRest (slot + 1) (seen.push i) true T
+        | some bound =>
+          let T := if bound ≤ maxDomainBound then T.insertG i.index (.range bound) else T
+          dbBusSlotsG facts bi mult? pat rest pRest (slot + 1) (seen.push i) inf T
+    | _ =>
+      dbBusSlotsG facts bi mult? pat rest pRest (slot + 1) seen
+        (inf || !(ps.head?.getD none).isSome) T
+
+/-- Walk 1: variable lists, constraint roots and the running variable bound, one pass. -/
+def dbCsWalk (cs : List (DenseExpr p)) (csVars : Array (Array VarId)) (nv : Nat) (T : DbTab p) :
+    Array (Array VarId) × Nat × DbTab p :=
+  match cs with
+  | [] => (csVars, nv, T)
+  | c :: rest =>
+    let vs := dbVarsOf c (Array.emptyWithCapacity 4)
+    let nv := vs.foldl (init := nv) fun b v => max b (v.index + 1)
+    let T := if vs.size ≤ 3 then dbAddConstraintVarsG c vs 0 T else T
+    dbCsWalk rest (csVars.push vs) nv T
+
+/-- Walk 2: per-interaction variables, resolved facts and slot bounds, one pass. -/
+def dbBiWalk {bs : BusSemantics p} (facts : BusFacts p bs) (bc : DbBusCache p)
+    (bis : List (BusInteraction (DenseExpr p))) (biVars : Array (Array VarId))
+    (pre : Array (DbBiPre p)) (inf : Array Bool) (nv : Nat) (T : DbTab p) :
+    Array (Array VarId) × Array (DbBiPre p) × Array Bool × Nat × DbTab p :=
+  match bis with
+  | [] => (biVars, pre, inf, nv, T)
+  | bi :: rest =>
+    let vars := dbBiVars bi
+    let nv := vars.foldl (init := nv) fun b v => max b (v.index + 1)
+    let e := dbPreOne facts bc bi vars
+    let (i, T) := dbBusSlotsG facts bi e.mult? e.pat bi.payload e.pat 0
+      (Array.emptyWithCapacity 4) false T
+    dbBiWalk facts bc rest (biVars.push vars) (pre.push e) (inf.push i) nv T
+
+/-- Walk 3: per-constraint items, `active` verdicts, buckets and the varless items, one pass
+    over the final table. -/
+def dbCsWalk2 {bs : BusSemantics p} (facts : BusFacts p bs) (T : DbTab p)
+    (cs : List (DenseExpr p)) (csVars : Array (Array VarId)) (k : Nat) (regs : Array Nat)
+    (items : Array (DbItem p)) (act : Array Bool) (buckets : Array (Array Nat))
+    (vlCount : Nat) (vlItems : Array (DbItem p)) :
+    Array (DbItem p) × Array Bool × Array (Array Nat) × Nat × Array (DbItem p) :=
+  match cs with
+  | [] => (items, act, buckets, vlCount, vlItems)
+  | c :: rest =>
+    let vs := csVars.getD k #[]
+    let item := if (dbBoxOf T vs 0 1).isSome then DbItem.zero c else DbItem.always
+    let (regs, red) := dbConstraintRedundant facts T item vs regs
+    match vs[0]? with
+    | some v =>
+      dbCsWalk2 facts T rest csVars (k + 1) regs (items.push item) (act.push (!red))
+        (buckets.modify v.index (fun b => b.push k)) vlCount vlItems
+    | none =>
+      dbCsWalk2 facts T rest csVars (k + 1) regs (items.push item) (act.push (!red)) buckets
+        (vlCount + 1) (if !red then vlItems.push item else vlItems)
+
+/-- Walk 4: per-interaction items, domain-redundancy verdicts, buckets and the varless summary
+    (count, informative, domain-redundant, constant verdict), one pass over the final table. -/
+def dbBiWalk2 {bs : BusSemantics p} (facts : BusFacts p bs) (bc : DbBusCache p) (T : DbTab p)
+    (bis : List (BusInteraction (DenseExpr p))) (pre : Array (DbBiPre p)) (biInf : Array Bool)
+    (k : Nat) (items : Array (DbItem p)) (dred : Array Bool) (buckets : Array (Array Nat))
+    (summary : Nat × Bool × Bool × Bool) :
+    Array (DbItem p) × Array Bool × Array (Array Nat) × (Nat × Bool × Bool × Bool) :=
+  match bis with
+  | [] => (items, dred, buckets, summary)
+  | bi :: rest =>
+    let e := pre.getD k dbBiPreEmpty
+    let gather := e.usable && (dbBoxOf T e.vars 0 1).isSome
+    let item := if gather then dbCompileBi facts bc bi e else DbItem.always
+    let dr := gather && dbBiDomainRedundant facts bc T bi e
+    match e.vars[0]? with
+    | some v =>
+      dbBiWalk2 facts bc T rest pre biInf (k + 1) (items.push item) (dred.push dr)
+        (buckets.modify v.index (fun b => b.push k)) summary
+    | none =>
+      let summary := if e.usable then
+          (summary.1 + 1, summary.2.1 || biInf.getD k false, summary.2.2.1 && dr,
+            summary.2.2.2 && dbItemOk facts #[] item)
+        else summary
+      dbBiWalk2 facts bc T rest pre biInf (k + 1) (items.push item) (dred.push dr) buckets
+        summary
+
+/-- `dbBuildCtx` in four passes (behaviorally identical: same arrays, same table content). -/
+def dbBuildCtxFast (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
+    DbCtx p :=
+  let (csVars, nv1, T1) := dbCsWalk d.algebraicConstraints #[] 0 ⟨#[]⟩
+  let bc := dbBusCacheOf facts (d.busInteractions.foldl (fun m b => max m (b.busId + 1)) 0)
+  let (biVars, pre, biInf, nv, T2) := dbBiWalk facts bc d.busInteractions #[] #[] #[] nv1 T1
+  let T := dbBytePhase pre 0 T2
+  let (csItems, csActive, csBucket, csVlCount, csVarlessItems) :=
+    dbCsWalk2 facts T d.algebraicConstraints csVars 0 (Array.replicate nv 0) #[] #[]
+      (Array.replicate nv #[]) 0 #[]
+  let (biItems, biDomRed, biBucket, biSummary) :=
+    dbBiWalk2 facts bc T d.busInteractions pre biInf 0 #[] #[] (Array.replicate nv #[])
+      (0, false, true, true)
+  { nv, T, csVars, csItems, csActive, csBucket,
+    csVarlessCount := csVlCount, csVarlessItems,
+    csVarlessVars := Array.replicate csVarlessItems.size #[],
+    biVars, biItems,
+    biUsable := pre.map (fun e => e.usable),
+    biInformative := biInf,
+    biDomRed, biBucket,
+    biVarlessCount := biSummary.1, biVarlessInformative := biSummary.2.1,
+    biVarlessDomRed := biSummary.2.2.1, constOk := biSummary.2.2.2 }
+
 /-! ## The exit substitution
 
 `applyσ` probes a `Std.HashMap` at every variable leaf of every expression. The solution map holds a
@@ -1851,7 +1996,7 @@ def dbDomainBatchTransform (pw : PrimeWitness p) (bs : BusSemantics p)
 def dbDomainBatchTransformFast (pw : PrimeWitness p) (bs : BusSemantics p)
     (facts : BusFacts p bs) (d : DenseConstraintSystem p) : DenseConstraintSystem p :=
   if pw.isPrime = true then
-    let ctx := dbBuildCtx bs facts d
+    let ctx := dbBuildCtxFast bs facts d
     let st0 : DbTargetSt p := ⟨⟨∅⟩, Array.replicate ctx.nv 0, 0, []⟩
     let plans := (dbTargetsBis ctx 0 (dbTargetsCs ctx 0 st0)).plans.reverse
     -- run serially: handing plans to `Task.spawn` marks the shared objects multi-threaded, and
