@@ -1348,13 +1348,14 @@ def dbScanDepth {bs : BusSemantics p} (facts : BusFacts p bs) (pm : UInt32) (pm6
     (started : Bool) : DbScanY :=
   let dom := doms.getD d (.range 0)
   let n := dom.size
+  let lo := lstart.getD d 0
+  let hi := lstart.getD (d + 1) 0
   -- a small domain does not repay the prepared descent: sweep in immediate mode, no scratch
   if n < 12 then
-    dbScanLoopY facts true pm pm64 items ops lstart doms kks d 0 n regs pb pl vals alive live
-      started
+    dbScanLoopY facts true pm pm64 items ops lstart doms kks d dom lo hi 0 n regs pb pl vals
+      alive live started
   else
-  let (st, piv) := dbPrepRange pm pm64 items ops regs d (lstart.getD d 0)
-    (lstart.getD (d + 1) 0) (pb, pl) none
+  let (st, piv) := dbPrepRange pm pm64 items ops regs d lo hi (pb, pl) none
   let pb := st.1
   let pl := st.2
   match piv with
@@ -1371,43 +1372,42 @@ def dbScanDepth {bs : BusSemantics p} (facts : BusFacts p bs) (pm : UInt32) (pm6
         | none => 0
       match dbDomFind dom x0 with
       | some i0 =>
-        dbScanLoopY facts false pm pm64 items ops lstart doms kks d i0 (i0 + 1) regs pb pl
-          vals alive live started
+        dbScanLoopY facts false pm pm64 items ops lstart doms kks d dom lo hi i0 (i0 + 1) regs
+          pb pl vals alive live started
       | none => ⟨regs, pb, pl, vals, alive, live, started⟩
     else
-      dbScanLoopY facts false pm pm64 items ops lstart doms kks d 0 n regs pb pl vals alive
-        live started
+      dbScanLoopY facts false pm pm64 items ops lstart doms kks d dom lo hi 0 n regs pb pl vals
+        alive live started
   | none =>
-    dbScanLoopY facts false pm pm64 items ops lstart doms kks d 0 n regs pb pl vals alive live
-      started
+    dbScanLoopY facts false pm pm64 items ops lstart doms kks d dom lo hi 0 n regs pb pl vals
+      alive live started
   termination_by (kks - d, (doms.getD d (.range 0)).size + 2)
   decreasing_by
     all_goals (apply Prod.Lex.right; omega)
 
 def dbScanLoopY {bs : BusSemantics p} (facts : BusFacts p bs) (imm : Bool) (pm : UInt32)
     (pm64 : UInt64) (items : Array DbXIt) (ops : Array DbCOp) (lstart : Array Nat)
-    (doms : Array DbDom) (kks d i n : Nat) (regs pb pl vals : Array UInt32)
-    (alive : Array Bool) (live : Nat) (started : Bool) : DbScanY :=
+    (doms : Array DbDom) (kks d : Nat) (dom : DbDom) (lo hi : Nat) (i n : Nat)
+    (regs pb pl vals : Array UInt32) (alive : Array Bool) (live : Nat) (started : Bool) :
+    DbScanY :=
   if i ≥ n then ⟨regs, pb, pl, vals, alive, live, started⟩
   else if started && live == 0 then ⟨regs, pb, pl, vals, alive, live, started⟩
   else
-    let x := DbDom.atU pm pm64 (doms.getD d (.range 0)) i
+    let x := DbDom.atU pm pm64 dom i
     let regs := regs.set! d x
-    if dbLevOkY facts imm pm pm64 items ops pb pl regs x (lstart.getD d 0)
-      (lstart.getD (d + 1) 0)
-    then
+    if lo ≥ hi || dbLevOkY facts imm pm pm64 items ops pb pl regs x lo hi then
       if d + 1 ≥ kks then
         let (vals, alive, live, started) := dbAbsorbYArgs kks regs vals alive live started
-        dbScanLoopY facts imm pm pm64 items ops lstart doms kks d (i + 1) n regs pb pl vals alive
-          live started
+        dbScanLoopY facts imm pm pm64 items ops lstart doms kks d dom lo hi (i + 1) n regs pb pl
+          vals alive live started
       else
         let r := dbScanDepth facts pm pm64 items ops lstart doms kks (d + 1) regs pb pl vals
           alive live started
-        dbScanLoopY facts imm pm pm64 items ops lstart doms kks d (i + 1) n r.regs r.pb r.pl r.vals
-          r.alive r.live r.started
+        dbScanLoopY facts imm pm pm64 items ops lstart doms kks d dom lo hi (i + 1) n r.regs
+          r.pb r.pl r.vals r.alive r.live r.started
     else
-      dbScanLoopY facts imm pm pm64 items ops lstart doms kks d (i + 1) n regs pb pl vals alive live
-        started
+      dbScanLoopY facts imm pm pm64 items ops lstart doms kks d dom lo hi (i + 1) n regs pb pl
+        vals alive live started
   termination_by (kks - d, n - i)
   decreasing_by
     all_goals first
@@ -1462,7 +1462,7 @@ def dbRunPlan {bs : BusSemantics p} (facts : BusFacts p bs) (nv : Nat)
 
 /-- Boxes below this many points do not repay the per-plan compilation; they run on the boxed
     engine. -/
-def dbCompileGate : Nat := 256
+def dbCompileGate : Nat := 1024
 
 /-- One plan on the hybrid engine: the compiled scan for large boxes, the boxed scan (with its
     threaded register file) below the gate. -/
@@ -1868,6 +1868,16 @@ def dbCsWalk (cs : List (DenseExpr p)) (csVars : Array (Array VarId)) (nv : Nat)
     let T := if vs.size ≤ 3 then dbAddConstraintVarsG c vs 0 T else T
     dbCsWalk rest (csVars.push vs) nv T
 
+/-- The informative flag alone, for a multiplicity `dbSlotBound` always refuses (`none` or a
+    zero constant): every raw-variable slot answers `none` there, so the flag is just "some slot
+    is a variable or non-constant", with early exit. -/
+def dbBusSlotsInf {q : ℕ} : List (DenseExpr q) → List (Option (ZMod q)) → Bool
+  | [], _ => false
+  | e :: rest, ps =>
+    match e with
+    | .var _ => true
+    | _ => if (ps.head?.getD none).isSome then dbBusSlotsInf rest ps.tail else true
+
 /-- Walk 2: per-interaction variables, resolved facts and slot bounds, one pass. -/
 def dbBiWalk {bs : BusSemantics p} (facts : BusFacts p bs) (bc : DbBusCache p)
     (bis : List (BusInteraction (DenseExpr p))) (biVars : Array (Array VarId))
@@ -1879,9 +1889,34 @@ def dbBiWalk {bs : BusSemantics p} (facts : BusFacts p bs) (bc : DbBusCache p)
     let vars := dbBiVars bi
     let nv := vars.foldl (init := nv) fun b v => max b (v.index + 1)
     let e := dbPreOne facts bc bi vars
-    let (i, T) := dbBusSlotsG facts bi e.mult? e.pat bi.payload e.pat 0
-      (Array.emptyWithCapacity 4) false T
+    let boundable := match e.mult? with
+      | none => false
+      | some m => !zmodIsZero m
+    let (i, T) :=
+      if boundable then
+        dbBusSlotsG facts bi e.mult? e.pat bi.payload e.pat 0
+          (Array.emptyWithCapacity 4) false T
+      else (dbBusSlotsInf bi.payload e.pat, T)
     dbBiWalk facts bc rest (biVars.push vars) (pre.push e) (inf.push i) nv T
+
+/-- `dbConstraintRedundant` with the box precomputed (walk 3 already needs it for the item
+    gate). -/
+def dbConstraintRedundantB {bs : BusSemantics p} (facts : BusFacts p bs) (T : DbTab p)
+    (item : DbItem p) (vs : Array VarId) (regs : Array Nat) (box : Nat) : Array Nat × Bool :=
+  if box ≤ maxEnumSize then
+    match dbDomsOf T vs with
+    | none => ⟨regs, false⟩
+    | some doms =>
+      if vs.isEmpty then ⟨regs, dbItemOk facts regs item⟩
+      else
+        let keys := vs.map (fun v => v.index)
+        let ⟨regs, refuted⟩ :=
+          if dbDiagGate < box then dbDiagRefute facts item keys doms 0 8 regs
+          else ⟨regs, false⟩
+        if refuted then ⟨regs, false⟩
+        else
+          dbBoxAllOne facts item keys doms 0 0 (doms.getD 0 (.range 0)).size regs true
+  else ⟨regs, false⟩
 
 /-- Walk 3: per-constraint items, `active` verdicts, buckets and the varless items, one pass
     over the final table. -/
@@ -1894,8 +1929,13 @@ def dbCsWalk2 {bs : BusSemantics p} (facts : BusFacts p bs) (T : DbTab p)
   | [] => (items, act, buckets, vlCount, vlItems)
   | c :: rest =>
     let vs := csVars.getD k #[]
-    let item := if (dbBoxOf T vs 0 1).isSome then DbItem.zero c else DbItem.always
-    let (regs, red) := dbConstraintRedundant facts T item vs regs
+    let (item, regs, red) :=
+      match dbBoxOf T vs 0 1 with
+      | none => (DbItem.always, regs, false)
+      | some box =>
+        let item := DbItem.zero c
+        let (regs, red) := dbConstraintRedundantB facts T item vs regs box
+        (item, regs, red)
     match vs[0]? with
     | some v =>
       dbCsWalk2 facts T rest csVars (k + 1) regs (items.push item) (act.push (!red))
