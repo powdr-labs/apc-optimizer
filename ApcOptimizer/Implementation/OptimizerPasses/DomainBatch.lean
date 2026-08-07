@@ -944,31 +944,9 @@ def dbTermsOf (keys : Array Nat) : DenseExpr p → Option (Array DbTerm)
       if x.size * y.size ≤ dbTermCap then some (dbCrossTerms p x y) else none
     | _, _ => none
 
-def dbCountEq (ss : Array Nat) (d : Nat) : Nat :=
-  ss.foldl (init := 0) fun n s => if s == d then n + 1 else n
-
-def dbEraseOne (ss : Array Nat) (d : Nat) : Array Nat :=
-  (ss.foldl (init := (Array.emptyWithCapacity ss.size, false)) fun st s =>
-    if !st.2 && s == d then (st.1, true) else (st.1.push s, st.2)).1
-
-/-- Split terms at level `d`: terms without slot `d`, coefficient monomials of the terms linear in
-    slot `d`, and the `slot_d^{≥2}` terms. -/
-def dbSplitTerms (d : Nat) (ts : Array DbTerm) :
-    Array DbTerm × Array DbTerm × Array DbTerm :=
-  ts.foldl (init := (#[], #[], #[])) fun st t =>
-    let (o, l, h) := st
-    match t with
-    | .cst _ => (o.push t, l, h)
-    | .lin c s => if s == d then (o, l.push (.cst c), h) else (o.push t, l, h)
-    | .mono c ss =>
-      match dbCountEq ss d with
-      | 0 => (o.push t, l, h)
-      | 1 => (o, l.push (DbTerm.of c (dbEraseOne ss d)), h)
-      | _ => (o, l, h.push t)
-
-/-- One compiled operand: split terms (evaluated as `pb[o] + pl[o]·x` per point), or a tree. -/
+/-- One compiled operand: a sum of monomials over slots, or a tree. -/
 inductive DbCOp where
-  | split (outer linCo high : Array DbTerm)
+  | poly (ts : Array DbTerm)
   | tree (t : DbSTr)
 deriving Inhabited
 
@@ -977,13 +955,11 @@ def dbExprSize : DenseExpr p → Nat
   | .add a b => 1 + dbExprSize a + dbExprSize b
   | .mul a b => 1 + dbExprSize a + dbExprSize b
 
-def dbCOpOf (keys : Array Nat) (d : Nat) (e : DenseExpr p) : DbCOp :=
+def dbCOpOf (keys : Array Nat) (e : DenseExpr p) : DbCOp :=
   if dbExprSize e ≤ 1 then .tree (dbTrOf keys e)
   else
     match dbTermsOf keys e with
-    | some ts =>
-      let (o, l, h) := dbSplitTerms d ts
-      .split o l h
+    | some ts => .poly ts
     | none => .tree (dbTrOf keys e)
 
 /-- A compiled item: operand indices into the plan's `ops` array. -/
@@ -997,44 +973,42 @@ inductive DbXIt where
   | fallback (busId : Nat) (m : Nat) (payload : List Nat)
 deriving Inhabited
 
-def dbCompileOps (keys : Array Nat) (d : Nat) (ops : Array DbCOp) :
+def dbCompileOps (keys : Array Nat) (ops : Array DbCOp) :
     List (DenseExpr p) → Array DbCOp × List Nat
   | [] => (ops, [])
   | e :: rest =>
     let o := ops.size
-    let (ops, os) := dbCompileOps keys d (ops.push (dbCOpOf keys d e)) rest
+    let (ops, os) := dbCompileOps keys (ops.push (dbCOpOf keys e)) rest
     (ops, o :: os)
 
-def dbCompileItem (keys : Array Nat) (d : Nat) (ops : Array DbCOp) :
+def dbCompileItem (keys : Array Nat) (ops : Array DbCOp) :
     DbItem p → Array DbCOp × Option DbXIt
   | .always => (ops, none)
-  | .zero e => (ops.push (dbCOpOf keys d e), some (.zero ops.size))
+  | .zero e => (ops.push (dbCOpOf keys e), some (.zero ops.size))
   | .varRange m x w =>
     let o := ops.size
-    let ops := ((ops.push (dbCOpOf keys d m)).push (dbCOpOf keys d x)).push
-      (dbCOpOf keys d w)
+    let ops := ((ops.push (dbCOpOf keys m)).push (dbCOpOf keys x)).push (dbCOpOf keys w)
     (ops, some (.varRange o (o + 1) (o + 2)))
   | .varRangeConst m x b =>
     let o := ops.size
-    let ops := (ops.push (dbCOpOf keys d m)).push (dbCOpOf keys d x)
+    let ops := (ops.push (dbCOpOf keys m)).push (dbCOpOf keys x)
     (ops, some (.varRangeConst o (o + 1) b))
   | .tupleRange m x y bx bY =>
     let o := ops.size
-    let ops := ((ops.push (dbCOpOf keys d m)).push (dbCOpOf keys d x)).push
-      (dbCOpOf keys d y)
+    let ops := ((ops.push (dbCOpOf keys m)).push (dbCOpOf keys x)).push (dbCOpOf keys y)
     (ops, some (.tupleRange o (o + 1) (o + 2) bx bY))
   | .fixedRange m v b =>
     let o := ops.size
-    let ops := (ops.push (dbCOpOf keys d m)).push (dbCOpOf keys d v)
+    let ops := (ops.push (dbCOpOf keys m)).push (dbCOpOf keys v)
     (ops, some (.fixedRange o (o + 1) b))
   | .byte m o1 o2 r b kind =>
     let o := ops.size
-    let ops := (((ops.push (dbCOpOf keys d m)).push (dbCOpOf keys d o1)).push
-      (dbCOpOf keys d o2)).push (dbCOpOf keys d r)
+    let ops := (((ops.push (dbCOpOf keys m)).push (dbCOpOf keys o1)).push
+      (dbCOpOf keys o2)).push (dbCOpOf keys r)
     (ops, some (.byte o (o + 1) (o + 2) (o + 3) b kind))
   | .fallback busId m payload =>
     let o := ops.size
-    let (ops, os) := dbCompileOps keys d (ops.push (dbCOpOf keys d m)) payload
+    let (ops, os) := dbCompileOps keys (ops.push (dbCOpOf keys m)) payload
     (ops, some (.fallback busId o os))
 
 def dbLevCount (items : Array (DbItem p)) (ilev : Array Nat) (k : Nat) (counts : Array Nat) :
@@ -1062,11 +1036,11 @@ def dbCompileGo (keys : Array Nat) (items : Array (DbItem p))
     (ilev : Array Nat) (k : Nat) (cur : Array Nat) (out : Array DbXIt) (ops : Array DbCOp) :
     Array DbXIt × Array DbCOp :=
   if h : k < items.size then
-    let d := ilev.getD k 0
-    let (ops, xit?) := dbCompileItem keys d ops items[k]
+    let (ops, xit?) := dbCompileItem keys ops items[k]
     match xit? with
     | none => dbCompileGo keys items ilev (k + 1) cur out ops
     | some xit =>
+      let d := ilev.getD k 0
       let pos := cur.getD d 0
       dbCompileGo keys items ilev (k + 1) (cur.modify d (· + 1)) (out.set! pos xit) ops
   else (out, ops)
@@ -1083,49 +1057,116 @@ def dbCompilePlan (keys : Array Nat) (kks : Nat) (items : Array (DbItem p))
     (Array.replicate total default) (Array.emptyWithCapacity (2 * items.size))
   { items := out, ops, lstart }
 
-/-! ### Descent preparation and point evaluation -/
+/-! ### Point evaluation -/
 
-def dbPrepOp (p : ℕ) (ops : Array DbCOp) (regs : Array Nat) (o : Nat)
-    (st : Array Nat × Array Nat) : Array Nat × Array Nat :=
+/-- One operand at the current point (slots `0..d` bound in `regs`). -/
+@[inline] def dbOpVal (p : ℕ) (ops : Array DbCOp) (regs : Array Nat) (o : Nat) : Nat :=
   match ops.getD o default with
-  | .split outer linCo _ =>
-    (st.1.set! o (dbEvalTerms p regs outer), st.2.set! o (dbEvalTerms p regs linCo))
-  | .tree _ => st
+  | .poly ts => dbEvalTerms p regs ts
+  | .tree t => dbEvalTr p regs t
 
-/-- A level's pivot: a satisfying point's slot value must solve `operand o = target` (`.val`), or
-    no point at this depth can satisfy the level's items at all (`.dead`). -/
+/-- `dbItemOk`'s predicates over compiled operands. -/
+def dbXItOk {bs : BusSemantics p} (facts : BusFacts p bs)
+    (ops : Array DbCOp) (regs : Array Nat) : DbXIt → Bool
+  | .zero o => dbOpVal p ops regs o == 0
+  | .varRange m xo w =>
+    if dbOpVal p ops regs m == 0 then true
+    else
+      let wv := dbOpVal p ops regs w
+      decide (wv ≤ 17) && decide (dbOpVal p ops regs xo < 2 ^ wv)
+  | .varRangeConst m xo bound =>
+    if dbOpVal p ops regs m == 0 then true
+    else decide (dbOpVal p ops regs xo < bound)
+  | .tupleRange m xo yo bx bY =>
+    if dbOpVal p ops regs m == 0 then true
+    else decide (dbOpVal p ops regs xo < bx) && decide (dbOpVal p ops regs yo < bY)
+  | .fixedRange m v bound =>
+    if dbOpVal p ops regs m == 0 then true
+    else decide (dbOpVal p ops regs v < bound)
+  | .byte m o1 o2 r bound kind =>
+    if dbOpVal p ops regs m == 0 then true
+    else
+      let a := dbOpVal p ops regs o1
+      let b := dbOpVal p ops regs o2
+      decide (a < bound) && decide (b < bound) && dbByteRel kind a b (dbOpVal p ops regs r)
+  | .fallback busId m payload =>
+    let mv := dbOpVal p ops regs m
+    if mv == 0 then true
+    else
+      facts.acceptsDec
+        { busId := busId, multiplicity := zmodOfNatP p mv,
+          payload := payload.map (fun o => zmodOfNatP p (dbOpVal p ops regs o)) }
+
+def dbLevOkY {bs : BusSemantics p} (facts : BusFacts p bs)
+    (items : Array DbXIt) (ops : Array DbCOp) (regs : Array Nat) (i hi : Nat) : Bool :=
+  if i < hi then
+    if h : i < items.size then
+      if dbXItOk facts ops regs items[i] then
+        dbLevOkY facts items ops regs (i + 1) hi
+      else false
+    else true
+  else true
+  termination_by hi - i
+  decreasing_by all_goals omega
+
+/-! ### Pivots
+
+A level's *pivot* pins the slot to at most one value: any point satisfying the level's items has
+that value (`.val`), or no point can satisfy them at all (`.dead`). The whole sweep collapses to
+one lookup; soundness needs only that a satisfying assignment's own point is never skipped. -/
+
 inductive DbPivot where
   | val (o : Nat) (target : Nat)
   | dead
 
-/-- The operand viewed as `base + lin·x` at depth `d` (`x` the slot-`d` register), `none` when it
-    is not affine in `x`. Slots below `d` are bound, so a foreign-slot tree leaf is a constant. -/
-def dbOpAffine? (ops : Array DbCOp) (pb pl regs : Array Nat) (d o : Nat) :
+/-- The affine view `base + lin·x` of a term array at depth `d` (`x` the slot-`d` register),
+    `none` when some term has `slot_d^{≥2}`. The view only reads slots below `d`, so it is
+    constant along the level's sweep. -/
+def dbTermsAffine? (p : ℕ) (regs : Array Nat) (d : Nat) (ts : Array DbTerm) :
+    Option (Nat × Nat) :=
+  ts.foldl (init := some (0, 0)) fun acc t =>
+    match acc with
+    | none => none
+    | some (b, l) =>
+      match t with
+      | .cst c => some (dbAddN p b c, l)
+      | .lin c s =>
+        if s == d then some (b, dbAddN p l c)
+        else some (dbAddN p b (dbMulN p c (regs.getD s 0)), l)
+      | .mono c ss =>
+        match ss.foldl (init := ((c : Nat), (0 : Nat))) fun st s =>
+          if s == d then (st.1, st.2 + 1) else (dbMulN p st.1 (regs.getD s 0), st.2) with
+        | (v, 0) => some (dbAddN p b v, l)
+        | (v, 1) => some (b, dbAddN p l v)
+        | _ => none
+
+/-- The operand viewed as `base + lin·x` at depth `d`, `none` when not affine in the slot. -/
+def dbOpAffine? (p : ℕ) (ops : Array DbCOp) (regs : Array Nat) (d o : Nat) :
     Option (Nat × Nat) :=
   match ops.getD o default with
-  | .split _ _ high => if high.isEmpty then some (pb.getD o 0, pl.getD o 0) else none
+  | .poly ts => dbTermsAffine? p regs d ts
   | .tree (.cst c) => some (c, 0)
   | .tree (.slot s) => if s == d then some (0, 1) else some (regs.getD s 0, 0)
   | .tree _ => none
 
-@[inline] def dbOpConstN? (ops : Array DbCOp) (pb pl regs : Array Nat) (d o : Nat) :
+@[inline] def dbOpConstN? (p : ℕ) (ops : Array DbCOp) (regs : Array Nat) (d o : Nat) :
     Option Nat :=
-  match dbOpAffine? ops pb pl regs d o with
+  match dbOpAffine? p ops regs d o with
   | some (b, l) => if l == 0 then some b else none
   | none => none
 
 /-- A byte item's pivot at depth `d`: with a nonzero constant multiplicity, a slot-affine operand
-    among `o1`/`o2`/`result` while the other two are constants pins the slot to one value (xor is
-    solvable from either side; or/and/pair only through the result). -/
-def dbBytePivot (ops : Array DbCOp) (pb pl regs : Array Nat) (d : Nat)
+    among `o1`/`o2`/`result` while the other two are constants pins the slot (xor is solvable
+    from either side; or/and/pair only through the result). -/
+def dbBytePivot (p : ℕ) (ops : Array DbCOp) (regs : Array Nat) (d : Nat)
     (m o1 o2 r : Nat) (bound : Nat) (kind : DenseBytePredKind) : Option DbPivot :=
-  match dbOpConstN? ops pb pl regs d m with
+  match dbOpConstN? p ops regs d m with
   | none => none
   | some mv =>
     if mv == 0 then none
     else
-      match dbOpAffine? ops pb pl regs d o1, dbOpAffine? ops pb pl regs d o2,
-          dbOpAffine? ops pb pl regs d r with
+      match dbOpAffine? p ops regs d o1, dbOpAffine? p ops regs d o2,
+          dbOpAffine? p ops regs d r with
       | some (b1, l1), some (b2, l2), some (br, lr) =>
         if l1 != 0 && l2 == 0 && lr == 0 then
           match kind with
@@ -1154,42 +1195,23 @@ def dbBytePivot (ops : Array DbCOp) (pb pl regs : Array Nat) (d : Nat)
         else none
       | _, _, _ => none
 
-/-- Evaluate the level's `outer`/`linCo` sums into the scratch arrays, one item range per
-    descent — and report a pivot where an item pins the slot to at most one value. -/
-def dbPrepRange (p : ℕ) (items : Array DbXIt) (ops : Array DbCOp)
-    (regs : Array Nat) (d : Nat) (i hi : Nat) (st : Array Nat × Array Nat)
-    (piv : Option DbPivot) : (Array Nat × Array Nat) × Option DbPivot :=
+/-- The first pivot among the level's items, if any. -/
+def dbFindPivot (p : ℕ) (items : Array DbXIt) (ops : Array DbCOp) (regs : Array Nat)
+    (d : Nat) (i hi : Nat) : Option DbPivot :=
   if i < hi then
     if h : i < items.size then
-      let (st, piv) := match items[i] with
+      let piv := match items[i] with
         | .zero o =>
-          let st := dbPrepOp p ops regs o st
-          let piv := if piv.isSome then piv
-            else
-              match dbOpAffine? ops st.1 st.2 regs d o with
-              | some (_, l) => if l != 0 then some (.val o 0) else none
-              | none => none
-          (st, piv)
-        | .varRange m x w =>
-          (dbPrepOp p ops regs w (dbPrepOp p ops regs x (dbPrepOp p ops regs m st)), piv)
-        | .varRangeConst m x _ =>
-          (dbPrepOp p ops regs x (dbPrepOp p ops regs m st), piv)
-        | .tupleRange m x y _ _ =>
-          (dbPrepOp p ops regs y (dbPrepOp p ops regs x (dbPrepOp p ops regs m st)), piv)
-        | .fixedRange m v _ =>
-          (dbPrepOp p ops regs v (dbPrepOp p ops regs m st), piv)
-        | .byte m o1 o2 r bound kind =>
-          let st := dbPrepOp p ops regs r (dbPrepOp p ops regs o2
-            (dbPrepOp p ops regs o1 (dbPrepOp p ops regs m st)))
-          let piv := if piv.isSome then piv
-            else dbBytePivot ops st.1 st.2 regs d m o1 o2 r bound kind
-          (st, piv)
-        | .fallback _ m payload =>
-          (payload.foldl (init := dbPrepOp p ops regs m st) fun st o =>
-            dbPrepOp p ops regs o st, piv)
-      dbPrepRange p items ops regs d (i + 1) hi st piv
-    else (st, piv)
-  else (st, piv)
+          match dbOpAffine? p ops regs d o with
+          | some (_, l) => if l != 0 then some (DbPivot.val o 0) else none
+          | none => none
+        | .byte m o1 o2 r bound kind => dbBytePivot p ops regs d m o1 o2 r bound kind
+        | _ => none
+      match piv with
+      | some piv => some piv
+      | none => dbFindPivot p items ops regs d (i + 1) hi
+    else none
+  else none
   termination_by hi - i
   decreasing_by all_goals omega
 
@@ -1206,74 +1228,10 @@ def dbDomFind (d : DbDom) (x : Nat) : Option Nat :=
   | .explicit vs => vs.findIdx? (fun v => v == x)
   | .coset _ _ _ => none
 
-/-- One operand at the current point: `pb[o] + pl[o]·x`, plus `high`/tree work where present.
-    `imm` (levels whose domain is too small to repay a prepared descent) evaluates the sums in
-    place instead of reading the scratch arrays. -/
-@[inline] def dbOpVal (imm : Bool) (p : ℕ) (ops : Array DbCOp)
-    (pb pl regs : Array Nat) (x : Nat) (o : Nat) : Nat :=
-  match ops.getD o default with
-  | .split outer linCo high =>
-    let b := if imm then dbEvalTerms p regs outer else pb.getD o 0
-    let l := if imm then dbEvalTerms p regs linCo else pl.getD o 0
-    let v := dbAddN p b (dbMulN p l x)
-    if high.isEmpty then v else dbAddN p v (dbEvalTerms p regs high)
-  | .tree t => dbEvalTr p regs t
-
-/-- `dbItemOk`'s predicates over compiled operands. -/
-def dbXItOk {bs : BusSemantics p} (facts : BusFacts p bs) (imm : Bool)
-    (ops : Array DbCOp) (pb pl regs : Array Nat) (x : Nat) : DbXIt → Bool
-  | .zero o => dbOpVal imm p ops pb pl regs x o == 0
-  | .varRange m xo w =>
-    if dbOpVal imm p ops pb pl regs x m == 0 then true
-    else
-      let wv := dbOpVal imm p ops pb pl regs x w
-      decide (wv ≤ 17) && decide (dbOpVal imm p ops pb pl regs x xo < 2 ^ wv)
-  | .varRangeConst m xo bound =>
-    if dbOpVal imm p ops pb pl regs x m == 0 then true
-    else decide (dbOpVal imm p ops pb pl regs x xo < bound)
-  | .tupleRange m xo yo bx bY =>
-    if dbOpVal imm p ops pb pl regs x m == 0 then true
-    else
-      decide (dbOpVal imm p ops pb pl regs x xo < bx) &&
-        decide (dbOpVal imm p ops pb pl regs x yo < bY)
-  | .fixedRange m v bound =>
-    if dbOpVal imm p ops pb pl regs x m == 0 then true
-    else decide (dbOpVal imm p ops pb pl regs x v < bound)
-  | .byte m o1 o2 r bound kind =>
-    if dbOpVal imm p ops pb pl regs x m == 0 then true
-    else
-      let a := dbOpVal imm p ops pb pl regs x o1
-      let b := dbOpVal imm p ops pb pl regs x o2
-      decide (a < bound) && decide (b < bound) &&
-        dbByteRel kind a b (dbOpVal imm p ops pb pl regs x r)
-  | .fallback busId m payload =>
-    let mv := dbOpVal imm p ops pb pl regs x m
-    if mv == 0 then true
-    else
-      facts.acceptsDec
-        { busId := busId, multiplicity := zmodOfNatP p mv,
-          payload := payload.map
-            (fun o => zmodOfNatP p (dbOpVal imm p ops pb pl regs x o)) }
-
-def dbLevOkY {bs : BusSemantics p} (facts : BusFacts p bs) (imm : Bool)
-    (items : Array DbXIt) (ops : Array DbCOp) (pb pl regs : Array Nat)
-    (x : Nat) (i hi : Nat) : Bool :=
-  if i < hi then
-    if h : i < items.size then
-      if dbXItOk facts imm ops pb pl regs x items[i] then
-        dbLevOkY facts imm items ops pb pl regs x (i + 1) hi
-      else false
-    else true
-  else true
-  termination_by hi - i
-  decreasing_by all_goals omega
-
 /-! ### The box loop -/
 
 structure DbScanY where
   regs : Array Nat
-  pb : Array Nat
-  pl : Array Nat
   vals : Array Nat
   alive : Array Bool
   live : Nat
@@ -1300,73 +1258,66 @@ def dbAbsorbY (regs : Array Nat) (i : Nat) (vals : Array Nat) (alive : Array Boo
 
 mutual
 
-/-- Enter depth `d` with slots `0..d-1` bound: prepare the level's operands and, when a pivot
-    exists on a directly-indexable domain, test only the pivot's root — a point any satisfying
-    assignment must land on, so the level's sweep collapses to one lookup. `dbDomFind` misses ⟹
-    no point at this depth can satisfy the level's items. -/
+/-- Enter depth `d` with slots `0..d-1` bound: when a pivot exists on a directly-indexable
+    domain, test only the pivot's root — a point any satisfying assignment must land on — so the
+    level's sweep collapses to one lookup. `dbDomFind` misses ⟹ no point at this depth can
+    satisfy the level's items. Small domains skip the pivot search. -/
 def dbScanDepth {bs : BusSemantics p} (facts : BusFacts p bs)
     (items : Array DbXIt) (ops : Array DbCOp) (lstart : Array Nat) (doms : Array DbDom)
-    (kks d : Nat) (regs pb pl vals : Array Nat) (alive : Array Bool) (live : Nat)
+    (kks d : Nat) (regs vals : Array Nat) (alive : Array Bool) (live : Nat)
     (started : Bool) : DbScanY :=
   let dom := doms.getD d (.range 0)
   let n := dom.size
   let lo := lstart.getD d 0
   let hi := lstart.getD (d + 1) 0
-  -- a small domain does not repay the prepared descent: sweep in immediate mode, no scratch
   if n < 12 then
-    dbScanLoopY facts true items ops lstart doms kks d dom lo hi 0 n regs pb pl vals
-      alive live started
+    dbScanLoopY facts items ops lstart doms kks d dom lo hi 0 n regs vals alive live started
   else
-  let (st, piv) := dbPrepRange p items ops regs d lo hi (pb, pl) none
-  let pb := st.1
-  let pl := st.2
-  match piv with
-  | some .dead => ⟨regs, pb, pl, vals, alive, live, started⟩
-  | some (.val o target) =>
-    let direct := match dom with | .coset _ _ _ => false | _ => true
-    if direct then
-      let x0 :=
-        match dbOpAffine? ops pb pl regs d o with
-        | some (b, l) => dbPivotRoot p b l target
-        | none => 0
-      match dbDomFind dom x0 with
-      | some i0 =>
-        dbScanLoopY facts false items ops lstart doms kks d dom lo hi i0 (i0 + 1) regs
-          pb pl vals alive live started
-      | none => ⟨regs, pb, pl, vals, alive, live, started⟩
-    else
-      dbScanLoopY facts false items ops lstart doms kks d dom lo hi 0 n regs pb pl vals
-        alive live started
-  | none =>
-    dbScanLoopY facts false items ops lstart doms kks d dom lo hi 0 n regs pb pl vals
-      alive live started
+    match dbFindPivot p items ops regs d lo hi with
+    | some .dead => ⟨regs, vals, alive, live, started⟩
+    | some (.val o target) =>
+      let direct := match dom with | .coset _ _ _ => false | _ => true
+      if direct then
+        let x0 :=
+          match dbOpAffine? p ops regs d o with
+          | some (b, l) => dbPivotRoot p b l target
+          | none => 0
+        match dbDomFind dom x0 with
+        | some i0 =>
+          dbScanLoopY facts items ops lstart doms kks d dom lo hi i0 (i0 + 1) regs vals
+            alive live started
+        | none => ⟨regs, vals, alive, live, started⟩
+      else
+        dbScanLoopY facts items ops lstart doms kks d dom lo hi 0 n regs vals alive live
+          started
+    | none =>
+      dbScanLoopY facts items ops lstart doms kks d dom lo hi 0 n regs vals alive live started
   termination_by (kks - d, (doms.getD d (.range 0)).size + 2)
   decreasing_by
     all_goals (apply Prod.Lex.right; omega)
 
-def dbScanLoopY {bs : BusSemantics p} (facts : BusFacts p bs) (imm : Bool)
+def dbScanLoopY {bs : BusSemantics p} (facts : BusFacts p bs)
     (items : Array DbXIt) (ops : Array DbCOp) (lstart : Array Nat)
     (doms : Array DbDom) (kks d : Nat) (dom : DbDom) (lo hi : Nat) (i n : Nat)
-    (regs pb pl vals : Array Nat) (alive : Array Bool) (live : Nat) (started : Bool) :
+    (regs vals : Array Nat) (alive : Array Bool) (live : Nat) (started : Bool) :
     DbScanY :=
-  if i ≥ n then ⟨regs, pb, pl, vals, alive, live, started⟩
-  else if started && live == 0 then ⟨regs, pb, pl, vals, alive, live, started⟩
+  if i ≥ n then ⟨regs, vals, alive, live, started⟩
+  else if started && live == 0 then ⟨regs, vals, alive, live, started⟩
   else
-    let x := DbDom.at p dom i
-    let regs := regs.set! d x
-    if lo ≥ hi || dbLevOkY facts imm items ops pb pl regs x lo hi then
+    let regs := regs.set! d (DbDom.at p dom i)
+    if lo ≥ hi || dbLevOkY facts items ops regs lo hi then
       if d + 1 ≥ kks then
         let (vals, alive, live, started) := dbAbsorbYArgs kks regs vals alive live started
-        dbScanLoopY facts imm items ops lstart doms kks d dom lo hi (i + 1) n regs pb pl
-          vals alive live started
+        dbScanLoopY facts items ops lstart doms kks d dom lo hi (i + 1) n regs vals alive
+          live started
       else
-        let r := dbScanDepth facts items ops lstart doms kks (d + 1) regs pb pl vals
-          alive live started
-        dbScanLoopY facts imm items ops lstart doms kks d dom lo hi (i + 1) n r.regs
-          r.pb r.pl r.vals r.alive r.live r.started
+        let r := dbScanDepth facts items ops lstart doms kks (d + 1) regs vals alive live
+          started
+        dbScanLoopY facts items ops lstart doms kks d dom lo hi (i + 1) n r.regs r.vals
+          r.alive r.live r.started
     else
-      dbScanLoopY facts imm items ops lstart doms kks d dom lo hi (i + 1) n regs pb pl
-        vals alive live started
+      dbScanLoopY facts items ops lstart doms kks d dom lo hi (i + 1) n regs vals alive live
+        started
   termination_by (kks - d, n - i)
   decreasing_by
     all_goals first
@@ -1386,9 +1337,8 @@ def dbRunPlanY {bs : BusSemantics p} (facts : BusFacts p bs)
       let kks := keys.size
       let kidx := keys.map (fun v => v.index)
       let C := dbCompilePlan kidx kks items ilev
-      let regs := Array.replicate kks (0 : Nat)
-      let r := dbScanDepth facts C.items C.ops C.lstart doms kks 0 regs
-        (Array.replicate C.ops.size 0) (Array.replicate C.ops.size 0) #[] #[] 0 false
+      let r := dbScanDepth facts C.items C.ops C.lstart doms kks 0
+        (Array.replicate kks (0 : Nat)) #[] #[] 0 false
       if !r.started then dbZeroAll keys :: out
       else if r.live == 0 then [] :: out
       else dbForcedOfMask p keys r.vals r.alive 0 :: out
