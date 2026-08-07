@@ -843,6 +843,606 @@ def dbForcedOfMask (p : ℕ) (keys : Array VarId) (vals : Array Nat) (alive : Ar
 def dbZeroAll (keys : Array VarId) : List (VarId × ZMod p) :=
   keys.toList.map (fun x => (x, zmodZeroP p))
 
+/-! ## The slot-compiled unboxed box scan
+
+`dbEval` walks a boxed `DenseExpr` at every point of every box. This engine compiles a plan once
+and makes the point loop branch-light machine arithmetic:
+
+* a plan's keys become **slots `0..k-1`** (`box ≤ maxEnumSize` with every domain ≥ 2 keeps
+  `k ≤ 16`), so the register file is a k-element `UInt32` array;
+* operands become sums of monomials `Σ cᵢ·∏ s` over slots where possible within `dbTermCap`
+  (slot-indexed tree otherwise), each **split at the item's level `d`**: terms without slot `d`
+  (`outer`), terms linear in slot `d` (`linCo`, the coefficient monomial with the slot removed —
+  coefficients are constants, so a degree-1 occurrence always splits this way), and the rare
+  `slot_d^{≥2}` terms (`high`);
+* on each descent into depth `d` the loop evaluates `outer`/`linCo` once per operand into flat
+  scratch arrays (`pb`/`pl`, preallocated, mutated in place), so **a box point costs one multiply
+  and one add per operand** (`pb[o] + pl[o]·x`), plus `high`/tree work only where present;
+* items are counting-sorted by level (`lstart` offsets), so the per-point test iterates exactly
+  the current depth's items instead of filtering the whole array, and `.always` items are dropped
+  at compile time.
+
+Values are `ZMod.val`s: on a field with `65536 < p < 2^31` they fit `UInt32` and products fit
+`UInt64`; `dbRunPlansFast` falls back to the boxed engine on any other field. Reassociating the
+modular sums is the only arithmetic change, so the engine is verdict-identical. -/
+
+/-- `a + b` on values below `p ≤ 2^31`: the sum cannot wrap a `UInt32`. -/
+@[inline] def dbAddU (pm a b : UInt32) : UInt32 := let s := a + b; if s < pm then s else s - pm
+
+/-- `a * b` on values below `p ≤ 2^31`: the product cannot wrap a `UInt64`. -/
+@[inline] def dbMulU (pm64 : UInt64) (a b : UInt32) : UInt32 :=
+  ((a.toUInt64 * b.toUInt64) % pm64).toUInt32
+
+/-- The `i`-th element of a domain (`DbDom.at` under the field guard: every domain element and
+    every `.range` index is below `maxDomainBound ≤ p`). -/
+@[inline] def DbDom.atU (pm : UInt32) (pm64 : UInt64) (d : DbDom) (i : Nat) : UInt32 :=
+  match d with
+  | .explicit vs => (vs.getD i 0).toUInt32
+  | .range _ => i.toUInt32
+  | .coset _ negB aInv => dbMulU pm64 (dbAddU pm i.toUInt32 negB.toUInt32) aInv.toUInt32
+
+/-- A bound compared against a register value. Values are below `2^31`, so a bound at or above
+    `2^32` is equivalent to `2^32` and the comparison stays exact in `UInt64`. -/
+@[inline] def dbBoundU (b : Nat) : UInt64 := if 4294967296 ≤ b then 4294967296 else b.toUInt64
+
+@[inline] def dbLtU (x : UInt32) (b : UInt64) : Bool := x.toUInt64 < b
+
+@[inline] def dbByteRelU (kind : DenseBytePredKind) (a b r : UInt32) : Bool :=
+  match kind with
+  | .xor => r == a ^^^ b
+  | .pair => r == 0
+  | .or => r == a ||| b
+  | .and => r == a &&& b
+
+/-- One monomial over slots. -/
+inductive DbTerm where
+  | cst (c : UInt32)
+  | lin (c : UInt32) (s : Nat)
+  | mono (c : UInt32) (ss : Array Nat)
+deriving Inhabited
+
+def DbTerm.coef : DbTerm → UInt32
+  | .cst c => c | .lin c _ => c | .mono c _ => c
+
+def DbTerm.slotsArr : DbTerm → Array Nat
+  | .cst _ => #[] | .lin _ s => #[s] | .mono _ ss => ss
+
+@[inline] def DbTerm.of (c : UInt32) (ss : Array Nat) : DbTerm :=
+  if ss.size == 0 then .cst c else if ss.size == 1 then .lin c (ss.getD 0 0) else .mono c ss
+
+/-- Slot-indexed operand tree, for operands the monomial expansion does not cover. -/
+inductive DbSTr where
+  | cst (c : UInt32)
+  | slot (s : Nat)
+  | add (a b : DbSTr)
+  | mul (a b : DbSTr)
+deriving Inhabited
+
+def dbEvalTr (pm : UInt32) (pm64 : UInt64) (regs : Array UInt32) : DbSTr → UInt32
+  | .cst c => c
+  | .slot s => regs.getD s 0
+  | .add a b => dbAddU pm (dbEvalTr pm pm64 regs a) (dbEvalTr pm pm64 regs b)
+  | .mul a b => dbMulU pm64 (dbEvalTr pm pm64 regs a) (dbEvalTr pm pm64 regs b)
+
+def dbEvalTerms (pm : UInt32) (pm64 : UInt64) (regs : Array UInt32) (ts : Array DbTerm) :
+    UInt32 :=
+  ts.foldl (init := 0) fun acc t =>
+    match t with
+    | .cst c => dbAddU pm acc c
+    | .lin c s => dbAddU pm acc (dbMulU pm64 c (regs.getD s 0))
+    | .mono c ss =>
+      dbAddU pm acc (ss.foldl (init := c) fun m s => dbMulU pm64 m (regs.getD s 0))
+
+/-! ### Compilation -/
+
+/-- The slot of variable index `v`, or `keys.size` (an unbound register reading 0 — unreachable:
+    the gather only admits items whose variables are all keys). -/
+def dbSlotIdx (keys : Array Nat) (v : Nat) (k : Nat) : Nat :=
+  if h : k < keys.size then (if keys[k] == v then k else dbSlotIdx keys v (k + 1)) else keys.size
+  termination_by keys.size - k
+  decreasing_by all_goals omega
+
+def dbTrOf (keys : Array Nat) : DenseExpr p → DbSTr
+  | .const c => .cst c.val.toUInt32
+  | .var i => .slot (dbSlotIdx keys i.index 0)
+  | .add a b => .add (dbTrOf keys a) (dbTrOf keys b)
+  | .mul a b => .mul (dbTrOf keys a) (dbTrOf keys b)
+
+def dbMulTerm (pm64 : UInt64) (s t : DbTerm) : DbTerm :=
+  DbTerm.of (dbMulU pm64 s.coef t.coef) (s.slotsArr ++ t.slotsArr)
+
+def dbCrossTerms (pm64 : UInt64) (x y : Array DbTerm) : Array DbTerm :=
+  x.foldl (init := Array.emptyWithCapacity (x.size * y.size)) fun acc s =>
+    y.foldl (init := acc) fun acc t => acc.push (dbMulTerm pm64 s t)
+
+/-- Terms beyond this many abandon the expansion for the tree walk. -/
+def dbTermCap : Nat := 64
+
+def dbTermsOf (pm64 : UInt64) (keys : Array Nat) : DenseExpr p → Option (Array DbTerm)
+  | .const c => some #[.cst c.val.toUInt32]
+  | .var i => some #[.lin 1 (dbSlotIdx keys i.index 0)]
+  | .add a b =>
+    match dbTermsOf pm64 keys a, dbTermsOf pm64 keys b with
+    | some x, some y => if x.size + y.size ≤ dbTermCap then some (x ++ y) else none
+    | _, _ => none
+  | .mul a b =>
+    match dbTermsOf pm64 keys a, dbTermsOf pm64 keys b with
+    | some x, some y =>
+      if x.size * y.size ≤ dbTermCap then some (dbCrossTerms pm64 x y) else none
+    | _, _ => none
+
+def dbCountEq (ss : Array Nat) (d : Nat) : Nat :=
+  ss.foldl (init := 0) fun n s => if s == d then n + 1 else n
+
+def dbEraseOne (ss : Array Nat) (d : Nat) : Array Nat :=
+  (ss.foldl (init := (Array.emptyWithCapacity ss.size, false)) fun st s =>
+    if !st.2 && s == d then (st.1, true) else (st.1.push s, st.2)).1
+
+/-- Split terms at level `d`: terms without slot `d`, coefficient monomials of the terms linear in
+    slot `d`, and the `slot_d^{≥2}` terms. -/
+def dbSplitTerms (d : Nat) (ts : Array DbTerm) :
+    Array DbTerm × Array DbTerm × Array DbTerm :=
+  ts.foldl (init := (#[], #[], #[])) fun st t =>
+    let (o, l, h) := st
+    match t with
+    | .cst _ => (o.push t, l, h)
+    | .lin c s => if s == d then (o, l.push (.cst c), h) else (o.push t, l, h)
+    | .mono c ss =>
+      match dbCountEq ss d with
+      | 0 => (o.push t, l, h)
+      | 1 => (o, l.push (DbTerm.of c (dbEraseOne ss d)), h)
+      | _ => (o, l, h.push t)
+
+/-- One compiled operand: split terms (evaluated as `pb[o] + pl[o]·x` per point), or a tree. -/
+inductive DbCOp where
+  | split (outer linCo high : Array DbTerm)
+  | tree (t : DbSTr)
+deriving Inhabited
+
+def dbExprSize : DenseExpr p → Nat
+  | .const _ => 1 | .var _ => 1
+  | .add a b => 1 + dbExprSize a + dbExprSize b
+  | .mul a b => 1 + dbExprSize a + dbExprSize b
+
+def dbCOpOf (pm64 : UInt64) (keys : Array Nat) (d : Nat) (e : DenseExpr p) : DbCOp :=
+  if dbExprSize e ≤ 1 then .tree (dbTrOf keys e)
+  else
+    match dbTermsOf pm64 keys e with
+    | some ts =>
+      let (o, l, h) := dbSplitTerms d ts
+      .split o l h
+    | none => .tree (dbTrOf keys e)
+
+/-- A compiled item: operand indices into the plan's `ops` array. -/
+inductive DbXIt where
+  | zero (o : Nat)
+  | varRange (m x w : Nat)
+  | varRangeConst (m x : Nat) (bound : UInt64)
+  | tupleRange (m x y : Nat) (bx bY : UInt64)
+  | fixedRange (m v : Nat) (bound : UInt64)
+  | byte (m o1 o2 r : Nat) (bound : UInt64) (kind : DenseBytePredKind)
+  | fallback (busId : Nat) (m : Nat) (payload : List Nat)
+deriving Inhabited
+
+def dbCompileOps (pm64 : UInt64) (keys : Array Nat) (d : Nat) (ops : Array DbCOp) :
+    List (DenseExpr p) → Array DbCOp × List Nat
+  | [] => (ops, [])
+  | e :: rest =>
+    let o := ops.size
+    let (ops, os) := dbCompileOps pm64 keys d (ops.push (dbCOpOf pm64 keys d e)) rest
+    (ops, o :: os)
+
+def dbCompileItem (pm64 : UInt64) (keys : Array Nat) (d : Nat) (ops : Array DbCOp) :
+    DbItem p → Array DbCOp × Option DbXIt
+  | .always => (ops, none)
+  | .zero e => (ops.push (dbCOpOf pm64 keys d e), some (.zero ops.size))
+  | .varRange m x w =>
+    let o := ops.size
+    let ops := ((ops.push (dbCOpOf pm64 keys d m)).push (dbCOpOf pm64 keys d x)).push
+      (dbCOpOf pm64 keys d w)
+    (ops, some (.varRange o (o + 1) (o + 2)))
+  | .varRangeConst m x b =>
+    let o := ops.size
+    let ops := (ops.push (dbCOpOf pm64 keys d m)).push (dbCOpOf pm64 keys d x)
+    (ops, some (.varRangeConst o (o + 1) (dbBoundU b)))
+  | .tupleRange m x y bx bY =>
+    let o := ops.size
+    let ops := ((ops.push (dbCOpOf pm64 keys d m)).push (dbCOpOf pm64 keys d x)).push
+      (dbCOpOf pm64 keys d y)
+    (ops, some (.tupleRange o (o + 1) (o + 2) (dbBoundU bx) (dbBoundU bY)))
+  | .fixedRange m v b =>
+    let o := ops.size
+    let ops := (ops.push (dbCOpOf pm64 keys d m)).push (dbCOpOf pm64 keys d v)
+    (ops, some (.fixedRange o (o + 1) (dbBoundU b)))
+  | .byte m o1 o2 r b kind =>
+    let o := ops.size
+    let ops := (((ops.push (dbCOpOf pm64 keys d m)).push (dbCOpOf pm64 keys d o1)).push
+      (dbCOpOf pm64 keys d o2)).push (dbCOpOf pm64 keys d r)
+    (ops, some (.byte o (o + 1) (o + 2) (o + 3) (dbBoundU b) kind))
+  | .fallback busId m payload =>
+    let o := ops.size
+    let (ops, os) := dbCompileOps pm64 keys d (ops.push (dbCOpOf pm64 keys d m)) payload
+    (ops, some (.fallback busId o os))
+
+def dbLevCount (items : Array (DbItem p)) (ilev : Array Nat) (k : Nat) (counts : Array Nat) :
+    Array Nat :=
+  if h : k < items.size then
+    let counts := match items[k] with
+      | .always => counts
+      | _ => counts.modify (ilev.getD k 0) (· + 1)
+    dbLevCount items ilev (k + 1) counts
+  else counts
+  termination_by items.size - k
+  decreasing_by all_goals omega
+
+def dbLstartOf (counts : Array Nat) : Array Nat :=
+  counts.foldl (init := #[0]) fun ls c => ls.push (ls.getD (ls.size - 1) 0 + c)
+
+/-- A compiled plan: items counting-sorted by level (`lstart` offsets), operands flattened. -/
+structure DbCompiled where
+  items : Array DbXIt
+  ops : Array DbCOp
+  lstart : Array Nat
+deriving Inhabited
+
+def dbCompileGo (pm64 : UInt64) (keys : Array Nat) (items : Array (DbItem p))
+    (ilev : Array Nat) (k : Nat) (cur : Array Nat) (out : Array DbXIt) (ops : Array DbCOp) :
+    Array DbXIt × Array DbCOp :=
+  if h : k < items.size then
+    let d := ilev.getD k 0
+    let (ops, xit?) := dbCompileItem pm64 keys d ops items[k]
+    match xit? with
+    | none => dbCompileGo pm64 keys items ilev (k + 1) cur out ops
+    | some xit =>
+      let pos := cur.getD d 0
+      dbCompileGo pm64 keys items ilev (k + 1) (cur.modify d (· + 1)) (out.set! pos xit) ops
+  else (out, ops)
+  termination_by items.size - k
+  decreasing_by all_goals omega
+
+def dbCompilePlan (pm64 : UInt64) (keys : Array Nat) (kks : Nat) (items : Array (DbItem p))
+    (ilev : Array Nat) : DbCompiled :=
+  let counts := dbLevCount items ilev 0 (Array.replicate kks 0)
+  let lstart := dbLstartOf counts
+  let total := lstart.getD kks 0
+  let cur := lstart.extract 0 kks
+  let (out, ops) := dbCompileGo pm64 keys items ilev 0 cur
+    (Array.replicate total default) (Array.emptyWithCapacity (2 * items.size))
+  { items := out, ops, lstart }
+
+/-! ### Descent preparation and point evaluation -/
+
+def dbPrepOp (pm : UInt32) (pm64 : UInt64) (ops : Array DbCOp) (regs : Array UInt32) (o : Nat)
+    (st : Array UInt32 × Array UInt32) : Array UInt32 × Array UInt32 :=
+  match ops.getD o default with
+  | .split outer linCo _ =>
+    (st.1.set! o (dbEvalTerms pm pm64 regs outer), st.2.set! o (dbEvalTerms pm pm64 regs linCo))
+  | .tree _ => st
+
+/-- A level's pivot: the slot value `x0` solving `operand o = target` is the only one any point
+    can survive (`.val`), or no point at this depth can survive at all (`.dead`). -/
+inductive DbPivot where
+  | val (o : Nat) (target : UInt32)
+  | dead
+
+/-- The operand viewed as `base + lin·x` at depth `d` (`x` the slot-`d` register), `none` when it
+    is not affine in `x`. Slots below `d` are bound, so a foreign-slot tree leaf is a constant. -/
+def dbOpAffine? (ops : Array DbCOp) (pb pl regs : Array UInt32) (d o : Nat) :
+    Option (UInt32 × UInt32) :=
+  match ops.getD o default with
+  | .split _ _ high => if high.isEmpty then some (pb.getD o 0, pl.getD o 0) else none
+  | .tree (.cst c) => some (c, 0)
+  | .tree (.slot s) => if s == d then some (0, 1) else some (regs.getD s 0, 0)
+  | .tree _ => none
+
+@[inline] def dbOpConstU? (ops : Array DbCOp) (pb pl regs : Array UInt32) (d o : Nat) :
+    Option UInt32 :=
+  match dbOpAffine? ops pb pl regs d o with
+  | some (b, l) => if l == 0 then some b else none
+  | none => none
+
+/-- A byte item's pivot at depth `d`: with a nonzero constant multiplicity, a slot-affine operand
+    among `o1`/`o2`/`result` while the other two are constants pins the slot to one value (xor is
+    solvable from either side; or/and/pair only through the result). -/
+def dbBytePivot (ops : Array DbCOp) (pb pl regs : Array UInt32) (d : Nat)
+    (m o1 o2 r : Nat) (bound : UInt64) (kind : DenseBytePredKind) : Option DbPivot :=
+  match dbOpConstU? ops pb pl regs d m with
+  | none => none
+  | some mv =>
+    if mv == 0 then none
+    else
+      match dbOpAffine? ops pb pl regs d o1, dbOpAffine? ops pb pl regs d o2,
+          dbOpAffine? ops pb pl regs d r with
+      | some (b1, l1), some (b2, l2), some (br, lr) =>
+        if l1 != 0 && l2 == 0 && lr == 0 then
+          match kind with
+          | .xor =>
+            if !dbLtU b2 bound then some .dead
+            else
+              let a := br ^^^ b2
+              if dbLtU a bound then some (.val o1 a) else some .dead
+          | _ => none
+        else if l1 == 0 && l2 != 0 && lr == 0 then
+          match kind with
+          | .xor =>
+            if !dbLtU b1 bound then some .dead
+            else
+              let b := br ^^^ b1
+              if dbLtU b bound then some (.val o2 b) else some .dead
+          | _ => none
+        else if l1 == 0 && l2 == 0 && lr != 0 then
+          if !dbLtU b1 bound || !dbLtU b2 bound then some .dead
+          else
+            match kind with
+            | .xor => some (.val r (b1 ^^^ b2))
+            | .or => some (.val r (b1 ||| b2))
+            | .and => some (.val r (b1 &&& b2))
+            | .pair => some (.val r 0)
+        else none
+      | _, _, _ => none
+
+/-- Evaluate the level's `outer`/`linCo` sums into the scratch arrays, one item range per
+    descent — and report a pivot where an item pins the slot to at most one value. -/
+def dbPrepRange (pm : UInt32) (pm64 : UInt64) (items : Array DbXIt) (ops : Array DbCOp)
+    (regs : Array UInt32) (d : Nat) (i hi : Nat) (st : Array UInt32 × Array UInt32)
+    (piv : Option DbPivot) : (Array UInt32 × Array UInt32) × Option DbPivot :=
+  if i < hi then
+    if h : i < items.size then
+      let (st, piv) := match items[i] with
+        | .zero o =>
+          let st := dbPrepOp pm pm64 ops regs o st
+          let piv := if piv.isSome then piv
+            else
+              match dbOpAffine? ops st.1 st.2 regs d o with
+              | some (_, l) => if l != 0 then some (.val o 0) else none
+              | none => none
+          (st, piv)
+        | .varRange m x w =>
+          (dbPrepOp pm pm64 ops regs w (dbPrepOp pm pm64 ops regs x
+            (dbPrepOp pm pm64 ops regs m st)), piv)
+        | .varRangeConst m x _ =>
+          (dbPrepOp pm pm64 ops regs x (dbPrepOp pm pm64 ops regs m st), piv)
+        | .tupleRange m x y _ _ =>
+          (dbPrepOp pm pm64 ops regs y (dbPrepOp pm pm64 ops regs x
+            (dbPrepOp pm pm64 ops regs m st)), piv)
+        | .fixedRange m v _ =>
+          (dbPrepOp pm pm64 ops regs v (dbPrepOp pm pm64 ops regs m st), piv)
+        | .byte m o1 o2 r bound kind =>
+          let st := dbPrepOp pm pm64 ops regs r (dbPrepOp pm pm64 ops regs o2
+            (dbPrepOp pm pm64 ops regs o1 (dbPrepOp pm pm64 ops regs m st)))
+          let piv := if piv.isSome then piv
+            else dbBytePivot ops st.1 st.2 regs d m o1 o2 r bound kind
+          (st, piv)
+        | .fallback _ m payload =>
+          (payload.foldl (init := dbPrepOp pm pm64 ops regs m st) fun st o =>
+            dbPrepOp pm pm64 ops regs o st, piv)
+      dbPrepRange pm pm64 items ops regs d (i + 1) hi st piv
+    else (st, piv)
+  else (st, piv)
+  termination_by hi - i
+  decreasing_by all_goals omega
+
+/-- `b^e mod p` by binary exponentiation (32 rounds cover any `UInt32` exponent). -/
+def dbPowU (pm64 : UInt64) : Nat → UInt32 → UInt32 → UInt32 → UInt32
+  | 0, _, acc, _ => acc
+  | fuel + 1, b, acc, e =>
+    if e == 0 then acc
+    else
+      let acc := if e &&& 1 == 1 then dbMulU pm64 acc b else acc
+      dbPowU pm64 fuel (dbMulU pm64 b b) acc (e >>> 1)
+
+/-- `a⁻¹ mod p` for prime `p` and `a ≠ 0`: `a^(p−2)`. -/
+@[inline] def dbInvU (pm : UInt32) (pm64 : UInt64) (a : UInt32) : UInt32 :=
+  dbPowU pm64 32 a 1 (pm - 2)
+
+@[inline] def dbNegU (pm a : UInt32) : UInt32 := if a == 0 then 0 else pm - a
+
+/-- The index of value `x` in a domain, `none` when absent (`.coset` callers keep the sweep). -/
+def dbDomFind (d : DbDom) (x : UInt32) : Option Nat :=
+  match d with
+  | .range b => if x.toNat < b then some x.toNat else none
+  | .explicit vs => vs.findIdx? (fun v => v.toUInt32 == x)
+  | .coset _ _ _ => none
+
+/-- One operand at the current point: `pb[o] + pl[o]·x`, plus `high`/tree work where present.
+    `imm` (levels whose domain is too small to repay a prepared descent) evaluates the sums in
+    place instead of reading the scratch arrays. -/
+@[inline] def dbOpVal (imm : Bool) (pm : UInt32) (pm64 : UInt64) (ops : Array DbCOp)
+    (pb pl regs : Array UInt32) (x : UInt32) (o : Nat) : UInt32 :=
+  match ops.getD o default with
+  | .split outer linCo high =>
+    let b := if imm then dbEvalTerms pm pm64 regs outer else pb.getD o 0
+    let l := if imm then dbEvalTerms pm pm64 regs linCo else pl.getD o 0
+    let v := dbAddU pm b (dbMulU pm64 l x)
+    if high.isEmpty then v else dbAddU pm v (dbEvalTerms pm pm64 regs high)
+  | .tree t => dbEvalTr pm pm64 regs t
+
+def dbXItOk {bs : BusSemantics p} (facts : BusFacts p bs) (imm : Bool) (pm : UInt32)
+    (pm64 : UInt64) (ops : Array DbCOp) (pb pl regs : Array UInt32) (x : UInt32) : DbXIt → Bool
+  | .zero o => dbOpVal imm pm pm64 ops pb pl regs x o == 0
+  | .varRange m xo w =>
+    if dbOpVal imm pm pm64 ops pb pl regs x m == 0 then true
+    else
+      let wv := dbOpVal imm pm pm64 ops pb pl regs x w
+      if wv ≤ 17 then dbLtU (dbOpVal imm pm pm64 ops pb pl regs x xo) (1 <<< wv.toUInt64)
+      else false
+  | .varRangeConst m xo bound =>
+    if dbOpVal imm pm pm64 ops pb pl regs x m == 0 then true
+    else dbLtU (dbOpVal imm pm pm64 ops pb pl regs x xo) bound
+  | .tupleRange m xo yo bx bY =>
+    if dbOpVal imm pm pm64 ops pb pl regs x m == 0 then true
+    else
+      dbLtU (dbOpVal imm pm pm64 ops pb pl regs x xo) bx &&
+        dbLtU (dbOpVal imm pm pm64 ops pb pl regs x yo) bY
+  | .fixedRange m v bound =>
+    if dbOpVal imm pm pm64 ops pb pl regs x m == 0 then true
+    else dbLtU (dbOpVal imm pm pm64 ops pb pl regs x v) bound
+  | .byte m o1 o2 r bound kind =>
+    if dbOpVal imm pm pm64 ops pb pl regs x m == 0 then true
+    else
+      let a := dbOpVal imm pm pm64 ops pb pl regs x o1
+      let b := dbOpVal imm pm pm64 ops pb pl regs x o2
+      dbLtU a bound && dbLtU b bound &&
+        dbByteRelU kind a b (dbOpVal imm pm pm64 ops pb pl regs x r)
+  | .fallback busId m payload =>
+    let mv := dbOpVal imm pm pm64 ops pb pl regs x m
+    if mv == 0 then true
+    else
+      facts.acceptsDec
+        { busId := busId, multiplicity := zmodOfNatP p mv.toNat,
+          payload := payload.map
+            (fun o => zmodOfNatP p (dbOpVal imm pm pm64 ops pb pl regs x o).toNat) }
+
+def dbLevOkY {bs : BusSemantics p} (facts : BusFacts p bs) (imm : Bool) (pm : UInt32)
+    (pm64 : UInt64) (items : Array DbXIt) (ops : Array DbCOp) (pb pl regs : Array UInt32)
+    (x : UInt32) (i hi : Nat) : Bool :=
+  if i < hi then
+    if h : i < items.size then
+      if dbXItOk facts imm pm pm64 ops pb pl regs x items[i] then
+        dbLevOkY facts imm pm pm64 items ops pb pl regs x (i + 1) hi
+      else false
+    else true
+  else true
+  termination_by hi - i
+  decreasing_by all_goals omega
+
+/-! ### The box loop -/
+
+structure DbScanY where
+  regs : Array UInt32
+  pb : Array UInt32
+  pl : Array UInt32
+  vals : Array UInt32
+  alive : Array Bool
+  live : Nat
+  started : Bool
+deriving Inhabited
+
+def dbAbsorbY (regs : Array UInt32) (i : Nat) (vals : Array UInt32) (alive : Array Bool)
+    (live : Nat) : Array UInt32 × Array Bool × Nat :=
+  if h : i < vals.size then
+    if alive.getD i false then
+      if regs.getD i 0 == vals.getD i 0 then dbAbsorbY regs (i + 1) vals alive live
+      else dbAbsorbY regs (i + 1) vals (alive.set! i false) (live - 1)
+    else dbAbsorbY regs (i + 1) vals alive live
+  else (vals, alive, live)
+  termination_by vals.size - i
+  decreasing_by all_goals omega
+
+@[inline] def dbAbsorbYArgs (kks : Nat) (regs vals : Array UInt32) (alive : Array Bool)
+    (live : Nat) (started : Bool) : Array UInt32 × Array Bool × Nat × Bool :=
+  if !started then (regs.extract 0 kks, Array.replicate kks true, kks, true)
+  else
+    let (vals, alive, live) := dbAbsorbY regs 0 vals alive live
+    (vals, alive, live, started)
+
+mutual
+
+/-- Enter depth `d` with slots `0..d-1` bound: prepare the level's operands and, when a pivot
+    exists on a directly-indexable domain, test only the pivot's root — the level's sweep
+    collapses from `n` points to one lookup. `dbDomFind` misses ⟹ no point at this depth
+    survives the pivot item ⟹ no survivors at all. -/
+def dbScanDepth {bs : BusSemantics p} (facts : BusFacts p bs) (pm : UInt32) (pm64 : UInt64)
+    (items : Array DbXIt) (ops : Array DbCOp) (lstart : Array Nat) (doms : Array DbDom)
+    (kks d : Nat) (regs pb pl vals : Array UInt32) (alive : Array Bool) (live : Nat)
+    (started : Bool) : DbScanY :=
+  let dom := doms.getD d (.range 0)
+  let n := dom.size
+  -- a small domain does not repay the prepared descent: sweep in immediate mode, no scratch
+  if n < 12 then
+    dbScanLoopY facts true pm pm64 items ops lstart doms kks d 0 n regs pb pl vals alive live
+      started
+  else
+  let (st, piv) := dbPrepRange pm pm64 items ops regs d (lstart.getD d 0)
+    (lstart.getD (d + 1) 0) (pb, pl) none
+  let pb := st.1
+  let pl := st.2
+  match piv with
+  | some .dead => ⟨regs, pb, pl, vals, alive, live, started⟩
+  | some (.val o target) =>
+    let direct := match dom with | .coset _ _ _ => false | _ => true
+    if direct && 8 < n then
+      -- solve `base + lin·x = target` (the affine view is re-derived; `lin ≠ 0` by construction)
+      let x0 :=
+        match dbOpAffine? ops pb pl regs d o with
+        | some (b, l) =>
+          let diff := dbAddU pm target (dbNegU pm b)
+          if l == 1 then diff else dbMulU pm64 diff (dbInvU pm pm64 l)
+        | none => 0
+      match dbDomFind dom x0 with
+      | some i0 =>
+        dbScanLoopY facts false pm pm64 items ops lstart doms kks d i0 (i0 + 1) regs pb pl
+          vals alive live started
+      | none => ⟨regs, pb, pl, vals, alive, live, started⟩
+    else
+      dbScanLoopY facts false pm pm64 items ops lstart doms kks d 0 n regs pb pl vals alive
+        live started
+  | none =>
+    dbScanLoopY facts false pm pm64 items ops lstart doms kks d 0 n regs pb pl vals alive live
+      started
+  termination_by (kks - d, (doms.getD d (.range 0)).size + 2)
+  decreasing_by
+    all_goals (apply Prod.Lex.right; omega)
+
+def dbScanLoopY {bs : BusSemantics p} (facts : BusFacts p bs) (imm : Bool) (pm : UInt32)
+    (pm64 : UInt64) (items : Array DbXIt) (ops : Array DbCOp) (lstart : Array Nat)
+    (doms : Array DbDom) (kks d i n : Nat) (regs pb pl vals : Array UInt32)
+    (alive : Array Bool) (live : Nat) (started : Bool) : DbScanY :=
+  if i ≥ n then ⟨regs, pb, pl, vals, alive, live, started⟩
+  else if started && live == 0 then ⟨regs, pb, pl, vals, alive, live, started⟩
+  else
+    let x := DbDom.atU pm pm64 (doms.getD d (.range 0)) i
+    let regs := regs.set! d x
+    if dbLevOkY facts imm pm pm64 items ops pb pl regs x (lstart.getD d 0)
+      (lstart.getD (d + 1) 0)
+    then
+      if d + 1 ≥ kks then
+        let (vals, alive, live, started) := dbAbsorbYArgs kks regs vals alive live started
+        dbScanLoopY facts imm pm pm64 items ops lstart doms kks d (i + 1) n regs pb pl vals alive
+          live started
+      else
+        let r := dbScanDepth facts pm pm64 items ops lstart doms kks (d + 1) regs pb pl vals
+          alive live started
+        dbScanLoopY facts imm pm pm64 items ops lstart doms kks d (i + 1) n r.regs r.pb r.pl r.vals
+          r.alive r.live r.started
+    else
+      dbScanLoopY facts imm pm pm64 items ops lstart doms kks d (i + 1) n regs pb pl vals alive live
+        started
+  termination_by (kks - d, n - i)
+  decreasing_by
+    all_goals first
+      | (apply Prod.Lex.right; omega)
+      | (apply Prod.Lex.left; omega)
+
+end
+
+def dbForcedOfMaskU (p : ℕ) (keys : Array VarId) (vals : Array UInt32) (alive : Array Bool)
+    (i : Nat) : List (VarId × ZMod p) :=
+  if h : i < keys.size then
+    let rest := dbForcedOfMaskU p keys vals alive (i + 1)
+    if alive.getD i false then (keys[i], zmodOfNatP p (vals.getD i 0).toNat) :: rest else rest
+  else []
+  termination_by keys.size - i
+  decreasing_by all_goals omega
+
+def dbRunPlanY {bs : BusSemantics p} (facts : BusFacts p bs) (pm : UInt32) (pm64 : UInt64)
+    (out : List (List (VarId × ZMod p))) (plan : DbPlan p) : List (List (VarId × ZMod p)) :=
+  match plan with
+  | .done forced => forced :: out
+  | .scan keys doms items ilev constOk =>
+    if !constOk then dbZeroAll keys :: out
+    else if keys.isEmpty then [] :: out
+    else
+      let kks := keys.size
+      let kidx := keys.map (fun v => v.index)
+      let C := dbCompilePlan pm64 kidx kks items ilev
+      let regs := Array.replicate kks (0 : UInt32)
+      let r := dbScanDepth facts pm pm64 C.items C.ops C.lstart doms kks 0 regs
+        (Array.replicate C.ops.size 0) (Array.replicate C.ops.size 0) #[] #[] 0 false
+      if !r.started then dbZeroAll keys :: out
+      else if r.live == 0 then [] :: out
+      else dbForcedOfMaskU p keys r.vals r.alive 0 :: out
+
 /-- Run one plan, threading the register file so it is allocated once for the whole run. -/
 def dbRunPlan {bs : BusSemantics p} (facts : BusFacts p bs) (nv : Nat)
     (st : Array Nat × List (List (VarId × ZMod p))) (plan : DbPlan p) :
@@ -860,6 +1460,34 @@ def dbRunPlan {bs : BusSemantics p} (facts : BusFacts p bs) (nv : Nat)
       else if live == 0 then ⟨regs, [] :: out⟩
       else ⟨regs, dbForcedOfMask p keys vals alive 0 :: out⟩
 
+/-- Boxes below this many points do not repay the per-plan compilation; they run on the boxed
+    engine. -/
+def dbCompileGate : Nat := 256
+
+/-- One plan on the hybrid engine: the compiled scan for large boxes, the boxed scan (with its
+    threaded register file) below the gate. -/
+def dbRunPlanH {bs : BusSemantics p} (facts : BusFacts p bs) (pm : UInt32) (pm64 : UInt64)
+    (nv : Nat) (st : Array Nat × List (List (VarId × ZMod p))) (plan : DbPlan p) :
+    Array Nat × List (List (VarId × ZMod p)) :=
+  match plan with
+  | .done forced => (st.1, forced :: st.2)
+  | .scan _ doms _ _ _ =>
+    if doms.foldl (init := 1) (fun a d => a * d.size) < dbCompileGate then
+      dbRunPlan facts nv st plan
+    else (st.1, dbRunPlanY facts pm pm64 st.2 plan)
+
+/-- The compiled engine, standing in for `dbRunPlans` on any field whose values fit the `UInt32`
+    register file (`65536 < p < 2^31`, which both supported fields satisfy). -/
+def dbRunPlansFast {bs : BusSemantics p} (facts : BusFacts p bs) (nv : Nat)
+    (plans : List (DbPlan p)) : List (List (VarId × ZMod p)) :=
+  if 65536 < p && p < 2147483648 then
+    (plans.foldl (dbRunPlanH facts p.toUInt32 p.toUInt64 nv)
+      (⟨#[], []⟩ : Array Nat × List (List (VarId × ZMod p)))).2.reverse
+  else
+    (plans.foldl (dbRunPlan facts nv)
+      (⟨#[], []⟩ : Array Nat × List (List (VarId × ZMod p)))).2.reverse
+
+@[implemented_by dbRunPlansFast]
 def dbRunPlans {bs : BusSemantics p} (facts : BusFacts p bs) (nv : Nat) (plans : List (DbPlan p)) :
     List (List (VarId × ZMod p)) :=
   (plans.foldl (dbRunPlan facts nv)
@@ -1215,5 +1843,24 @@ def dbDomainBatchTransform (pw : PrimeWitness p) (bs : BusSemantics p)
     let r := dbDomainBatchσ bs facts d
     if r.2 then d.substF (dbSubstFn r.1) else d
   else d
+
+/-- `dbDomainBatchTransform` with the σ-array allocation skipped when nothing was forced. The
+    substitution itself stays a full rebuild: a mention-gated variant that keeps unchanged items
+    as shared pointers measures faster in-pass and slower end-to-end (sharing disables Lean's
+    reset/reuse in every downstream pass — the entry-169 dead end, reproduced here). -/
+def dbDomainBatchTransformFast (pw : PrimeWitness p) (bs : BusSemantics p)
+    (facts : BusFacts p bs) (d : DenseConstraintSystem p) : DenseConstraintSystem p :=
+  if pw.isPrime = true then
+    let ctx := dbBuildCtx bs facts d
+    let st0 : DbTargetSt p := ⟨⟨∅⟩, Array.replicate ctx.nv 0, 0, []⟩
+    let plans := (dbTargetsBis ctx 0 (dbTargetsCs ctx 0 st0)).plans.reverse
+    -- run serially: handing plans to `Task.spawn` marks the shared objects multi-threaded, and
+    -- every later refcount touch on them — here and in every pass after — becomes atomic
+    let results := dbRunPlans facts ctx.nv plans
+    if results.all List.isEmpty then d
+    else d.substF (dbSubstFn (dbSolvedOf ctx.nv results).1)
+  else d
+
+attribute [implemented_by dbDomainBatchTransformFast] dbDomainBatchTransform
 
 end ApcOptimizer.Dense
