@@ -433,45 +433,11 @@ def DbTab.insert (T : DbTab p) (i : Nat) (d : DbDom) : DbTab p :=
 
 @[inline] def DbTab.get (T : DbTab p) (i : Nat) : Option (DbDom) := T.dom.getD i none
 
-def dbAddConstraintVars (e : DenseExpr p) (vs : Array VarId) (k : Nat) (T : DbTab p) :
-    DbTab p :=
-  if h : k < vs.size then
-    match dbRootsAt vs k e with
-    | some rs =>
-      dbAddConstraintVars e vs (k + 1) (T.insert vs[k].index (.explicit (rs.map ZMod.val).toArray))
-    | none => dbAddConstraintVars e vs (k + 1) T
-  else T
-  termination_by vs.size - k
-  decreasing_by all_goals omega
-
 def dbSlotBound {bs : BusSemantics p} (facts : BusFacts p bs) (bi : BusInteraction (DenseExpr p))
     (mult? : Option (ZMod p)) (pat : List (Option (ZMod p))) (slot : Nat) : Option Nat :=
   match mult? with
   | none => none
   | some m => if zmodIsZero m then none else facts.slotBound bi.busId m pat slot
-
-/-- Walk the payload once: the raw-variable slots' bounds (first slot per variable, as
-    `denseVarSlot`) feed both the table and `denseBiInformative`'s second disjunct. -/
-def dbBusSlots {bs : BusSemantics p} (facts : BusFacts p bs) (bi : BusInteraction (DenseExpr p))
-    (mult? : Option (ZMod p)) (pat : List (Option (ZMod p))) :
-    List (DenseExpr p) → List (Option (ZMod p)) → Nat → Array VarId → Bool → DbTab p →
-      Bool × DbTab p
-  | [], _, _, _, inf, T => (inf, T)
-  | e :: rest, ps, slot, seen, inf, T =>
-    let pRest := ps.tail
-    match e with
-    | .var i =>
-      if seen.contains i then dbBusSlots facts bi mult? pat rest pRest (slot + 1) seen inf T
-      else
-        match dbSlotBound facts bi mult? pat slot with
-        | none => dbBusSlots facts bi mult? pat rest pRest (slot + 1) (seen.push i) true T
-        | some bound =>
-          let T := if bound ≤ maxDomainBound then T.insert i.index (.range bound) else T
-          dbBusSlots facts bi mult? pat rest pRest (slot + 1) (seen.push i) inf T
-    | _ =>
-      -- `pat` already holds this slot's `constValue?`
-      dbBusSlots facts bi mult? pat rest pRest (slot + 1) seen
-        (inf || !(ps.head?.getD none).isSome) T
 
 /-! ### Byte-operand domains (`denseAddByteVarDoms`), coset streamed -/
 
@@ -581,27 +547,6 @@ def dbDiagRefute {bs : BusSemantics p} (facts : BusFacts p bs) (item : DbItem p)
 /-- Boxes at most this size are swept directly; the diagonal pre-test would cost more than it
     saves. -/
 def dbDiagGate : Nat := 16
-
-/-- `denseConstraintRedundantV`: identically zero on the box of its own variables' domains. -/
-def dbConstraintRedundant {bs : BusSemantics p} (facts : BusFacts p bs) (T : DbTab p)
-    (item : DbItem p) (vs : Array VarId) (regs : Array Nat) : Array Nat × Bool :=
-  match dbBoxOf T vs 0 1 with
-  | none => ⟨regs, false⟩
-  | some box =>
-    if box ≤ maxEnumSize then
-      match dbDomsOf T vs with
-      | none => ⟨regs, false⟩
-      | some doms =>
-        if vs.isEmpty then ⟨regs, dbItemOk facts regs item⟩
-        else
-          let keys := vs.map (fun v => v.index)
-          let ⟨regs, refuted⟩ :=
-            if dbDiagGate < box then dbDiagRefute facts item keys doms 0 8 regs
-            else ⟨regs, false⟩
-          if refuted then ⟨regs, false⟩
-          else
-            dbBoxAllOne facts item keys doms 0 0 (doms.getD 0 (.range 0)).size regs true
-    else ⟨regs, false⟩
 
 /-! ## Domain-redundancy of an interaction -/
 
@@ -962,8 +907,11 @@ def dbCOpOf (keys : Array Nat) (e : DenseExpr p) : DbCOp :=
     | some ts => .poly ts
     | none => .tree (dbTrOf keys e)
 
-/-- A compiled item: operand indices into the plan's `ops` array. -/
+/-- A compiled item: operand indices into the plan's `ops` array. `.always` is both the
+    compilation of `DbItem.always` and the sort array's initializer, so an unfilled slot is a
+    dropped filter, never a wrong one. -/
 inductive DbXIt where
+  | always
   | zero (o : Nat)
   | varRange (m x w : Nat)
   | varRangeConst (m x : Nat) (bound : Nat)
@@ -1033,16 +981,19 @@ structure DbCompiled where
 deriving Inhabited
 
 def dbCompileGo (keys : Array Nat) (items : Array (DbItem p))
-    (ilev : Array Nat) (k : Nat) (cur : Array Nat) (out : Array DbXIt) (ops : Array DbCOp) :
-    Array DbXIt × Array DbCOp :=
+    (ilev : Array Nat) (lstart : Array Nat) (k : Nat) (cur : Array Nat) (out : Array DbXIt)
+    (ops : Array DbCOp) : Array DbXIt × Array DbCOp :=
   if h : k < items.size then
     let (ops, xit?) := dbCompileItem keys ops items[k]
     match xit? with
-    | none => dbCompileGo keys items ilev (k + 1) cur out ops
+    | none => dbCompileGo keys items ilev lstart (k + 1) cur out ops
     | some xit =>
       let d := ilev.getD k 0
       let pos := cur.getD d 0
-      dbCompileGo keys items ilev (k + 1) (cur.modify d (· + 1)) (out.set! pos xit) ops
+      -- the guard makes "a slot in level `d`'s range holds a level-`d` item" definitional
+      let out := if lstart.getD d 0 ≤ pos && pos < lstart.getD (d + 1) 0 then out.set! pos xit
+        else out
+      dbCompileGo keys items ilev lstart (k + 1) (cur.modify d (· + 1)) out ops
   else (out, ops)
   termination_by items.size - k
   decreasing_by all_goals omega
@@ -1053,8 +1004,8 @@ def dbCompilePlan (keys : Array Nat) (kks : Nat) (items : Array (DbItem p))
   let lstart := dbLstartOf counts
   let total := lstart.getD kks 0
   let cur := lstart.extract 0 kks
-  let (out, ops) := dbCompileGo keys items ilev 0 cur
-    (Array.replicate total default) (Array.emptyWithCapacity (2 * items.size))
+  let (out, ops) := dbCompileGo keys items ilev lstart 0 cur
+    (Array.replicate total .always) (Array.emptyWithCapacity (2 * items.size))
   { items := out, ops, lstart }
 
 /-! ### Point evaluation -/
@@ -1068,6 +1019,7 @@ def dbCompilePlan (keys : Array Nat) (kks : Nat) (items : Array (DbItem p))
 /-- `dbItemOk`'s predicates over compiled operands. -/
 def dbXItOk {bs : BusSemantics p} (facts : BusFacts p bs)
     (ops : Array DbCOp) (regs : Array Nat) : DbXIt → Bool
+  | .always => true
   | .zero o => dbOpVal p ops regs o == 0
   | .varRange m xo w =>
     if dbOpVal p ops regs m == 0 then true
@@ -1117,7 +1069,6 @@ one lookup; soundness needs only that a satisfying assignment's own point is nev
 
 inductive DbPivot where
   | val (o : Nat) (target : Nat)
-  | dead
 
 /-- The affine view `base + lin·x` of a term array at depth `d` (`x` the slot-`d` register),
     `none` when some term has `slot_d^{≥2}`. The view only reads slots below `d`, so it is
@@ -1149,65 +1100,54 @@ def dbOpAffine? (p : ℕ) (ops : Array DbCOp) (regs : Array Nat) (d o : Nat) :
   | .tree (.slot s) => if s == d then some (0, 1) else some (regs.getD s 0, 0)
   | .tree _ => none
 
-@[inline] def dbOpConstN? (p : ℕ) (ops : Array DbCOp) (regs : Array Nat) (d o : Nat) :
-    Option Nat :=
-  match dbOpAffine? p ops regs d o with
-  | some (b, l) => if l == 0 then some b else none
-  | none => none
-
-/-- A byte item's pivot at depth `d`: with a nonzero constant multiplicity, a slot-affine operand
-    among `o1`/`o2`/`result` while the other two are constants pins the slot (xor is solvable
-    from either side; or/and/pair only through the result). -/
+/-- A byte item's pivot at depth `d`: with a nonzero constant multiplicity, a slot-affine
+    operand among `o1`/`o2`/`result` while the other two are constants pins the slot (xor is
+    solvable from either side; or/and/pair only through the result). -/
 def dbBytePivot (p : ℕ) (ops : Array DbCOp) (regs : Array Nat) (d : Nat)
-    (m o1 o2 r : Nat) (bound : Nat) (kind : DenseBytePredKind) : Option DbPivot :=
-  match dbOpConstN? p ops regs d m with
-  | none => none
-  | some mv =>
+    (m o1 o2 r : Nat) (kind : DenseBytePredKind) : Option DbPivot :=
+  match dbOpAffine? p ops regs d m with
+  | some (mv, 0) =>
     if mv == 0 then none
     else
       match dbOpAffine? p ops regs d o1, dbOpAffine? p ops regs d o2,
           dbOpAffine? p ops regs d r with
       | some (b1, l1), some (b2, l2), some (br, lr) =>
         if l1 != 0 && l2 == 0 && lr == 0 then
-          match kind with
-          | .xor =>
-            if bound ≤ b2 then some .dead
-            else
-              let a := Nat.xor br b2
-              if a < bound then some (.val o1 a) else some .dead
-          | _ => none
+          (match kind with
+            | .xor => some (DbPivot.val o1 (Nat.xor br b2))
+            | _ => none)
         else if l1 == 0 && l2 != 0 && lr == 0 then
-          match kind with
-          | .xor =>
-            if bound ≤ b1 then some .dead
-            else
-              let b := Nat.xor br b1
-              if b < bound then some (.val o2 b) else some .dead
-          | _ => none
+          (match kind with
+            | .xor => some (DbPivot.val o2 (Nat.xor br b1))
+            | _ => none)
         else if l1 == 0 && l2 == 0 && lr != 0 then
-          if bound ≤ b1 || bound ≤ b2 then some .dead
-          else
-            match kind with
-            | .xor => some (.val r (Nat.xor b1 b2))
-            | .or => some (.val r (Nat.lor b1 b2))
-            | .and => some (.val r (Nat.land b1 b2))
-            | .pair => some (.val r 0)
+          (match kind with
+            | .xor => some (DbPivot.val r (Nat.xor b1 b2))
+            | .or => some (DbPivot.val r (Nat.lor b1 b2))
+            | .and => some (DbPivot.val r (Nat.land b1 b2))
+            | .pair => some (DbPivot.val r 0))
         else none
       | _, _, _ => none
+  | _ => none
+
+/-- One item's pivot, if it pins the slot: a `.zero` item affine in the slot with a nonzero
+    linear coefficient admits exactly one root, and a byte item with two constant sides pins its
+    third. -/
+def dbItemPivot? (p : ℕ) (ops : Array DbCOp) (regs : Array Nat) (d : Nat) :
+    DbXIt → Option DbPivot
+  | .zero o =>
+    (match dbOpAffine? p ops regs d o with
+      | some (_, l) => if l != 0 then some (DbPivot.val o 0) else none
+      | none => none)
+  | .byte m o1 o2 r _ kind => dbBytePivot p ops regs d m o1 o2 r kind
+  | _ => none
 
 /-- The first pivot among the level's items, if any. -/
 def dbFindPivot (p : ℕ) (items : Array DbXIt) (ops : Array DbCOp) (regs : Array Nat)
     (d : Nat) (i hi : Nat) : Option DbPivot :=
   if i < hi then
     if h : i < items.size then
-      let piv := match items[i] with
-        | .zero o =>
-          match dbOpAffine? p ops regs d o with
-          | some (_, l) => if l != 0 then some (DbPivot.val o 0) else none
-          | none => none
-        | .byte m o1 o2 r bound kind => dbBytePivot p ops regs d m o1 o2 r bound kind
-        | _ => none
-      match piv with
+      match dbItemPivot? p ops regs d items[i] with
       | some piv => some piv
       | none => dbFindPivot p items ops regs d (i + 1) hi
     else none
@@ -1274,7 +1214,6 @@ def dbScanDepth {bs : BusSemantics p} (facts : BusFacts p bs)
     dbScanLoopY facts items ops lstart doms kks d dom lo hi 0 n regs vals alive live started
   else
     match dbFindPivot p items ops regs d lo hi with
-    | some .dead => ⟨regs, vals, alive, live, started⟩
     | some (.val o target) =>
       let direct := match dom with | .coset _ _ _ => false | _ => true
       if direct then
@@ -1382,7 +1321,6 @@ def dbRunPlansFast {bs : BusSemantics p} (facts : BusFacts p bs) (nv : Nat)
   (plans.foldl (dbRunPlanH facts nv)
     (⟨#[], []⟩ : Array Nat × List (List (VarId × ZMod p)))).2.reverse
 
-@[implemented_by dbRunPlansFast]
 def dbRunPlans {bs : BusSemantics p} (facts : BusFacts p bs) (nv : Nat) (plans : List (DbPlan p)) :
     List (List (VarId × ZMod p)) :=
   (plans.foldl (dbRunPlan facts nv)
@@ -1450,44 +1388,6 @@ structure DbCtx (p : ℕ) where
   biVarlessDomRed : Bool
   constOk : Bool
 
-def dbNvOf (vs : Array (Array VarId)) (m : Nat) : Nat :=
-  vs.foldl (init := m) fun acc a => a.foldl (fun b v => max b (v.index + 1)) acc
-
-/-- Phase 1: constraint-sourced domains, one root plan per constraint (≤ 3 distinct variables). -/
-def dbConstraintPhase (cs : Array (DenseExpr p)) (csVars : Array (Array VarId)) (k : Nat)
-    (T : DbTab p) : DbTab p :=
-  if h : k < cs.size then
-    let vs := csVars.getD k #[]
-    let T := if vs.size ≤ 3 then dbAddConstraintVars cs[k] vs 0 T else T
-    dbConstraintPhase cs csVars (k + 1) T
-  else T
-  termination_by cs.size - k
-  decreasing_by all_goals omega
-
-/-- Phase 2a: resolve every `BusFacts` query about each interaction. -/
-def dbPrePhase {bs : BusSemantics p} (facts : BusFacts p bs) (bc : DbBusCache p)
-    (bis : Array (BusInteraction (DenseExpr p))) (biVars : Array (Array VarId)) (k : Nat)
-    (out : Array (DbBiPre p)) : Array (DbBiPre p) :=
-  if h : k < bis.size then
-    dbPrePhase facts bc bis biVars (k + 1) (out.push (dbPreOne facts bc bis[k] (biVars.getD k #[])))
-  else out
-  termination_by bis.size - k
-  decreasing_by all_goals omega
-
-/-- Phase 2: bus slot bounds and `informative`, one payload walk per interaction. -/
-def dbBusPhase {bs : BusSemantics p} (facts : BusFacts p bs)
-    (bis : Array (BusInteraction (DenseExpr p))) (pre : Array (DbBiPre p)) (k : Nat)
-    (st : DbTab p × Array Bool) : DbTab p × Array Bool :=
-  if h : k < bis.size then
-    let ⟨T, inf⟩ := st
-    let e := pre.getD k dbBiPreEmpty
-    let (i, T) := dbBusSlots facts bis[k] e.mult? e.pat bis[k].payload e.pat 0
-      (Array.emptyWithCapacity 4) false T
-    dbBusPhase facts bis pre (k + 1) ⟨T, inf.push i⟩
-  else st
-  termination_by bis.size - k
-  decreasing_by all_goals omega
-
 /-- Phase 3: byte-operand domains (reads the table phase 2 produced). -/
 def dbBytePhase (pre : Array (DbBiPre p)) (k : Nat) (T : DbTab p) : DbTab p :=
   if h : k < pre.size then
@@ -1495,46 +1395,6 @@ def dbBytePhase (pre : Array (DbBiPre p)) (k : Nat) (T : DbTab p) : DbTab p :=
   else T
   termination_by pre.size - k
   decreasing_by all_goals omega
-
-/-- Phase 4: the per-constraint scan program and its `active` (`¬ redundant`) verdict, in one
-    traversal. An item with a variable outside the table can never be gathered (a target's keys are
-    all domained), so it needs neither a program nor a verdict. -/
-def dbCsPhase {bs : BusSemantics p} (facts : BusFacts p bs) (T : DbTab p)
-    (cs : Array (DenseExpr p)) (csVars : Array (Array VarId)) (k : Nat)
-    (st : Array Nat × Array (DbItem p) × Array Bool) :
-    Array Nat × Array (DbItem p) × Array Bool :=
-  if h : k < cs.size then
-    let ⟨regs, items, act⟩ := st
-    let vs := csVars.getD k #[]
-    let item := if (dbBoxOf T vs 0 1).isSome then DbItem.zero cs[k] else DbItem.always
-    let ⟨regs, red⟩ := dbConstraintRedundant facts T item vs regs
-    dbCsPhase facts T cs csVars (k + 1) ⟨regs, items.push item, act.push (!red)⟩
-  else st
-  termination_by cs.size - k
-  decreasing_by all_goals omega
-
-/-- Phase 5: the per-interaction scan program and its domain-redundancy verdict (same gate). -/
-def dbBiItemPhase {bs : BusSemantics p} (facts : BusFacts p bs) (bc : DbBusCache p) (T : DbTab p)
-    (bis : Array (BusInteraction (DenseExpr p))) (pre : Array (DbBiPre p)) (k : Nat)
-    (st : Array (DbItem p) × Array Bool) : Array (DbItem p) × Array Bool :=
-  if h : k < bis.size then
-    let ⟨items, dred⟩ := st
-    let e := pre.getD k dbBiPreEmpty
-    let gather := e.usable && (dbBoxOf T e.vars 0 1).isSome
-    let item := if gather then dbCompileBi facts bc bis[k] e else DbItem.always
-    dbBiItemPhase facts bc T bis pre (k + 1)
-      ⟨items.push item, dred.push (gather && dbBiDomainRedundant facts bc T bis[k] e)⟩
-  else st
-  termination_by bis.size - k
-  decreasing_by all_goals omega
-
-def dbBucketsOf (nv : Nat) (vars : Array (Array VarId)) : Array (Array Nat) × Array Nat :=
-  vars.zipIdx.foldl (init := (Array.replicate nv (#[] : Array Nat), (#[] : Array Nat)))
-    fun st vi =>
-      let ⟨buckets, varless⟩ := st
-      match vi.1[0]? with
-      | none => ⟨buckets, varless.push vi.2⟩
-      | some v => ⟨buckets.modify v.index (fun b => b.push vi.2), varless⟩
 
 /-- `denseVarsInListF`: every variable of the item is a key of the target. The target's keys are
     stamped into `mark` with the current generation before the gather, so the test is `|vs|` array
@@ -1665,53 +1525,14 @@ def dbTargetsBis (ctx : DbCtx p) (k : Nat) (st : DbTargetSt p) : DbTargetSt p :=
 
 /-! ## The invocation -/
 
-/-- Build the context: variable lists, the three table phases, the flags and the buckets. -/
-def dbBuildCtx (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
-    DbCtx p :=
-  let cs := d.algebraicConstraints.toArray
-  let bis := d.busInteractions.toArray
-  let csVars := cs.map (fun c => dbVarsOf c (Array.emptyWithCapacity 4))
-  let biVars := bis.map dbBiVars
-  let nv := dbNvOf biVars (dbNvOf csVars 0)
-  let T0 : DbTab p := ⟨Array.replicate nv none⟩
-  let T1 := dbConstraintPhase cs csVars 0 T0
-  let bc := dbBusCacheOf facts (bis.foldl (fun m b => max m (b.busId + 1)) 0)
-  let pre := dbPrePhase facts bc bis biVars 0 #[]
-  let ⟨T2, biInf⟩ := dbBusPhase facts bis pre 0 ⟨T1, #[]⟩
-  let T := dbBytePhase pre 0 T2
-  let ⟨_, csItems, csActive⟩ := dbCsPhase facts T cs csVars 0 ⟨Array.replicate nv 0, #[], #[]⟩
-  let ⟨biItems, biDomRed⟩ := dbBiItemPhase facts bc T bis pre 0 ⟨#[], #[]⟩
-  let ⟨csBucket, csVarless⟩ := dbBucketsOf nv csVars
-  let ⟨biBucket, biVarless⟩ := dbBucketsOf nv biVars
-  let csVarlessItems := csVarless.filterMap (fun i =>
-    if csActive.getD i false then some (csItems.getD i .always) else none)
-  -- the variable-free usable interactions' summary (entry 155): count, flags and the constant
-  -- verdict their obligations already decide
-  let biSummary := biVarless.foldl (init := (0, false, true, true)) fun s i =>
-    let e := pre.getD i dbBiPreEmpty
-    if e.usable then
-      (s.1 + 1, s.2.1 || biInf.getD i false, s.2.2.1 && biDomRed.getD i false,
-        s.2.2.2 && dbItemOk facts #[] (biItems.getD i .always))
-    else s
-  { nv, T, csVars, csItems, csActive, csBucket,
-    csVarlessCount := csVarless.size, csVarlessItems,
-    csVarlessVars := Array.replicate csVarlessItems.size #[],
-    biVars, biItems,
-    biUsable := pre.map (fun e => e.usable),
-    biInformative := biInf,
-    biDomRed, biBucket,
-    biVarlessCount := biSummary.1, biVarlessInformative := biSummary.2.1,
-    biVarlessDomRed := biSummary.2.2.1, constOk := biSummary.2.2.2 }
+/-! ## The context build
 
-/-! ## The fused context build
-
-`dbBuildCtx` makes eleven passes over the system (two `toArray`s, two var-list maps, two `dbNvOf`
-folds, four table/item phases, two `zipIdx` bucket folds). The fused build makes four, walking
-the lists directly: constraints (vars + roots + the running variable bound in one pass),
-interactions (vars + resolved facts + slot bounds in one pass), then — once the table is final —
-one item pass per side that also fills the buckets and the varless summaries in place. The
-domain table grows on demand (`insertG`), since the variable bound is not known until the walks
-finish; every read is a `getD`, so a short table reads exactly like the `nv`-sized one. -/
+Four passes over the system, walking the lists directly: constraints (vars + roots + the running
+variable bound in one pass), interactions (vars + resolved facts + slot bounds in one pass), then
+— once the table is final — one item pass per side that also fills the buckets and the varless
+summaries in place. The domain table grows on demand (`insertG`), since the variable bound is not
+known until the walks finish; every read is a `getD`, so a short table reads exactly like the
+`nv`-sized one. -/
 
 def DbTab.insertG (T : DbTab p) (i : Nat) (d : DbDom) : DbTab p :=
   let ⟨dom⟩ := T
@@ -1794,8 +1615,8 @@ def dbBiWalk {bs : BusSemantics p} (facts : BusFacts p bs) (bc : DbBusCache p)
       else (dbBusSlotsInf bi.payload e.pat, T)
     dbBiWalk facts bc rest (biVars.push vars) (pre.push e) (inf.push i) nv T
 
-/-- `dbConstraintRedundant` with the box precomputed (walk 3 already needs it for the item
-    gate). -/
+/-- `denseConstraintRedundantV`: identically zero on the box of its own variables' domains, with
+    the box precomputed (walk 3 already needs it for the item gate). -/
 def dbConstraintRedundantB {bs : BusSemantics p} (facts : BusFacts p bs) (T : DbTab p)
     (item : DbItem p) (vs : Array VarId) (regs : Array Nat) (box : Nat) : Array Nat × Bool :=
   if box ≤ maxEnumSize then
@@ -1865,7 +1686,7 @@ def dbBiWalk2 {bs : BusSemantics p} (facts : BusFacts p bs) (bc : DbBusCache p) 
       dbBiWalk2 facts bc T rest pre biInf (k + 1) (items.push item) (dred.push dr) buckets
         summary
 
-/-- `dbBuildCtx` in four passes (behaviorally identical: same arrays, same table content). -/
+/-- Build the context: variable lists, the domain table, the items, the flags and the buckets. -/
 def dbBuildCtxFast (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
     DbCtx p :=
   let (csVars, nv1, T1) := dbCsWalk d.algebraicConstraints #[] 0 ⟨#[]⟩
@@ -1909,38 +1730,23 @@ def dbSolvedOf (nv : Nat) (results : List (List (VarId × ZMod p))) :
     that forced constant. Returns the map of all such `var := const` substitutions. -/
 def dbDomainBatchσ (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
     Array (Option (ZMod p)) × Bool :=
-  let ctx := dbBuildCtx bs facts d
+  let ctx := dbBuildCtxFast bs facts d
   let st0 : DbTargetSt p := ⟨⟨∅⟩, Array.replicate ctx.nv 0, 0, []⟩
   let plans := (dbTargetsBis ctx 0 (dbTargetsCs ctx 0 st0)).plans.reverse
   -- run serially: handing plans to `Task.spawn` marks the shared objects multi-threaded, and every
   -- later refcount touch on them — in this pass and in every pass after it — becomes atomic
-  dbSolvedOf ctx.nv (dbRunPlans facts ctx.nv plans)
+  let results := dbRunPlansFast facts ctx.nv plans
+  if results.all List.isEmpty then (#[], false) else dbSolvedOf ctx.nv results
 
-/-- The value-only dense domain-batch transform, over the rebuilt engine. -/
+/-- The value-only dense domain-batch transform, over the rebuilt engine. The substitution is a
+    full rebuild on purpose: a mention-gated variant that keeps unchanged items as shared
+    pointers measures faster in-pass and slower end-to-end (sharing disables Lean's reset/reuse
+    in every downstream pass). -/
 def dbDomainBatchTransform (pw : PrimeWitness p) (bs : BusSemantics p)
     (facts : BusFacts p bs) (d : DenseConstraintSystem p) : DenseConstraintSystem p :=
   if pw.isPrime = true then
     let r := dbDomainBatchσ bs facts d
     if r.2 then d.substF (dbSubstFn r.1) else d
   else d
-
-/-- `dbDomainBatchTransform` with the σ-array allocation skipped when nothing was forced. The
-    substitution itself stays a full rebuild: a mention-gated variant that keeps unchanged items
-    as shared pointers measures faster in-pass and slower end-to-end (sharing disables Lean's
-    reset/reuse in every downstream pass — the entry-169 dead end, reproduced here). -/
-def dbDomainBatchTransformFast (pw : PrimeWitness p) (bs : BusSemantics p)
-    (facts : BusFacts p bs) (d : DenseConstraintSystem p) : DenseConstraintSystem p :=
-  if pw.isPrime = true then
-    let ctx := dbBuildCtxFast bs facts d
-    let st0 : DbTargetSt p := ⟨⟨∅⟩, Array.replicate ctx.nv 0, 0, []⟩
-    let plans := (dbTargetsBis ctx 0 (dbTargetsCs ctx 0 st0)).plans.reverse
-    -- run serially: handing plans to `Task.spawn` marks the shared objects multi-threaded, and
-    -- every later refcount touch on them — here and in every pass after — becomes atomic
-    let results := dbRunPlans facts ctx.nv plans
-    if results.all List.isEmpty then d
-    else d.substF (dbSubstFn (dbSolvedOf ctx.nv results).1)
-  else d
-
-attribute [implemented_by dbDomainBatchTransformFast] dbDomainBatchTransform
 
 end ApcOptimizer.Dense
