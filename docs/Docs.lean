@@ -270,11 +270,11 @@ Witness generation therefore takes a proof of `Derivations.cover` as an argument
 def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variable}
     (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
     (v : Variable) (hv : v ∈ outputVars) : ZMod p :=
-  if hp : v.powdrId? = none then
-    ((ds.methodFor v).get (ds.methodFor_isSome h hv hp)).eval inputAssignment
+  match hp : v.powdrId? with
   -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
   -- variable of the output circuit also exists in the input circuit.
-  else inputAssignment v
+  | some _ => inputAssignment v
+  | none => ((ds.methodFor v).get (ds.methodFor_isSome h hv hp)).eval inputAssignment
 ```
 
 ## The full completeness property

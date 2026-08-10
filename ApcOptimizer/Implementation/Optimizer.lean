@@ -207,7 +207,7 @@ theorem Derivations.witgen_powdrId {ds : Derivations p} {inputVars outputVars : 
     (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
     {w : Nat} (hv : v ∈ outputVars) (hp : v.powdrId? = some w) :
     ds.witgen h inputAssignment v hv = inputAssignment v := by
-  simp only [Derivations.witgen, hp, dif_neg, reduceCtorEq, not_false_eq_true]
+  unfold Derivations.witgen; split <;> simp_all
 
 /-- On a derived variable, `witgen` evaluates the method `ds` records for it. -/
 theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
@@ -217,7 +217,7 @@ theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars 
     ds.witgen h inputAssignment v hv = cm.eval inputAssignment := by
   have hg : ∀ hs : (ds.methodFor v).isSome, (ds.methodFor v).get hs = cm :=
     fun hs => Option.get_of_mem hs (Option.mem_def.mpr hm)
-  simp only [Derivations.witgen, dif_pos hp, hg]
+  unfold Derivations.witgen; split <;> simp_all
 
 /-! ## Evaluation depends only on a system's variables
 
