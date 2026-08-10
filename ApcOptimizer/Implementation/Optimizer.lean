@@ -337,27 +337,35 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
       (optimizerWithBusFacts b facts cs).1.isCompleteReplacementOf cs bs (optimizerWithBusFacts b facts cs).2 := by
   refine ⟨(pipeline b cs bs facts).correct.toSound, ?_⟩
   intro hpow
-  refine ⟨?_, ?_, ?_⟩
-  · -- `forOutput` records only no-ID variables occurring in the output.
-    intro d hd
-    change d ∈ (pipeline b cs bs facts).derivs.forOutput cs.vars
-      (pipeline b cs bs facts).out.vars at hd
-    change d.1 ∈ (pipeline b cs bs facts).out.vars
-    rw [Derivations.forOutput_eq, List.mem_map] at hd
-    obtain ⟨v, hv, rfl⟩ := hd
-    exact List.mem_of_mem_filter (List.mem_eraseDups.mp hv)
-  · -- Every output variable is either reused from the input or has a safe method.
+  -- Phrase the goal in `pipeline` terms up front: the coverage proof is one of its components, so
+  -- `refine` would otherwise have to bridge the `optimizerWithBusFacts` projections by `whnf`.
+  simp only [optimizerWithBusFacts]
+  -- `PassCorrect` components (`Basic.lean`): no new powdr-ID column, and real-trace completeness.
+  have hS := (pipeline b cs bs facts).correct.2.2.1
+  have hcomp := (pipeline b cs bs facts).correct.2.2.2
+  -- Every output variable is either reused from the input or has a safe method.
+  have hcover : ((pipeline b cs bs facts).derivs.forOutput cs.vars
+      (pipeline b cs bs facts).out.vars).cover cs.vars (pipeline b cs bs facts).out.vars := by
     intro v hv
     cases hpw : v.powdrId? with
-    | some w =>
-        obtain ⟨_himpl, _hinv, hS, _hcomp⟩ := (pipeline b cs bs facts).correct
-        exact hS v hv (by simp [hpw])
+    | some w => exact hS v hv (by simp [hpw])
     | none =>
         exact ⟨(pipeline b cs bs facts).derivs.safeMethod cs.vars v,
           Derivations.forOutput_methodFor hv hpw,
           Derivations.safeMethod_vars _ _ _⟩
+  refine ⟨?_, hcover, ?_⟩
+  · -- `forOutput` records only no-ID variables occurring in the output.
+    intro d hd
+    rw [Derivations.forOutput_eq, List.mem_map] at hd
+    obtain ⟨v, hv, rfl⟩ := hd
+    exact List.mem_of_mem_filter (List.mem_eraseDups.mp hv)
   intro env hadm hsat
-  obtain ⟨_himpl, _hinv, hS, hcomp⟩ := (pipeline b cs bs facts).correct
+  -- `witgen`'s implicit `outputVars` is the pipeline output, so a goal mentioning the application
+  -- makes every `cases`/`obtain` below reduce it — i.e. run the whole optimizer inside `whnf`.
+  -- Destructure against an opaque `f` and restore the application afterwards (`rw [hf]`).
+  set f := ((pipeline b cs bs facts).derivs.forOutput cs.vars
+    (pipeline b cs bs facts).out.vars).witgen hcover env with hf
+  clear_value f
   obtain ⟨env', hsat', hadm', hse, hA, hR⟩ := hcomp env hadm hsat
   have hrec : (pipeline b cs bs facts).out.reconstructs cs.vars
       (pipeline b cs bs facts).derivs env' := by
@@ -365,12 +373,12 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
       fun u hu hunone => absurd (hpow u hu) (by simp [hunone])
     simpa using hR cs.vars (fun v hv _ => hv) [] hrec0
   have hagree : ∀ v ∈ (pipeline b cs bs facts).out.vars,
-      Derivations.witgen ((pipeline b cs bs facts).derivs.forOutput cs.vars
-        (pipeline b cs bs facts).out.vars) env v = env' v := by
+      ((pipeline b cs bs facts).derivs.forOutput cs.vars
+        (pipeline b cs bs facts).out.vars).witgen hcover env v = env' v := by
     intro v hv
     cases hpw : v.powdrId? with
     | some w =>
-        simp only [Derivations.witgen, hpw]
+        rw [Derivations.witgen_powdrId hcover env hv hpw]
         exact (hA v (by simp [hpw])).symm
     | none =>
         obtain ⟨cm, hm, hxpow, hxinput, heq⟩ := hrec v hv hpw
@@ -380,15 +388,15 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
           (ds := (pipeline b cs bs facts).derivs) (inputVars := cs.vars)
           (outputVars := (pipeline b cs bs facts).out.vars) hv hpw
         rw [hsafe] at hm'
-        simp only [Derivations.witgen, hpw, hm']
-        rw [← heq]
+        rw [Derivations.witgen_methodFor hcover env hv hpw hm', ← heq]
         exact ComputationMethod.eval_congr cm env env' (fun x hx => (hA x (hxpow x hx)).symm)
+  rw [hf]
   refine ⟨(Circuit.satisfies_congr hagree).mpr hsat',
     (Circuit.admissible_congr hagree).mpr hadm', ?_⟩
   · have hse' : cs.sideEffects bs env
-          = (pipeline b cs bs facts).out.sideEffects bs (Derivations.witgen
-              ((pipeline b cs bs facts).derivs.forOutput cs.vars
-                (pipeline b cs bs facts).out.vars) env) := by
+          = (pipeline b cs bs facts).out.sideEffects bs
+              (((pipeline b cs bs facts).derivs.forOutput cs.vars
+                (pipeline b cs bs facts).out.vars).witgen hcover env) := by
         rw [Circuit.sideEffects_congr hagree]
         exact hse
     simpa only [optimizerWithBusFacts] using hse'

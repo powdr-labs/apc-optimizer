@@ -211,24 +211,52 @@ def Derivations.cover (ds : Derivations p)
     | some _ => v ∈ inputVars
     | none => ∃ cm, ds.methodFor v = some cm ∧ ∀ x ∈ cm.vars, x ∈ inputVars
 
+/-- Witness generation on a variable `ds` covers. Every powdr-ID (input)
+    variable passes through unchanged — it also exists in the input circuit, by
+    the `some` branch of `cover`. Every other variable is computed by the method
+    `ds` records for it, which the `none` branch of `cover` guarantees exists;
+    there is no fall-through case. -/
+def Derivations.witgenOn (ds : Derivations p) {inputVars outputVars : List Variable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
+    (v : Variable) (hv : v ∈ outputVars) : ZMod p :=
+  if hp : v.powdrId? = none then
+    ((ds.methodFor v).get (by
+      have hc := h v hv
+      simp only [hp] at hc
+      obtain ⟨cm, hcm, -⟩ := hc
+      simp [hcm])).eval inputAssignment
+  else inputAssignment v
+
 /-- Witness generation: reconstruct an output assignment from an input
-    assignment. Every powdr-ID (input) variable passes through unchanged; every
-    other variable is computed by the method `ds` records for it, read from the
-    input variables. This is what powdr runs to fill the optimized circuit's
-    variables from an input trace. -/
-def Derivations.witgen (ds : Derivations p)
-    (inputAssignment : Variable → ZMod p) (v: Variable) : ZMod p :=
-  match v.powdrId? with
-  -- Note that by `Derivations.cover`, if `v` appears in the output circuit,
-  -- it must also exist in the input circuit, so this case is always
-  -- well-defined.
-  | some _ => inputAssignment v
-  | none =>
-    match Derivations.methodFor ds v with
-    | some cm => cm.eval inputAssignment
-    -- Note that by `Derivations.cover`, if `v` appears in the output
-    -- circuit, this case is impossible.
-    | none => inputAssignment v
+    assignment. On `outputVars` this is `witgenOn` — what powdr runs to fill the
+    optimized circuit's variables from an input trace. Off `outputVars` the value
+    is arbitrary; the output circuit's constraints and bus interactions cannot
+    read it. -/
+def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
+    (v : Variable) : ZMod p :=
+  if hv : v ∈ outputVars then ds.witgenOn h inputAssignment v hv
+  else inputAssignment v
+
+omit [Fact p.Prime] in
+/-- On a covered input variable, `witgen` passes the input assignment through. -/
+theorem Derivations.witgen_powdrId {ds : Derivations p} {inputVars outputVars : List Variable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
+    {w : Nat} (hv : v ∈ outputVars) (hp : v.powdrId? = some w) :
+    ds.witgen h inputAssignment v = inputAssignment v := by
+  simp only [Derivations.witgen, Derivations.witgenOn, dif_pos hv, hp, dif_neg, reduceCtorEq,
+    not_false_eq_true]
+
+omit [Fact p.Prime] in
+/-- On a covered derived variable, `witgen` evaluates the method `ds` records for it. -/
+theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
+    {cm : ComputationMethod p} (hv : v ∈ outputVars) (hp : v.powdrId? = none)
+    (hm : ds.methodFor v = some cm) :
+    ds.witgen h inputAssignment v = cm.eval inputAssignment := by
+  have hg : ∀ hs : (ds.methodFor v).isSome, (ds.methodFor v).get hs = cm :=
+    fun hs => Option.get_of_mem hs (Option.mem_def.mpr hm)
+  simp only [Derivations.witgen, Derivations.witgenOn, dif_pos hv, dif_pos hp, hg]
 -- ANCHOR_END: witgen
 
 --------- Circuit implications ---------
@@ -294,8 +322,10 @@ def Circuit.isCompleteReplacementOf
   (∀ derivation ∈ ds, derivation.1 ∈ optimizedCircuit.vars) ∧
 
   -- The optimized circuit variables can be derived from the original circuit
-  -- variables, and the return derivations.
-  ds.cover originalCircuit.vars optimizedCircuit.vars ∧
+  -- variables, and the return derivations. This is an `∃` (not a `∀`, which
+  -- would make everything below vacuous): coverage is an obligation on the
+  -- optimizer, and witness generation cannot even be stated without it.
+  ∃ hcover : ds.cover originalCircuit.vars optimizedCircuit.vars,
 
   -- For any admissible satisfying assignment of the original circuit, the
   -- optimized circuit is also satisfied and admissible, with equal side
@@ -303,7 +333,7 @@ def Circuit.isCompleteReplacementOf
   ∀ assignment,
     originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
-    let assignment' := Derivations.witgen ds assignment
+    let assignment' := ds.witgen hcover assignment
     optimizedCircuit.satisfies busSemantics assignment' ∧
       optimizedCircuit.admissible busSemantics assignment' ∧
       originalCircuit.sideEffects busSemantics assignment =
