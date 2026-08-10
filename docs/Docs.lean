@@ -235,7 +235,7 @@ With the data structures in place, we can define a prescribed witness generation
 - If it is a powdr-ID variable, it is reused from the input assignment.
 - If it is a derived variable, the optimizer must have emitted a computation method for it. The witness generation algorithm evaluates this method under the input assignment to compute the output variable's value.
 
-Both cases rely on the derivations _covering_ the output variables, so the algorithm takes a proof of `Derivations.cover` as an argument: it cannot be applied to an optimizer that failed to emit the derivations it needs, and neither case above can fall through. `Derivations.witgen` extends it from the output variables to all variables; the value it takes elsewhere is arbitrary, since the output circuit cannot read it.
+Both cases rely on the derivations _covering_ the output variables, so the algorithm takes a proof of `Derivations.cover` as an argument, along with a proof that the variable it computes is one of the output variables. It therefore cannot be applied to an optimizer that failed to emit the derivations it needs, and neither case above can fall through. Note that this defines witness generation exactly on the output circuit's variables, and nowhere else.
 
 ```anchor witgen
 /-- The `ComputationMethod` witness generation uses for `v`. If `v` appears
@@ -276,21 +276,13 @@ def Derivations.witgenOn (ds : Derivations p) {inputVars outputVars : List Varia
   -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
   -- variable of the output circuit also exists in the input circuit.
   else inputAssignment v
-
-/-- Witness generation: reconstruct an output assignment from an input
-    assignment. On `outputVars` this is `witgenOn` — what powdr runs to fill the
-    optimized circuit's variables from an input trace. Off `outputVars` the value
-    is irrelevant — the output circuit's constraints and bus interactions cannot
-    read it — so it is `0`. -/
-def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
-    (v : Variable) : ZMod p :=
-  if hv : v ∈ outputVars then ds.witgenOn h inputAssignment v hv else 0
 ```
 
 ## The full completeness property
 
 Putting the pieces together, we define what it means for an optimized circuit to be a _complete_ replacement for an original circuit. Structurally, the returned derivations must contain no unused entries and must cover every output variable from the input variables. Semantically, every admissible satisfying input assignment must produce a satisfying and admissible output assignment with equal side effects.
+
+Since witness generation is only defined on the output circuit's variables, the semantic part quantifies over the assignments that agree with it there. The optimized circuit reads nothing else, so all of them are equally good — and the specification never has to invent a value for a variable the optimizer did not produce.
 
 ```anchor isCompleteReplacementOf
 /-- Whether an optimized circuit is a complete replacement for an original circuit. -/
@@ -310,11 +302,15 @@ def Circuit.isCompleteReplacementOf
 
   -- For any admissible satisfying assignment of the original circuit, the
   -- optimized circuit is also satisfied and admissible, with equal side
-  -- effects, under the assignment produced by witness generation.
+  -- effects, under every assignment witness generation produces on the
+  -- optimized circuit's variables. Its values elsewhere are unconstrained:
+  -- the optimized circuit cannot read them.
   ∀ assignment,
     originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
-    let assignment' := ds.witgen hcover assignment
+    ∀ assignment' : Variable → ZMod p,
+    (∀ v (hv : v ∈ optimizedCircuit.vars),
+      assignment' v = ds.witgenOn hcover assignment v hv) →
     optimizedCircuit.satisfies busSemantics assignment' ∧
       optimizedCircuit.admissible busSemantics assignment' ∧
       originalCircuit.sideEffects busSemantics assignment =

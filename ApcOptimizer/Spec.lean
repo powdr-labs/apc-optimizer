@@ -227,16 +227,6 @@ def Derivations.witgenOn (ds : Derivations p) {inputVars outputVars : List Varia
   -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
   -- variable of the output circuit also exists in the input circuit.
   else inputAssignment v
-
-/-- Witness generation: reconstruct an output assignment from an input
-    assignment. On `outputVars` this is `witgenOn` — what powdr runs to fill the
-    optimized circuit's variables from an input trace. Off `outputVars` the value
-    is irrelevant — the output circuit's constraints and bus interactions cannot
-    read it — so it is `0`. -/
-def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
-    (v : Variable) : ZMod p :=
-  if hv : v ∈ outputVars then ds.witgenOn h inputAssignment v hv else 0
 -- ANCHOR_END: witgen
 
 --------- Circuit implications ---------
@@ -307,11 +297,15 @@ def Circuit.isCompleteReplacementOf
 
   -- For any admissible satisfying assignment of the original circuit, the
   -- optimized circuit is also satisfied and admissible, with equal side
-  -- effects, under the assignment produced by witness generation.
+  -- effects, under every assignment witness generation produces on the
+  -- optimized circuit's variables. Its values elsewhere are unconstrained:
+  -- the optimized circuit cannot read them.
   ∀ assignment,
     originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
-    let assignment' := ds.witgen hcover assignment
+    ∀ assignment' : Variable → ZMod p,
+    (∀ v (hv : v ∈ optimizedCircuit.vars),
+      assignment' v = ds.witgenOn hcover assignment v hv) →
     optimizedCircuit.satisfies busSemantics assignment' ∧
       optimizedCircuit.admissible busSemantics assignment' ∧
       originalCircuit.sideEffects busSemantics assignment =
