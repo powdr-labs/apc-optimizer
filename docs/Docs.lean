@@ -261,7 +261,7 @@ def Derivations.cover (ds : Derivations p)
     | none => ∃ cm, ds.methodFor v = some cm ∧ ∀ x ∈ cm.vars, x ∈ inputVars
 ```
 
-Witness generation therefore takes a proof of `Derivations.cover` as an argument, along with a proof that the variable it computes is one of the output variables. It cannot be applied to an optimizer that failed to emit the derivations it needs, and neither case above can fall through. Note that this defines witness generation exactly on the output circuit's variables, and nowhere else.
+Witness generation generates an assignment as described above. It is only defined on the output circuit's variables, and it is guaranteed to be well-defined by the `cover` property.
 
 ```anchor witgen
 /-- Witness generation on a variable `ds` covers. Every powdr-ID (input)
@@ -280,8 +280,6 @@ def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variabl
 ## The full completeness property
 
 Putting the pieces together, we define what it means for an optimized circuit to be a _complete_ replacement for an original circuit. Structurally, the returned derivations must contain no unused entries and must cover every output variable from the input variables. Semantically, every admissible satisfying input assignment must produce a satisfying and admissible output assignment with equal side effects.
-
-Since witness generation is only defined on the output circuit's variables, the semantic part quantifies over the assignments that agree with it there. The optimized circuit reads nothing else, so all of them are equally good — and the specification never has to invent a value for a variable the optimizer did not produce.
 
 ```anchor isCompleteReplacementOf
 /-- Whether an optimized circuit is a complete replacement for an original circuit. -/
