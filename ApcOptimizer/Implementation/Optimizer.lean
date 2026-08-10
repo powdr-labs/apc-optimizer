@@ -198,6 +198,28 @@ def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFa
   let r := pipeline b cs bs facts
   (r.out, r.derivs.forOutput cs.vars r.out.vars)
 
+/-! ## `witgen` on a covered variable
+
+The two branches of the spec's `Derivations.witgen`, so the completeness proof never unfolds it. -/
+
+/-- On a covered input variable, `witgen` passes the input assignment through. -/
+theorem Derivations.witgen_powdrId {ds : Derivations p} {inputVars outputVars : List Variable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
+    {w : Nat} (hv : v ∈ outputVars) (hp : v.powdrId? = some w) :
+    ds.witgen h inputAssignment v = inputAssignment v := by
+  simp only [Derivations.witgen, Derivations.witgenOn, dif_pos hv, hp, dif_neg, reduceCtorEq,
+    not_false_eq_true]
+
+/-- On a covered derived variable, `witgen` evaluates the method `ds` records for it. -/
+theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
+    {cm : ComputationMethod p} (hv : v ∈ outputVars) (hp : v.powdrId? = none)
+    (hm : ds.methodFor v = some cm) :
+    ds.witgen h inputAssignment v = cm.eval inputAssignment := by
+  have hg : ∀ hs : (ds.methodFor v).isSome, (ds.methodFor v).get hs = cm :=
+    fun hs => Option.get_of_mem hs (Option.mem_def.mpr hm)
+  simp only [Derivations.witgen, Derivations.witgenOn, dif_pos hv, dif_pos hp, hg]
+
 /-! ## Evaluation depends only on a system's variables
 
 Two assignments agreeing on `cs.vars` are interchangeable for `satisfies`/`admissible`/`sideEffects`.
