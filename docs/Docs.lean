@@ -235,9 +235,9 @@ With the data structures in place, we can define a prescribed witness generation
 - If it is a powdr-ID variable, it is reused from the input assignment.
 - If it is a derived variable, the optimizer must have emitted a computation method for it. The witness generation algorithm evaluates this method under the input assignment to compute the output variable's value.
 
-Both cases rely on the derivations _covering_ the output variables, so the algorithm takes a proof of `Derivations.cover` as an argument, along with a proof that the variable it computes is one of the output variables. It therefore cannot be applied to an optimizer that failed to emit the derivations it needs, and neither case above can fall through. Note that this defines witness generation exactly on the output circuit's variables, and nowhere else.
+For this to be well-defined, the derivations must _cover_ the output variables:
 
-```anchor witgen
+```anchor methodForCover
 /-- The `ComputationMethod` witness generation uses for `v`. If `v` appears
     multiple times, the last derivation is returned; `none` if `v` has no
     derivation. -/
@@ -259,7 +259,11 @@ def Derivations.cover (ds : Derivations p)
     match v.powdrId? with
     | some _ => v ∈ inputVars
     | none => ∃ cm, ds.methodFor v = some cm ∧ ∀ x ∈ cm.vars, x ∈ inputVars
+```
 
+Witness generation therefore takes a proof of `Derivations.cover` as an argument, along with a proof that the variable it computes is one of the output variables. It cannot be applied to an optimizer that failed to emit the derivations it needs, and neither case above can fall through. Note that this defines witness generation exactly on the output circuit's variables, and nowhere else.
+
+```anchor witgen
 /-- Witness generation on a variable `ds` covers. Every powdr-ID (input)
     variable passes through unchanged; every other variable is computed by the
     method `ds` records for it, which the `none` branch of `cover` guarantees
@@ -268,11 +272,8 @@ def Derivations.witgenOn (ds : Derivations p) {inputVars outputVars : List Varia
     (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
     (v : Variable) (hv : v ∈ outputVars) : ZMod p :=
   if hp : v.powdrId? = none then
-    ((ds.methodFor v).get (by
-      have hc := h v hv
-      simp only [hp] at hc
-      obtain ⟨cm, hcm, -⟩ := hc
-      simp [hcm])).eval inputAssignment
+    ((ds.methodFor v).get
+      (Derivations.methodFor_isSome_of_cover h hv hp)).eval inputAssignment
   -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
   -- variable of the output circuit also exists in the input circuit.
   else inputAssignment v

@@ -188,7 +188,7 @@ def Circuit.sideEffects (circuit : Circuit p) (busSemantics : BusSemantics p)
 
 --------- Derived variables ---------
 
--- ANCHOR: witgen
+-- ANCHOR: methodForCover
 /-- The `ComputationMethod` witness generation uses for `v`. If `v` appears
     multiple times, the last derivation is returned; `none` if `v` has no
     derivation. -/
@@ -210,7 +210,23 @@ def Derivations.cover (ds : Derivations p)
     match v.powdrId? with
     | some _ => v ∈ inputVars
     | none => ∃ cm, ds.methodFor v = some cm ∧ ∀ x ∈ cm.vars, x ∈ inputVars
+-- ANCHOR_END: methodForCover
 
+omit [Fact p.Prime] in
+/-- Restating the `none` branch of `cover`: a covered variable without a powdr
+    ID has a derivation. Only ever used as the `Option.get` obligation in
+    `witgenOn`, so by proof irrelevance the proof below is not part of the
+    specification — it either typechecks or it does not. -/
+theorem Derivations.methodFor_isSome_of_cover {ds : Derivations p}
+    {inputVars outputVars : List Variable} (h : ds.cover inputVars outputVars)
+    {v : Variable} (hv : v ∈ outputVars) (hp : v.powdrId? = none) :
+    (ds.methodFor v).isSome := by
+  have hc := h v hv
+  simp only [hp] at hc
+  obtain ⟨cm, hcm, -⟩ := hc
+  simp [hcm]
+
+-- ANCHOR: witgen
 /-- Witness generation on a variable `ds` covers. Every powdr-ID (input)
     variable passes through unchanged; every other variable is computed by the
     method `ds` records for it, which the `none` branch of `cover` guarantees
@@ -219,11 +235,8 @@ def Derivations.witgenOn (ds : Derivations p) {inputVars outputVars : List Varia
     (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
     (v : Variable) (hv : v ∈ outputVars) : ZMod p :=
   if hp : v.powdrId? = none then
-    ((ds.methodFor v).get (by
-      have hc := h v hv
-      simp only [hp] at hc
-      obtain ⟨cm, hcm, -⟩ := hc
-      simp [hcm])).eval inputAssignment
+    ((ds.methodFor v).get
+      (Derivations.methodFor_isSome_of_cover h hv hp)).eval inputAssignment
   -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
   -- variable of the output circuit also exists in the input circuit.
   else inputAssignment v
