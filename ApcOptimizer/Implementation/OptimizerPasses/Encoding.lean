@@ -179,7 +179,7 @@ def denseZModOps : DenseZModOps p where
 
 /-! ## Dense expression operations (runtime; specified against decode below) -/
 
-/-- Multiplicative degree, mirroring `Expression.degree`. -/
+/-- Multiplicative degree, mirroring `ExpressionG.degree`. -/
 def DenseExpr.degree : DenseExpr p → Nat
   | .const _ => 0
   | .var _ => 1
@@ -338,8 +338,8 @@ theorem VarRegistry.decodeExpr_degree (r : VarRegistry) (e : DenseExpr p) :
   induction e with
   | const n => rfl
   | var i => rfl
-  | add a b iha ihb => simp [decodeExpr, Expression.degree, DenseExpr.degree, iha, ihb]
-  | mul a b iha ihb => simp [decodeExpr, Expression.degree, DenseExpr.degree, iha, ihb]
+  | add a b iha ihb => simp [decodeExpr, ExpressionG.degree, DenseExpr.degree, iha, ihb]
+  | mul a b iha ihb => simp [decodeExpr, ExpressionG.degree, DenseExpr.degree, iha, ihb]
 
 /-- Decoding commutes with evaluation: evaluating the decoded expression under `env` equals
     evaluating the dense expression under `env ∘ resolve`. -/
@@ -348,8 +348,8 @@ theorem VarRegistry.decodeExpr_eval (r : VarRegistry) (e : DenseExpr p) (env : V
   induction e with
   | const n => rfl
   | var i => rfl
-  | add a b iha ihb => simp [decodeExpr, Expression.eval, DenseExpr.eval, iha, ihb]
-  | mul a b iha ihb => simp [decodeExpr, Expression.eval, DenseExpr.eval, iha, ihb]
+  | add a b iha ihb => simp [decodeExpr, ExpressionG.eval, DenseExpr.eval, iha, ihb]
+  | mul a b iha ihb => simp [decodeExpr, ExpressionG.eval, DenseExpr.eval, iha, ihb]
 
 /-- The variables of a decoded expression are the resolved dense variables, in order. -/
 theorem VarRegistry.decodeExpr_vars (r : VarRegistry) (e : DenseExpr p) :
@@ -357,8 +357,8 @@ theorem VarRegistry.decodeExpr_vars (r : VarRegistry) (e : DenseExpr p) :
   induction e with
   | const n => rfl
   | var i => rfl
-  | add a b iha ihb => simp [decodeExpr, Expression.vars, DenseExpr.vars, iha, ihb]
-  | mul a b iha ihb => simp [decodeExpr, Expression.vars, DenseExpr.vars, iha, ihb]
+  | add a b iha ihb => simp [decodeExpr, ExpressionG.vars, DenseExpr.vars, iha, ihb]
+  | mul a b iha ihb => simp [decodeExpr, ExpressionG.vars, DenseExpr.vars, iha, ihb]
 
 /-! ## Decode stability under registry extension -/
 

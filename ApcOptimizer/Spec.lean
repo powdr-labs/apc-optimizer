@@ -18,22 +18,34 @@ structure Variable where
   powdrId? : Option Nat := none
   deriving DecidableEq, Repr
 
-/-- An arithmetic expression over structured variables and field constants. -/
-inductive Expression (p : ℕ) where
+/-- A variable of a circuit as exported by powdr. Unlike a `Variable`, it always
+    carries a powdr ID: the input circuit has no derived variables. -/
+structure PowdrVariable where
+  /-- The display name of the variable. -/
+  name : String
+  /-- The powdr variable ID. -/
+  id : Nat
+  deriving DecidableEq, Repr
+
+/-- An arithmetic expression over variables of type `V` and field constants. -/
+inductive ExpressionG (V : Type) (p : ℕ) where
   /-- A constant field element. -/
   | const (n : ZMod p)
   /-- A reference to a variable. -/
-  | var (x : Variable)
+  | var (x : V)
   /-- The sum of two expressions. -/
-  | add (e1 e2 : Expression p)
+  | add (e1 e2 : ExpressionG V p)
   /-- The product of two expressions. -/
-  | mul (e1 e2 : Expression p)
+  | mul (e1 e2 : ExpressionG V p)
+
+/-- An arithmetic expression over circuit variables and field constants. -/
+abbrev Expression (p : ℕ) := ExpressionG Variable p
 
 /-- Evaluate an expression under an `assignment` of variables to field
     elements. -/
 -- ANCHOR: exprEval
-def Expression.eval (e : Expression p)
-    (assignment : Variable → ZMod p) : ZMod p :=
+def ExpressionG.eval {V : Type} (e : ExpressionG V p)
+    (assignment : V → ZMod p) : ZMod p :=
   match e with
   | .const n => n
   | .var x => assignment x
@@ -43,7 +55,7 @@ def Expression.eval (e : Expression p)
 
 -- ANCHOR: degree
 /-- The multiplicative degree of an expression. -/
-def Expression.degree : Expression p → Nat
+def ExpressionG.degree {V : Type} : ExpressionG V p → Nat
   | .const _ => 0
   | .var _ => 1
   | .add e1 e2 => max e1.degree e2.degree
@@ -51,7 +63,7 @@ def Expression.degree : Expression p → Nat
 -- ANCHOR_END: degree
 
 /-- The variables occurring in an expression. -/
-def Expression.vars : Expression p → List Variable
+def ExpressionG.vars {V : Type} : ExpressionG V p → List V
   | .const _ => []
   | .var x => [x]
   | .add e1 e2 => e1.vars ++ e2.vars
@@ -160,19 +172,50 @@ abbrev BusState (p : ℕ) := BusMessage p → ZMod p
 --------- Circuit ---------
 
 /-- A circuit representing a single zkVM chip. -/
-structure Circuit (p : ℕ) where
+structure CircuitG (V : Type) (p : ℕ) where
   /-- The list of algebraic constraints. For an assignment to be valid, all
       of them must evaluate to zero. -/
-  algebraicConstraints : List (Expression p)
+  algebraicConstraints : List (ExpressionG V p)
   /-- The list of symbolic bus interactions. These include both the stateless
       bus interactions (lookups) and the stateful bus interactions. -/
-  busInteractions : List (BusInteraction (Expression p))
+  busInteractions : List (BusInteraction (ExpressionG V p))
+
+/-- A circuit over circuit variables. -/
+abbrev Circuit (p : ℕ) := CircuitG Variable p
 
 /-- The variables occurring anywhere in a circuit. -/
-def Circuit.vars (circuit : Circuit p) : List Variable :=
-  circuit.algebraicConstraints.flatMap Expression.vars ++
+def CircuitG.vars {V : Type} (circuit : CircuitG V p) : List V :=
+  circuit.algebraicConstraints.flatMap ExpressionG.vars ++
     circuit.busInteractions.flatMap
-      (fun bi => bi.multiplicity.vars ++ bi.payload.flatMap Expression.vars)
+      (fun bi => bi.multiplicity.vars ++ bi.payload.flatMap ExpressionG.vars)
+
+--------- Circuits exported by powdr ---------
+
+/-- Rename the variables of an expression. -/
+def ExpressionG.mapVar {V W : Type} (f : V → W) : ExpressionG V p → ExpressionG W p
+  | .const n => .const n
+  | .var x => .var (f x)
+  | .add e1 e2 => .add (e1.mapVar f) (e2.mapVar f)
+  | .mul e1 e2 => .mul (e1.mapVar f) (e2.mapVar f)
+
+/-- Rename the variables of a circuit. -/
+def CircuitG.mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) : CircuitG W p :=
+  { algebraicConstraints := circuit.algebraicConstraints.map (·.mapVar f),
+    busInteractions := circuit.busInteractions.map
+      (fun bi => { busId := bi.busId,
+                   multiplicity := bi.multiplicity.mapVar f,
+                   payload := bi.payload.map (·.mapVar f) }) }
+
+/-- The `Variable` a powdr variable denotes: its powdr ID is present. -/
+def PowdrVariable.toVariable (v : PowdrVariable) : Variable :=
+  { name := v.name, powdrId? := some v.id }
+
+-- ANCHOR: toVariableCircuit
+/-- The circuit denoted by a circuit exported by powdr: every variable of the
+    result carries its powdr ID. -/
+def CircuitG.toVariableCircuit (circuit : CircuitG PowdrVariable p) : Circuit p :=
+  circuit.mapVar PowdrVariable.toVariable
+-- ANCHOR_END: toVariableCircuit
 
 -- ANCHOR: sideEffects
 /-- The side effects of a circuit under a given assignment and bus semantics:
@@ -288,13 +331,13 @@ def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
 -- ANCHOR_END: isSoundReplacementOf
 
 -- ANCHOR: isCompleteReplacementOf
-/-- Whether an optimized circuit is a complete replacement for an original circuit. -/
+/-- Whether an optimized circuit is a complete replacement for an original
+    circuit. `Optimizer.isCorrect` demands this only of circuits exported by
+    powdr, whose variables all carry a powdr ID — the ones witness generation
+    reuses from the input assignment. -/
 def Circuit.isCompleteReplacementOf
     (optimizedCircuit originalCircuit : Circuit p)
     (busSemantics : BusSemantics p) (ds : Derivations p) : Prop :=
-
-  -- ASSUMPTION: every variable in the original circuit has a powdr ID.
-  (∀ v ∈ originalCircuit.vars, v.powdrId?.isSome) →
 
   -- `ds` does not contain unused derivations.
   (∀ derivation ∈ ds, derivation.1 ∈ optimizedCircuit.vars) ∧
@@ -322,7 +365,7 @@ def Circuit.isCompleteReplacementOf
 
 -- ANCHOR: degreeBound
 /-- Whether a circuit stays within a degree bound. -/
-def Circuit.withinDegree (circuit : Circuit p) (b : DegreeBound) : Prop :=
+def CircuitG.withinDegree {V : Type} (circuit : CircuitG V p) (b : DegreeBound) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.degree ≤ b.identities) ∧
   (∀ bi ∈ circuit.busInteractions,
     bi.multiplicity.degree ≤ b.busInteractions ∧
@@ -331,8 +374,8 @@ def Circuit.withinDegree (circuit : Circuit p) (b : DegreeBound) : Prop :=
 /-- Whether an optimizer respects a degree bound: a within-bound input always
     yields a within-bound output. -/
 def optimizerRespectsDegreeBound (b : DegreeBound)
-    (optimizer : Circuit p → Circuit p × Derivations p) : Prop :=
-  ∀ circuit : Circuit p,
+    (optimizer : CircuitG PowdrVariable p → Circuit p × Derivations p) : Prop :=
+  ∀ circuit : CircuitG PowdrVariable p,
     circuit.withinDegree b →
     (optimizer circuit).1.withinDegree b
 -- ANCHOR_END: degreeBound
@@ -340,19 +383,20 @@ def optimizerRespectsDegreeBound (b : DegreeBound)
 --------- Optimizer correctness ---------
 
 -- ANCHOR: optimizer
-abbrev Optimizer (p : ℕ) := Circuit p → Circuit p × Derivations p
+abbrev Optimizer (p : ℕ) := CircuitG PowdrVariable p → Circuit p × Derivations p
 -- ANCHOR_END: optimizer
 
 -- ANCHOR: isCorrect
-/-- An optimizer is correct if, for every input circuit, replacing it with the
-    optimized circuit is both sound and complete, and the optimizer respects
-    the degree bound `b`. -/
+/-- An optimizer is correct if, for every input circuit exported by powdr,
+    replacing it with the optimized circuit is both sound and complete, and the
+    optimizer respects the degree bound `b`. -/
 def Optimizer.isCorrect (optimizer : Optimizer p)
     (busSemantics : BusSemantics p) (b : DegreeBound) : Prop :=
-  (∀ originalCircuit : Circuit p,
-    let (optimizedCircuit, derivations) := optimizer originalCircuit
+  (∀ powdrCircuit : CircuitG PowdrVariable p,
+    let originalCircuit := powdrCircuit.toVariableCircuit
+    let (optimizedCircuit, derivations) := optimizer powdrCircuit
     (optimizedCircuit.isSoundReplacementOf originalCircuit busSemantics) ∧
-    (optimizedCircuit.isCompleteReplacementOf originalCircuit busSemantics
-      derivations))
+    (optimizedCircuit.isCompleteReplacementOf originalCircuit
+      busSemantics derivations))
   ∧ optimizerRespectsDegreeBound b optimizer
 -- ANCHOR_END: isCorrect

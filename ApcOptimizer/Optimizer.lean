@@ -22,14 +22,14 @@ variable {p : ℕ}
 /-- Optimizer which does not use any bus facts. Works with any VM, but is less effective. Returns
     the optimized system together with the `Derivations` for its newly-introduced columns. -/
 def simpleOptimizer (bs : BusSemantics p) [DecidablePred bs.accepts] (b : DegreeBound) :
-    Circuit p → Circuit p × Derivations p :=
+    Optimizer p :=
   optimizerWithBusFacts b (BusFacts.trivial bs)
 
 namespace ApcOptimizer.OpenVM
 
 /-- Optimizer specialized for the OpenVM semantics. -/
 def openVmOptimizer (busMap : BusMap := defaultBusMap) (b : DegreeBound := defaultDegreeBound) :
-    Circuit babyBear → Circuit babyBear × Derivations babyBear :=
+    Optimizer babyBear :=
   optimizerWithBusFacts b (openVmFacts babyBear busMap)
 
 end ApcOptimizer.OpenVM
@@ -38,7 +38,7 @@ namespace ApcOptimizer.SP1
 
 /-- Optimizer specialized for the SP1 semantics. -/
 def sp1Optimizer (busMap : BusMap := defaultBusMap) (b : DegreeBound := defaultDegreeBound) :
-    Circuit koalaBear → Circuit koalaBear × Derivations koalaBear :=
+    Optimizer koalaBear :=
   optimizerWithBusFacts b (sp1Facts koalaBear busMap)
 
 end ApcOptimizer.SP1

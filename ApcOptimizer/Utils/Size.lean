@@ -34,11 +34,11 @@ variable {p : ℕ}
 
 /-- All variable names occurring in a bus interaction (multiplicity and payload). -/
 def BusInteraction.vars (bi : BusInteraction (Expression p)) : List Variable :=
-  bi.multiplicity.vars ++ bi.payload.flatMap Expression.vars
+  bi.multiplicity.vars ++ bi.payload.flatMap ExpressionG.vars
 
 /-- The distinct variables of a constraint system, across constraints and bus interactions. -/
 def Circuit.variables (cs : Circuit p) : List Variable :=
-  (cs.algebraicConstraints.flatMap Expression.vars ++
+  (cs.algebraicConstraints.flatMap ExpressionG.vars ++
     cs.busInteractions.flatMap BusInteraction.vars).dedup
 
 /-! ## Size and effectiveness -/
@@ -57,7 +57,7 @@ def Circuit.busInteractionCount (cs : Circuit p) : Nat :=
 /-- Number of occurrences of `x` (with multiplicity) across the whole system. Used e.g. to pick
     substitution pivots that minimize expression duplication. -/
 def Circuit.occurrences (cs : Circuit p) (x : Variable) : Nat :=
-  (cs.algebraicConstraints.flatMap Expression.vars
+  (cs.algebraicConstraints.flatMap ExpressionG.vars
     ++ cs.busInteractions.flatMap BusInteraction.vars).count x
 
 /-- How much an optimizer shrinks a given circuit under a size `measure`, as the factor

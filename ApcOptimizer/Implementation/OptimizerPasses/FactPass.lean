@@ -27,7 +27,7 @@ the optimizer's effectiveness priority. -/
 /-- Number of distinct variables via a `HashSet` (linear); same value as `Circuit.size`,
     used only for the loop measure. -/
 def Circuit.varCount (cs : Circuit p) : Nat :=
-  ((cs.algebraicConstraints.flatMap Expression.vars ++
+  ((cs.algebraicConstraints.flatMap ExpressionG.vars ++
       cs.busInteractions.flatMap BusInteraction.vars).foldl
         (init := (∅ : Std.HashSet Variable)) (·.insert ·)).size
 

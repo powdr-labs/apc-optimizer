@@ -181,7 +181,7 @@ def Derivations.safeMethodIdx (methods : Std.HashMap Variable (ComputationMethod
 
 /-- Keep one structurally safe derivation for each no-ID output variable.
 
-    Both `Circuit.vars` lists count variable *occurrences*, so every scan here is indexed:
+    Both `CircuitG.vars` lists count variable *occurrences*, so every scan here is indexed:
     `methodFor` walks all of `ds` on each lookup, and the input-variable test would rescan
     `inputVars` per referenced variable. `forOutput_eq` is the index-free reading. -/
 def Derivations.forOutput (ds : Derivations p) (inputVars outputVars : List Variable) :
@@ -191,12 +191,19 @@ def Derivations.forOutput (ds : Derivations p) (inputVars outputVars : List Vari
   (HashedDedup.hashedEraseDups hash (outputVars.filter (fun v => v.powdrId?.isNone))).map
     (fun v => (v, Derivations.safeMethodIdx methods inputs v))
 
-/-- The fact-aware circuit optimizer: given proven `BusFacts` (which fixes the implicit `bs`), run
-    the pipeline and return the output system with the `Derivations` for its new variables. -/
-def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
+/-- The optimizer on an already-converted circuit: given proven `BusFacts` (which fixes the implicit
+    `bs`), run the pipeline and return the output system with the `Derivations` for its new
+    variables. -/
+def optimizerOnCircuit {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
     (cs : Circuit p) : Circuit p × Derivations p :=
   let r := pipeline b cs bs facts
   (r.out, r.derivs.forOutput cs.vars r.out.vars)
+
+/-- The fact-aware circuit optimizer: convert the powdr circuit to one over `Variable`
+    (`CircuitG.toVariableCircuit`) and optimize it. -/
+def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs) :
+    Optimizer p :=
+  fun powdrCircuit => optimizerOnCircuit b facts powdrCircuit.toVariableCircuit
 
 /-! ## `witgen`'s two branches
 
@@ -349,18 +356,56 @@ theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List Variabl
   simp only [Derivations.safeMethod, hm]
   rw [if_pos hvars]
 
-/-- The fact-aware optimizer is correct: its output soundly replaces the input and completely
-    replaces the input's real-trace executions (`witgen` on any admissible input trace reproduces a
-    valid witness) — the clauses `Optimizer.isCorrect` demands. -/
-theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
-    (cs : Circuit p) :
-    (optimizerWithBusFacts b facts cs).1.isSoundReplacementOf cs bs ∧
-      (optimizerWithBusFacts b facts cs).1.isCompleteReplacementOf cs bs (optimizerWithBusFacts b facts cs).2 := by
+/-! ## Circuits exported by powdr
+
+`Optimizer.isCorrect` feeds the optimizer `CircuitG.toVariableCircuit` of a powdr circuit; the
+completeness proof below needs that all its variables carry a powdr ID. -/
+
+theorem ExpressionG.vars_mapVar {V W : Type} (f : V → W) (e : ExpressionG V p) :
+    (e.mapVar f).vars = e.vars.map f := by
+  induction e with
+  | const n => rfl
+  | var x => rfl
+  | add e1 e2 ih1 ih2 => simp [mapVar, vars, ih1, ih2]
+  | mul e1 e2 ih1 ih2 => simp [mapVar, vars, ih1, ih2]
+
+theorem CircuitG.vars_mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) :
+    (circuit.mapVar f).vars = circuit.vars.map f := by
+  simp [CircuitG.mapVar, CircuitG.vars, List.flatMap_map, List.map_flatMap,
+    ExpressionG.vars_mapVar]
+
+theorem CircuitG.powdrId?_isSome_of_mem_vars (circuit : CircuitG PowdrVariable p) :
+    ∀ v ∈ circuit.toVariableCircuit.vars, v.powdrId?.isSome := by
+  intro v hv
+  rw [CircuitG.toVariableCircuit, CircuitG.vars_mapVar, List.mem_map] at hv
+  obtain ⟨u, -, rfl⟩ := hv
+  rfl
+
+theorem ExpressionG.degree_mapVar {V W : Type} (f : V → W) (e : ExpressionG V p) :
+    (e.mapVar f).degree = e.degree := by
+  induction e with
+  | const n => rfl
+  | var x => rfl
+  | add e1 e2 ih1 ih2 => simp [mapVar, degree, ih1, ih2]
+  | mul e1 e2 ih1 ih2 => simp [mapVar, degree, ih1, ih2]
+
+theorem CircuitG.withinDegree_mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p)
+    (b : DegreeBound) : (circuit.mapVar f).withinDegree b ↔ circuit.withinDegree b := by
+  simp [CircuitG.withinDegree, CircuitG.mapVar, ExpressionG.degree_mapVar]
+
+/-- The optimizer on a converted circuit is correct: its output soundly replaces the input and
+    completely replaces the input's real-trace executions (`witgen` on any admissible input trace
+    reproduces a valid witness) — the clauses `Optimizer.isCorrect` demands, for an input whose
+    variables all carry a powdr ID. -/
+theorem optimizerOnCircuit_correct {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
+    (cs : Circuit p) (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) :
+    (optimizerOnCircuit b facts cs).1.isSoundReplacementOf cs bs ∧
+      (optimizerOnCircuit b facts cs).1.isCompleteReplacementOf cs bs
+        (optimizerOnCircuit b facts cs).2 := by
   refine ⟨(pipeline b cs bs facts).correct.toSound, ?_⟩
-  intro hpow
   -- Phrase the goal in `pipeline` terms up front: the coverage proof is one of its components, so
-  -- `refine` would otherwise have to bridge the `optimizerWithBusFacts` projections by `whnf`.
-  simp only [optimizerWithBusFacts]
+  -- `refine` would otherwise have to bridge the `optimizerOnCircuit` projections by `whnf`.
+  simp only [optimizerOnCircuit]
   -- `PassCorrect` components (`Basic.lean`): no new powdr-ID column, and real-trace completeness.
   have hS := (pipeline b cs bs facts).correct.2.2.1
   have hcomp := (pipeline b cs bs facts).correct.2.2.2
@@ -409,10 +454,22 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
     (Circuit.admissible_congr hagree).mpr hadm',
     hse.trans (Circuit.sideEffects_congr hagree).symm⟩
 
+/-- The fact-aware optimizer is correct on the circuits powdr exports: `optimizerOnCircuit_correct`
+    for the converted circuit, whose variables all carry a powdr ID by construction. -/
+theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound)
+    (facts : BusFacts p bs) (powdrCircuit : CircuitG PowdrVariable p) :
+    (optimizerWithBusFacts b facts powdrCircuit).1.isSoundReplacementOf
+        powdrCircuit.toVariableCircuit bs ∧
+      (optimizerWithBusFacts b facts powdrCircuit).1.isCompleteReplacementOf
+        powdrCircuit.toVariableCircuit bs (optimizerWithBusFacts b facts powdrCircuit).2 :=
+  optimizerOnCircuit_correct b facts powdrCircuit.toVariableCircuit
+    (CircuitG.powdrId?_isSome_of_mem_vars powdrCircuit)
+
 /-- The fact-aware optimizer never pushes a within-bound circuit past the zkVM's degree
     bound (every pass is degree-guarded). -/
 theorem optimizerWithBusFacts_respectsDegree {bs : BusSemantics p} (b : DegreeBound)
-    (facts : BusFacts p bs) (cs : Circuit p)
-    (h : cs.withinDegree b) :
-    (optimizerWithBusFacts b facts cs).1.withinDegree b :=
-  pipeline_respectsDeg b cs bs facts h
+    (facts : BusFacts p bs) (powdrCircuit : CircuitG PowdrVariable p)
+    (h : powdrCircuit.withinDegree b) :
+    (optimizerWithBusFacts b facts powdrCircuit).1.withinDegree b :=
+  pipeline_respectsDeg b powdrCircuit.toVariableCircuit bs facts
+    ((CircuitG.withinDegree_mapVar _ powdrCircuit b).mpr h)

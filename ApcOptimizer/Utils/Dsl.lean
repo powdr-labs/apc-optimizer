@@ -19,13 +19,13 @@ variable {p : ℕ}
 
 /-! ## Building expressions -/
 
-instance : Add (Expression p) := ⟨Expression.add⟩
-instance : Mul (Expression p) := ⟨Expression.mul⟩
-instance : Neg (Expression p) := ⟨fun e => Expression.mul (Expression.const (-1)) e⟩
+instance : Add (Expression p) := ⟨ExpressionG.add⟩
+instance : Mul (Expression p) := ⟨ExpressionG.mul⟩
+instance : Neg (Expression p) := ⟨fun e => ExpressionG.mul (ExpressionG.const (-1)) e⟩
 instance : Sub (Expression p) := ⟨fun a b => a + (-b)⟩
 
 /-- Numeric literals: `(5 : Expression p)` is the constant `5` in the field. -/
-instance {n : ℕ} : OfNat (Expression p) n := ⟨Expression.const (OfNat.ofNat n)⟩
+instance {n : ℕ} : OfNat (Expression p) n := ⟨ExpressionG.const (OfNat.ofNat n)⟩
 
 /-- A variable, referenced by name. -/
 def V (x : String) : Expression p := .var { name := x }

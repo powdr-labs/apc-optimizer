@@ -14,14 +14,18 @@ instance : Ord Variable := ⟨fun a b =>
 
 instance : Hashable Variable := ⟨fun a => mixHash (hash a.name) (hash a.powdrId?)⟩
 
-/-- Parse powdr's legacy `<name>@<id>` variable notation into a structured variable. -/
-def Variable.ofPowdrName (raw : String) : Variable :=
+instance : Hashable PowdrVariable := ⟨fun a => mixHash (hash a.name) (hash a.id)⟩
+
+/-- Parse powdr's `<name>@<id>` variable notation. A name without a numeric id fails loudly: powdr
+    exports every column with its id (and so does `JsonSerializer`, for the columns passes mint), so
+    an id-less name means the input is not what the optimizer's input type describes. -/
+def PowdrVariable.ofPowdrName (raw : String) : Except String PowdrVariable :=
   match raw.splitOn "@" with
   | [base, id] =>
       match id.toNat? with
-      | some n => { name := base, powdrId? := some n }
-      | none => { name := raw }
-  | _ => { name := raw }
+      | some n => .ok { name := base, id := n }
+      | none => .error s!"variable without a numeric powdr id: {raw}"
+  | _ => .error s!"variable without a powdr id: {raw}"
 
 /-- Pinned to `Variable`'s `DecidableEq`, so `LawfulBEq` below holds by `decide`. -/
 instance : BEq Variable := ⟨fun a b => decide (a = b)⟩
@@ -31,3 +35,5 @@ instance : BEq Variable := ⟨fun a b => decide (a = b)⟩
 instance : LawfulBEq Variable where
   rfl := by simp [BEq.beq]
   eq_of_beq h := by simpa [BEq.beq] using h
+
+instance : BEq PowdrVariable := ⟨fun a b => decide (a = b)⟩

@@ -56,19 +56,23 @@ In the remainder of this document, we formalize the properties that an optimizer
 
 # Variables, expressions and assignments
 
-A {deftech}_variable_ is how the _runtime witness data_ is referenced in a circuit. Variables in the input circuit carry a _powdr ID_, while newly introduced variables do not.
+A {deftech}_variable_ is how the _runtime witness data_ is referenced in a circuit. Every variable of the circuit exported by powdr carries a _powdr ID_, so its type records the ID unconditionally:
+
+{docstring PowdrVariable}
+
+Variables of the circuits the optimizer works on may also have been introduced by the optimizer itself, in which case they have no powdr ID:
 
 {docstring Variable}
 
-An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions.
+An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions. It is generic in the variable type, so the same definition serves both kinds of circuit; {name}`Expression` abbreviates the optimizer's instance {lean}`ExpressionG Variable`.
 
-{docstring Expression}
+{docstring ExpressionG}
 
 An {deftech}_assignment_ maps every variable to a concrete field value. An expression is _evaluated_ under an assignment by folding its constants, variables, sums, and products into a single field element.
 
 ```anchor exprEval
-def Expression.eval (e : Expression p)
-    (assignment : Variable → ZMod p) : ZMod p :=
+def ExpressionG.eval {V : Type} (e : ExpressionG V p)
+    (assignment : V → ZMod p) : ZMod p :=
   match e with
   | .const n => n
   | .var x => assignment x
@@ -121,9 +125,9 @@ As we will see below, we will assume that all circuits _including the circuit to
 
 # Circuits
 
-A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions:
+A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions, over the same variable type as its expressions ({name}`Circuit` abbreviates {lean}`CircuitG Variable`):
 
-{docstring Circuit}
+{docstring CircuitG}
 
 A circuit is satisfied under an assignment when all algebraic constraints evaluate to zero and every bus interaction message is accepted by the bus semantics:
 
@@ -282,13 +286,13 @@ def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variabl
 Putting the pieces together, we define what it means for an optimized circuit to be a _complete_ replacement for an original circuit. Structurally, the returned derivations must contain no unused entries and must cover every output variable from the input variables. Semantically, every admissible satisfying input assignment must produce a satisfying and admissible output assignment with equal side effects.
 
 ```anchor isCompleteReplacementOf
-/-- Whether an optimized circuit is a complete replacement for an original circuit. -/
+/-- Whether an optimized circuit is a complete replacement for an original
+    circuit. `Optimizer.isCorrect` demands this only of circuits exported by
+    powdr, whose variables all carry a powdr ID — the ones witness generation
+    reuses from the input assignment. -/
 def Circuit.isCompleteReplacementOf
     (optimizedCircuit originalCircuit : Circuit p)
     (busSemantics : BusSemantics p) (ds : Derivations p) : Prop :=
-
-  -- ASSUMPTION: every variable in the original circuit has a powdr ID.
-  (∀ v ∈ originalCircuit.vars, v.powdrId?.isSome) →
 
   -- `ds` does not contain unused derivations.
   (∀ derivation ∈ ds, derivation.1 ∈ optimizedCircuit.vars) ∧
@@ -317,7 +321,7 @@ def Circuit.isCompleteReplacementOf
 The {deftech}_multiplicative degree_ of an expression is defined structurally: constants have degree 0, variables have degree 1, addition takes the maximum, and multiplication adds the degrees.
 ```anchor degree
 /-- The multiplicative degree of an expression. -/
-def Expression.degree : Expression p → Nat
+def ExpressionG.degree {V : Type} : ExpressionG V p → Nat
   | .const _ => 0
   | .var _ => 1
   | .add e1 e2 => max e1.degree e2.degree
@@ -332,7 +336,7 @@ Given a zkVM-specific degree bound and an optimizer, we state what it means for 
 
 ```anchor degreeBound
 /-- Whether a circuit stays within a degree bound. -/
-def Circuit.withinDegree (circuit : Circuit p) (b : DegreeBound) : Prop :=
+def CircuitG.withinDegree {V : Type} (circuit : CircuitG V p) (b : DegreeBound) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.degree ≤ b.identities) ∧
   (∀ bi ∈ circuit.busInteractions,
     bi.multiplicity.degree ≤ b.busInteractions ∧
@@ -341,32 +345,42 @@ def Circuit.withinDegree (circuit : Circuit p) (b : DegreeBound) : Prop :=
 /-- Whether an optimizer respects a degree bound: a within-bound input always
     yields a within-bound output. -/
 def optimizerRespectsDegreeBound (b : DegreeBound)
-    (optimizer : Circuit p → Circuit p × Derivations p) : Prop :=
-  ∀ circuit : Circuit p,
+    (optimizer : CircuitG PowdrVariable p → Circuit p × Derivations p) : Prop :=
+  ∀ circuit : CircuitG PowdrVariable p,
     circuit.withinDegree b →
     (optimizer circuit).1.withinDegree b
 ```
 
 # Optimizer
 
-Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit to a new circuit and a list of derivations.
+Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit powdr exported to a new circuit and a list of derivations. Its input being a {lean}`CircuitG PowdrVariable` is what records that every variable it is given has a powdr ID: we do not assume this, we read it off the input type.
 
 ```anchor optimizer
-abbrev Optimizer (p : ℕ) := Circuit p → Circuit p × Derivations p
+abbrev Optimizer (p : ℕ) := CircuitG PowdrVariable p → Circuit p × Derivations p
+```
+
+The circuit the output is compared against is the one the input denotes, with each variable turned into a {name}`Variable` carrying its ID:
+
+```anchor toVariableCircuit
+/-- The circuit denoted by a circuit exported by powdr: every variable of the
+    result carries its powdr ID. -/
+def CircuitG.toVariableCircuit (circuit : CircuitG PowdrVariable p) : Circuit p :=
+  circuit.mapVar PowdrVariable.toVariable
 ```
 
 An optimizer is correct if, for every input circuit, replacing it with the optimized circuit is both sound and complete, and the optimizer respects the degree bound.
 
 ```anchor isCorrect
-/-- An optimizer is correct if, for every input circuit, replacing it with the
-    optimized circuit is both sound and complete, and the optimizer respects
-    the degree bound `b`. -/
+/-- An optimizer is correct if, for every input circuit exported by powdr,
+    replacing it with the optimized circuit is both sound and complete, and the
+    optimizer respects the degree bound `b`. -/
 def Optimizer.isCorrect (optimizer : Optimizer p)
     (busSemantics : BusSemantics p) (b : DegreeBound) : Prop :=
-  (∀ originalCircuit : Circuit p,
-    let (optimizedCircuit, derivations) := optimizer originalCircuit
+  (∀ powdrCircuit : CircuitG PowdrVariable p,
+    let originalCircuit := powdrCircuit.toVariableCircuit
+    let (optimizedCircuit, derivations) := optimizer powdrCircuit
     (optimizedCircuit.isSoundReplacementOf originalCircuit busSemantics) ∧
-    (optimizedCircuit.isCompleteReplacementOf originalCircuit busSemantics
-      derivations))
+    (optimizedCircuit.isCompleteReplacementOf originalCircuit
+      busSemantics derivations))
   ∧ optimizerRespectsDegreeBound b optimizer
 ```
