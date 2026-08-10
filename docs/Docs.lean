@@ -266,14 +266,12 @@ Witness generation therefore takes a proof of `Derivations.cover` as an argument
 ```anchor witgen
 /-- Witness generation on a variable `ds` covers. Every powdr-ID (input)
     variable passes through unchanged; every other variable is computed by the
-    method `ds` records for it, which the `none` branch of `cover` guarantees
-    exists — there is no fall-through case. -/
-def Derivations.witgenOn (ds : Derivations p) {inputVars outputVars : List Variable}
+    method `ds` records for it. -/
+def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variable}
     (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
     (v : Variable) (hv : v ∈ outputVars) : ZMod p :=
   if hp : v.powdrId? = none then
-    ((ds.methodFor v).get
-      (Derivations.methodFor_isSome_of_cover h hv hp)).eval inputAssignment
+    ((ds.methodFor v).get (ds.methodFor_isSome h hv hp)).eval inputAssignment
   -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
   -- variable of the output circuit also exists in the input circuit.
   else inputAssignment v
@@ -303,15 +301,13 @@ def Circuit.isCompleteReplacementOf
 
   -- For any admissible satisfying assignment of the original circuit, the
   -- optimized circuit is also satisfied and admissible, with equal side
-  -- effects, under every assignment witness generation produces on the
-  -- optimized circuit's variables. Its values elsewhere are unconstrained:
-  -- the optimized circuit cannot read them.
+  -- effects, under the assignment produced by witness generation.
   ∀ assignment,
     originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
     ∀ assignment' : Variable → ZMod p,
     (∀ v (hv : v ∈ optimizedCircuit.vars),
-      assignment' v = ds.witgenOn hcover assignment v hv) →
+      assignment' v = ds.witgen hcover assignment v hv) →
     optimizedCircuit.satisfies busSemantics assignment' ∧
       optimizedCircuit.admissible busSemantics assignment' ∧
       originalCircuit.sideEffects busSemantics assignment =

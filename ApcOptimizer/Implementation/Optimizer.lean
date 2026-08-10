@@ -198,26 +198,26 @@ def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFa
   let r := pipeline b cs bs facts
   (r.out, r.derivs.forOutput cs.vars r.out.vars)
 
-/-! ## `witgenOn`'s two branches
+/-! ## `witgen`'s two branches
 
-So the completeness proof never unfolds the spec's `Derivations.witgenOn`. -/
+So the completeness proof never unfolds the spec's `Derivations.witgen`. -/
 
-/-- On an input variable, `witgenOn` passes the input assignment through. -/
-theorem Derivations.witgenOn_powdrId {ds : Derivations p} {inputVars outputVars : List Variable}
+/-- On an input variable, `witgen` passes the input assignment through. -/
+theorem Derivations.witgen_powdrId {ds : Derivations p} {inputVars outputVars : List Variable}
     (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
     {w : Nat} (hv : v ∈ outputVars) (hp : v.powdrId? = some w) :
-    ds.witgenOn h inputAssignment v hv = inputAssignment v := by
-  simp only [Derivations.witgenOn, hp, dif_neg, reduceCtorEq, not_false_eq_true]
+    ds.witgen h inputAssignment v hv = inputAssignment v := by
+  simp only [Derivations.witgen, hp, dif_neg, reduceCtorEq, not_false_eq_true]
 
-/-- On a derived variable, `witgenOn` evaluates the method `ds` records for it. -/
-theorem Derivations.witgenOn_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
+/-- On a derived variable, `witgen` evaluates the method `ds` records for it. -/
+theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
     (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
     {cm : ComputationMethod p} (hv : v ∈ outputVars) (hp : v.powdrId? = none)
     (hm : ds.methodFor v = some cm) :
-    ds.witgenOn h inputAssignment v hv = cm.eval inputAssignment := by
+    ds.witgen h inputAssignment v hv = cm.eval inputAssignment := by
   have hg : ∀ hs : (ds.methodFor v).isSome, (ds.methodFor v).get hs = cm :=
     fun hs => Option.get_of_mem hs (Option.mem_def.mpr hm)
-  simp only [Derivations.witgenOn, dif_pos hp, hg]
+  simp only [Derivations.witgen, dif_pos hp, hg]
 
 /-! ## Evaluation depends only on a system's variables
 
@@ -389,11 +389,11 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
     simpa using hR cs.vars (fun v hv _ => hv) [] hrec0
   have hagree : ∀ v ∈ (pipeline b cs bs facts).out.vars, f v = env' v := by
     intro v hv
-    -- Case first, rewrite second: `witgenOn`'s implicit `outputVars` is the pipeline output, so a
+    -- Case first, rewrite second: `witgen`'s implicit `outputVars` is the pipeline output, so a
     -- goal mentioning the application makes `cases` reduce it — i.e. run the optimizer in `whnf`.
     cases hpw : v.powdrId? with
     | some w =>
-        rw [hf v hv, Derivations.witgenOn_powdrId hcover env hv hpw]
+        rw [hf v hv, Derivations.witgen_powdrId hcover env hv hpw]
         exact (hA v (by simp [hpw])).symm
     | none =>
         obtain ⟨cm, hm, hxpow, hxinput, heq⟩ := hrec v hv hpw
@@ -403,7 +403,7 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
           (ds := (pipeline b cs bs facts).derivs) (inputVars := cs.vars)
           (outputVars := (pipeline b cs bs facts).out.vars) hv hpw
         rw [hsafe] at hm'
-        rw [hf v hv, Derivations.witgenOn_methodFor hcover env hv hpw hm', ← heq]
+        rw [hf v hv, Derivations.witgen_methodFor hcover env hv hpw hm', ← heq]
         exact ComputationMethod.eval_congr cm env env' (fun x hx => (hA x (hxpow x hx)).symm)
   exact ⟨(Circuit.satisfies_congr hagree).mpr hsat',
     (Circuit.admissible_congr hagree).mpr hadm',
