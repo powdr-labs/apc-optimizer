@@ -341,7 +341,7 @@ def Circuit.withinDegree (circuit : Circuit p) (b : DegreeBound) : Prop :=
 /-- Whether an optimizer respects a degree bound: a within-bound input always
     yields a within-bound output. -/
 def optimizerRespectsDegreeBound (b : DegreeBound)
-    (optimizer : Circuit p → Circuit p × Derivations p) : Prop :=
+    (optimizer : Optimizer p) : Prop :=
   ∀ circuit : Circuit p,
     circuit.withinDegree b →
     (optimizer circuit).1.withinDegree b

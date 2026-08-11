@@ -318,6 +318,12 @@ def Circuit.isCompleteReplacementOf
         optimizedCircuit.sideEffects busSemantics assignment'
 -- ANCHOR_END: isCompleteReplacementOf
 
+--------- Optimizer ------------
+
+-- ANCHOR: optimizer
+abbrev Optimizer (p : ℕ) := Circuit p → Circuit p × Derivations p
+-- ANCHOR_END: optimizer
+
 --------- Degree bound ---------
 
 -- ANCHOR: degreeBound
@@ -331,17 +337,13 @@ def Circuit.withinDegree (circuit : Circuit p) (b : DegreeBound) : Prop :=
 /-- Whether an optimizer respects a degree bound: a within-bound input always
     yields a within-bound output. -/
 def optimizerRespectsDegreeBound (b : DegreeBound)
-    (optimizer : Circuit p → Circuit p × Derivations p) : Prop :=
+    (optimizer : Optimizer p) : Prop :=
   ∀ circuit : Circuit p,
     circuit.withinDegree b →
     (optimizer circuit).1.withinDegree b
 -- ANCHOR_END: degreeBound
 
 --------- Optimizer correctness ---------
-
--- ANCHOR: optimizer
-abbrev Optimizer (p : ℕ) := Circuit p → Circuit p × Derivations p
--- ANCHOR_END: optimizer
 
 -- ANCHOR: isCorrect
 /-- An optimizer is correct if, for every input circuit, replacing it with the

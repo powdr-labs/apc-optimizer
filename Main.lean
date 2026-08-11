@@ -139,7 +139,7 @@ def printEffectiveness (label : String) (before after : Stats) : IO Unit := do
     through the generic `cmd*Impl` bodies so a single implementation serves both OpenVM and SP1. -/
 structure VmBackend (p : ℕ) (τ : Type) where
   parse : String → Except String (Circuit p × (Nat → Option τ))
-  optimize : (Nat → Option τ) → Circuit p → Circuit p × Derivations p
+  optimize : (Nat → Option τ) → Optimizer p
   degreeBound : DegreeBound
 
 def cmdRunImpl {p : ℕ} {τ : Type} (be : VmBackend p τ) (fileName : String) : IO Unit := do
