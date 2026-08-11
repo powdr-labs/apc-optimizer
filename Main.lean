@@ -54,8 +54,8 @@ def readInput (fileName : String) : IO String := do
     Rejects systems with bus ids missing from the map: an unmapped bus would be modeled as a
     no-op bus (stateless, never violating), silently licensing unsound optimizations. -/
 def parseFileWith {p : ℕ} {τ : Type}
-    (parse : String → Except String (CircuitG PowdrVariable p × (Nat → Option τ)))
-    (fileName : String) : IO (CircuitG PowdrVariable p × (Nat → Option τ)) := do
+    (parse : String → Except String (InputCircuit p × (Nat → Option τ)))
+    (fileName : String) : IO (InputCircuit p × (Nat → Option τ)) := do
   let contents ← readInput fileName
   match parse contents with
   | .error err =>
@@ -73,12 +73,12 @@ def parseFileWith {p : ℕ} {τ : Type}
 /-- The OpenVM (BabyBear) file parser: resolve the `BusMapList` to a lookup, dropping `next_free_id`
     (the CLI does not need powdr's column cursor). -/
 def parseOpenVm (contents : String) :
-    Except String (CircuitG PowdrVariable babyBear × (Nat → Option OpenVmBusType)) :=
+    Except String (InputCircuit babyBear × (Nat → Option OpenVmBusType)) :=
   (parseJsonSystem (p := babyBear) contents).map (fun (s, bm, _) => (s, bm.toBusMap))
 
 /-- The SP1 (KoalaBear) file parser. -/
 def parseSp1 (contents : String) :
-    Except String (CircuitG PowdrVariable ApcOptimizer.SP1.koalaBear ×
+    Except String (InputCircuit ApcOptimizer.SP1.koalaBear ×
       (Nat → Option ApcOptimizer.SP1.Sp1BusType)) :=
   (parseJsonSystemSp1 (p := ApcOptimizer.SP1.koalaBear) contents).map
     (fun (s, bm, _) => (s, bm.toBusMap))
@@ -138,7 +138,7 @@ def printEffectiveness (label : String) (before after : Stats) : IO Unit := do
     its fact-aware optimizer, and its degree bound (reported by `run`). All three are threaded
     through the generic `cmd*Impl` bodies so a single implementation serves both OpenVM and SP1. -/
 structure VmBackend (p : ℕ) (τ : Type) where
-  parse : String → Except String (CircuitG PowdrVariable p × (Nat → Option τ))
+  parse : String → Except String (InputCircuit p × (Nat → Option τ))
   optimize : (Nat → Option τ) → Optimizer p
   degreeBound : DegreeBound
 
@@ -147,7 +147,7 @@ def cmdRunImpl {p : ℕ} {τ : Type} (be : VmBackend p τ) (fileName : String) :
   IO.println s!"Parsed {pcs.algebraicConstraints.length} constraints, \
     {pcs.busInteractions.length} bus interactions"
   -- The optimizer's own first step; the CLI needs it too, to measure the input it is given.
-  let cs := pcs.toVariableCircuit
+  let cs := pcs.toCircuit
   let before := statsOf cs
   let t0 ← IO.monoMsNow
   -- IO.lazyPure sequences the pure optimizer run between the clock reads (the compiler is
@@ -169,8 +169,8 @@ def cmdCompareImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
   cmdRunImpl be unoptFile
   let (csBefore, _) ← parseFileWith be.parse unoptFile
   let (csAfter, _) ← parseFileWith be.parse optFile
-  let statsBefore := statsOf csBefore.toVariableCircuit
-  let statsAfter := statsOf csAfter.toVariableCircuit
+  let statsBefore := statsOf csBefore.toCircuit
+  let statsAfter := statsOf csAfter.toCircuit
   printStats (label := "powdr        ") (stats := statsAfter)
   printEffectiveness (label := "powdr") (before := statsBefore) (after := statsAfter)
 
@@ -226,8 +226,8 @@ def cmdReportImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
   let (cs, busMap) ← parseFileWith be.parse unoptFile
   let (csPowdr, _) ← parseFileWith be.parse optFile
   let optimized := (be.optimize busMap cs).1
-  IO.println ("{\"original\":" ++ circuitJson cs.toVariableCircuit ++
-    ",\"powdr\":" ++ circuitJson csPowdr.toVariableCircuit ++
+  IO.println ("{\"original\":" ++ circuitJson cs.toCircuit ++
+    ",\"powdr\":" ++ circuitJson csPowdr.toCircuit ++
     ",\"apc-optimizer\":" ++ circuitJson optimized ++ "}")
 
 /-- The OpenVM backend: BabyBear field, `openVmOptimizer`, OpenVM's default degree bound. The
@@ -381,12 +381,12 @@ def profileRun {p : ℕ} (b : DegreeBound) (fileName : String) (cs : Circuit p)
 def cmdProfile (vm fileName : String) (verbose : Bool := false) : IO Unit := do
   if isSp1 vm then
     let (cs, busMap) ← parseFileWith parseSp1 fileName
-    profileRun ApcOptimizer.SP1.defaultDegreeBound fileName cs.toVariableCircuit
+    profileRun ApcOptimizer.SP1.defaultDegreeBound fileName cs.toCircuit
       (ApcOptimizer.SP1.sp1BusSemantics ApcOptimizer.SP1.koalaBear busMap)
       (ApcOptimizer.SP1.sp1Facts ApcOptimizer.SP1.koalaBear busMap) verbose
   else
     let (cs, busMap) ← parseFileWith parseOpenVm fileName
-    profileRun defaultDegreeBound fileName cs.toVariableCircuit
+    profileRun defaultDegreeBound fileName cs.toCircuit
       (openVmBusSemantics babyBear busMap) (openVmFacts babyBear busMap) verbose
 
 def usage : String :=

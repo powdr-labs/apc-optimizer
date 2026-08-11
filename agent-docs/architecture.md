@@ -37,7 +37,7 @@ every no-ID (derived) variable is computed by the method `Derivations` lists for
 its last entry — duplicates are allowed, the later one wins) reading only input columns. This is
 exactly what lets witness generation extend an input trace to an output trace. (The input is a
 circuit powdr exported — an `Optimizer` takes a `CircuitG PowdrVariable`, compared against the
-`Circuit` it denotes (`CircuitG.toVariableCircuit`) — so all its columns carry powdr IDs by
+`Circuit` it denotes (`InputCircuit.toCircuit`) — so all its columns carry powdr IDs by
 construction; a variable with no powdr ID cannot be read from the input trace.)
 The structural half — every returned derivation names an output variable, and `cover` reconstructs
 all output variables from input columns — holds even when the input has no admissible satisfying

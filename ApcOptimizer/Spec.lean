@@ -20,7 +20,7 @@ structure Variable where
 
 /-- A variable of a circuit as exported by powdr. Unlike a `Variable`, it always
     carries a powdr ID: the input circuit has no derived variables. -/
-structure PowdrVariable where
+structure InputVariable where
   /-- The display name of the variable. -/
   name : String
   /-- The powdr variable ID. -/
@@ -38,8 +38,18 @@ inductive ExpressionG (V : Type) (p : ℕ) where
   /-- The product of two expressions. -/
   | mul (e1 e2 : ExpressionG V p)
 
+/-- Map an expression between variable types -/
+def ExpressionG.mapVar {V W : Type} (f : V → W) : ExpressionG V p → ExpressionG W p
+  | .const n => .const n
+  | .var x => .var (f x)
+  | .add e1 e2 => .add (e1.mapVar f) (e2.mapVar f)
+  | .mul e1 e2 => .mul (e1.mapVar f) (e2.mapVar f)
+
 /-- An arithmetic expression over circuit variables and field constants. -/
 abbrev Expression (p : ℕ) := ExpressionG Variable p
+
+/-- An arithmetic expression over circuit variables and field constants. -/
+abbrev InputExpression (p : ℕ) := ExpressionG InputVariable p
 
 /-- Evaluate an expression under an `assignment` of variables to field
     elements. -/
@@ -180,8 +190,19 @@ structure CircuitG (V : Type) (p : ℕ) where
       bus interactions (lookups) and the stateful bus interactions. -/
   busInteractions : List (BusInteraction (ExpressionG V p))
 
+/-- Map a circuit between variable types -/
+def CircuitG.mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) : CircuitG W p :=
+  { algebraicConstraints := circuit.algebraicConstraints.map (·.mapVar f),
+    busInteractions := circuit.busInteractions.map
+      (fun bi => { busId := bi.busId,
+                   multiplicity := bi.multiplicity.mapVar f,
+                   payload := bi.payload.map (·.mapVar f) }) }
+
 /-- A circuit over circuit variables. -/
 abbrev Circuit (p : ℕ) := CircuitG Variable p
+
+/-- A circuit over powdr variables. -/
+abbrev InputCircuit (p : ℕ) := CircuitG InputVariable p
 
 /-- The variables occurring anywhere in a circuit. -/
 def CircuitG.vars {V : Type} (circuit : CircuitG V p) : List V :=
@@ -191,30 +212,15 @@ def CircuitG.vars {V : Type} (circuit : CircuitG V p) : List V :=
 
 --------- Circuits exported by powdr ---------
 
-/-- Rename the variables of an expression. -/
-def ExpressionG.mapVar {V W : Type} (f : V → W) : ExpressionG V p → ExpressionG W p
-  | .const n => .const n
-  | .var x => .var (f x)
-  | .add e1 e2 => .add (e1.mapVar f) (e2.mapVar f)
-  | .mul e1 e2 => .mul (e1.mapVar f) (e2.mapVar f)
-
-/-- Rename the variables of a circuit. -/
-def CircuitG.mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) : CircuitG W p :=
-  { algebraicConstraints := circuit.algebraicConstraints.map (·.mapVar f),
-    busInteractions := circuit.busInteractions.map
-      (fun bi => { busId := bi.busId,
-                   multiplicity := bi.multiplicity.mapVar f,
-                   payload := bi.payload.map (·.mapVar f) }) }
-
 /-- The `Variable` a powdr variable denotes: its powdr ID is present. -/
-def PowdrVariable.toVariable (v : PowdrVariable) : Variable :=
+def InputVariable.toVariable (v : InputVariable) : Variable :=
   { name := v.name, powdrId? := some v.id }
 
 -- ANCHOR: toVariableCircuit
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
-def CircuitG.toVariableCircuit (circuit : CircuitG PowdrVariable p) : Circuit p :=
-  circuit.mapVar PowdrVariable.toVariable
+def InputCircuit.toCircuit (circuit : InputCircuit p) : Circuit p :=
+  circuit.mapVar InputVariable.toVariable
 -- ANCHOR_END: toVariableCircuit
 
 -- ANCHOR: sideEffects
@@ -374,8 +380,8 @@ def CircuitG.withinDegree {V : Type} (circuit : CircuitG V p) (b : DegreeBound) 
 /-- Whether an optimizer respects a degree bound: a within-bound input always
     yields a within-bound output. -/
 def optimizerRespectsDegreeBound (b : DegreeBound)
-    (optimizer : CircuitG PowdrVariable p → Circuit p × Derivations p) : Prop :=
-  ∀ circuit : CircuitG PowdrVariable p,
+    (optimizer : InputCircuit p → Circuit p × Derivations p) : Prop :=
+  ∀ circuit : InputCircuit p,
     circuit.withinDegree b →
     (optimizer circuit).1.withinDegree b
 -- ANCHOR_END: degreeBound
@@ -383,7 +389,7 @@ def optimizerRespectsDegreeBound (b : DegreeBound)
 --------- Optimizer correctness ---------
 
 -- ANCHOR: optimizer
-abbrev Optimizer (p : ℕ) := CircuitG PowdrVariable p → Circuit p × Derivations p
+abbrev Optimizer (p : ℕ) := InputCircuit p → Circuit p × Derivations p
 -- ANCHOR_END: optimizer
 
 -- ANCHOR: isCorrect
@@ -392,11 +398,10 @@ abbrev Optimizer (p : ℕ) := CircuitG PowdrVariable p → Circuit p × Derivati
     optimizer respects the degree bound `b`. -/
 def Optimizer.isCorrect (optimizer : Optimizer p)
     (busSemantics : BusSemantics p) (b : DegreeBound) : Prop :=
-  (∀ powdrCircuit : CircuitG PowdrVariable p,
-    let originalCircuit := powdrCircuit.toVariableCircuit
-    let (optimizedCircuit, derivations) := optimizer powdrCircuit
-    (optimizedCircuit.isSoundReplacementOf originalCircuit busSemantics) ∧
-    (optimizedCircuit.isCompleteReplacementOf originalCircuit
+  (∀ inputCircuit : InputCircuit p,
+    let (optimizedCircuit, derivations) := optimizer inputCircuit
+    (optimizedCircuit.isSoundReplacementOf inputCircuit.toCircuit busSemantics) ∧
+    (optimizedCircuit.isCompleteReplacementOf inputCircuit.toCircuit
       busSemantics derivations))
   ∧ optimizerRespectsDegreeBound b optimizer
 -- ANCHOR_END: isCorrect

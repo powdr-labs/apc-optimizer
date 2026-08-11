@@ -14,12 +14,12 @@ instance : Ord Variable := ⟨fun a b =>
 
 instance : Hashable Variable := ⟨fun a => mixHash (hash a.name) (hash a.powdrId?)⟩
 
-instance : Hashable PowdrVariable := ⟨fun a => mixHash (hash a.name) (hash a.id)⟩
+instance : Hashable InputVariable := ⟨fun a => mixHash (hash a.name) (hash a.id)⟩
 
 /-- Parse powdr's `<name>@<id>` variable notation. A name without a numeric id fails loudly: powdr
     exports every column with its id (and so does `JsonSerializer`, for the columns passes mint), so
     an id-less name means the input is not what the optimizer's input type describes. -/
-def PowdrVariable.ofPowdrName (raw : String) : Except String PowdrVariable :=
+def PowdrVariable.ofPowdrName (raw : String) : Except String InputVariable :=
   match raw.splitOn "@" with
   | [base, id] =>
       match id.toNat? with
@@ -36,4 +36,4 @@ instance : LawfulBEq Variable where
   rfl := by simp [BEq.beq]
   eq_of_beq h := by simpa [BEq.beq] using h
 
-instance : BEq PowdrVariable := ⟨fun a b => decide (a = b)⟩
+instance : BEq InputVariable := ⟨fun a b => decide (a = b)⟩

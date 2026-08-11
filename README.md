@@ -20,7 +20,7 @@ apc-optimizer, it should be sufficient to review:
 None. In particular, that all variables of the input circuit carry a powdr ID — without which the
 completeness statement would be meaningless — is not assumed but read off the optimizer's input
 type: an `Optimizer` takes a `CircuitG PowdrVariable`, whose variables all have an ID, and its
-output is compared against the `Circuit` that input denotes (`CircuitG.toVariableCircuit`).
+output is compared against the `Circuit` that input denotes (`InputCircuit.toCircuit`).
 
 ### Assumptions (OpenVM)
 

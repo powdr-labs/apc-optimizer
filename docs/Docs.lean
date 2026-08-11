@@ -345,8 +345,8 @@ def CircuitG.withinDegree {V : Type} (circuit : CircuitG V p) (b : DegreeBound) 
 /-- Whether an optimizer respects a degree bound: a within-bound input always
     yields a within-bound output. -/
 def optimizerRespectsDegreeBound (b : DegreeBound)
-    (optimizer : CircuitG PowdrVariable p → Circuit p × Derivations p) : Prop :=
-  ∀ circuit : CircuitG PowdrVariable p,
+    (optimizer : InputCircuit p → Circuit p × Derivations p) : Prop :=
+  ∀ circuit : InputCircuit p,
     circuit.withinDegree b →
     (optimizer circuit).1.withinDegree b
 ```
@@ -356,7 +356,7 @@ def optimizerRespectsDegreeBound (b : DegreeBound)
 Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit powdr exported to a new circuit and a list of derivations. Its input being a {lean}`CircuitG PowdrVariable` is what records that every variable it is given has a powdr ID: we do not assume this, we read it off the input type.
 
 ```anchor optimizer
-abbrev Optimizer (p : ℕ) := CircuitG PowdrVariable p → Circuit p × Derivations p
+abbrev Optimizer (p : ℕ) := InputCircuit p → Circuit p × Derivations p
 ```
 
 The circuit the output is compared against is the one the input denotes, with each variable turned into a {name}`Variable` carrying its ID:
@@ -364,7 +364,7 @@ The circuit the output is compared against is the one the input denotes, with ea
 ```anchor toVariableCircuit
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
-def CircuitG.toVariableCircuit (circuit : CircuitG PowdrVariable p) : Circuit p :=
+def CircuitG.toCircuit (circuit : InputCircuit p) : Circuit p :=
   circuit.mapVar PowdrVariable.toVariable
 ```
 
@@ -376,9 +376,9 @@ An optimizer is correct if, for every input circuit, replacing it with the optim
     optimizer respects the degree bound `b`. -/
 def Optimizer.isCorrect (optimizer : Optimizer p)
     (busSemantics : BusSemantics p) (b : DegreeBound) : Prop :=
-  (∀ powdrCircuit : CircuitG PowdrVariable p,
-    let originalCircuit := powdrCircuit.toVariableCircuit
-    let (optimizedCircuit, derivations) := optimizer powdrCircuit
+  (∀ inputCircuit : InputCircuit p,
+    let originalCircuit := inputCircuit.toCircuit
+    let (optimizedCircuit, derivations) := optimizer inputCircuit
     (optimizedCircuit.isSoundReplacementOf originalCircuit busSemantics) ∧
     (optimizedCircuit.isCompleteReplacementOf originalCircuit
       busSemantics derivations))
