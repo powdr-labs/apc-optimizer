@@ -15,10 +15,16 @@ simpleOptimizer_maintainsCorrectness
 ApcOptimizer.OpenVM.openVmOptimizer_maintainsCorrectness
 ApcOptimizer.SP1.sp1Optimizer_maintainsCorrectness
 
-# Theorems the closure cannot see are used, so they must be listed by hand. The only class so far:
+# Theorems the closure cannot see are used, so they must be listed by hand. Two classes so far:
 # a `rfl`-lemma named in a `simp only`/`rw` list whose rewrite step collapses to `Eq.refl`, leaving
-# no reference to the lemma in the resulting proof term.
+# no reference to the lemma in the resulting proof term; and lemmas reached only from the CLI, which
+# is not a correctness root.
 [ignore]
+# The layout probe (`profile --clone-probe`): `denseClonePass` is built from these, and the pass is
+# reached from `Main.lean` rather than from the correctness theorems. Deliberately not wired into
+# `cleanupPasses` -- cloning inside the loop measures as neutral-to-harmful (see `CloneCS.lean`).
+ApcOptimizer.Dense.DenseExpr.clone_eq
+ApcOptimizer.Dense.DenseConstraintSystem.clone_eq
 # `(Task.spawn f).get = f ()`, used in `denseCollectForcedV_eq_serial` (Proofs/DomainBatch.lean);
 # `Task.get` is opaque, so the `simp only` needs the lemma even though it rewrites by `rfl`.
 ApcOptimizer.Dense.get_spawn

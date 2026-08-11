@@ -1,6 +1,7 @@
 import ApcOptimizer.Implementation.JsonParser
 import ApcOptimizer.Optimizer
 import ApcOptimizer.Implementation.Optimizer
+import ApcOptimizer.Implementation.OptimizerPasses.Proofs.CloneCS
 import ApcOptimizer.Utils.Size
 import ApcOptimizer.Utils.Dsl
 import ApcOptimizer.OpenVmSemantics
@@ -338,9 +339,19 @@ def denseProfileLoop {p : ℕ} (passes : List (String × DenseVerifiedPassW p))
     run, nor drift out of sync. It mirrors the pipeline's dense structure: encode once at entry, step
     the dense prelude list once, iterate the dense `cleanupPasses` list to its fixpoint, step the
     dense coda list once, decode once at output. Encode and decode are reported on their own lines and
-    never charged to any pass. -/
+    never charged to any pass.
+
+    `cloneProbe` inserts a `denseClonePass` -- a proven no-op -- at the head of the cleanup cycle,
+    so any time it moves is attributable to allocation alone: it tests whether the dense system's
+    heap layout degrades as the passes strip it down.
+
+    Caveat, measured: this loop stepping allocates and prints per pass, which perturbs allocation
+    enough to hide *entry*-boundary layout effects (cloning the input circuit here reads as 0 ms
+    while the same clone inside `optimizerWithBusFacts` is worth ~18% of `run`). Probe layout
+    effects at the pipeline entry by A/B-ing `run`, not here. -/
 def profileRun {p : ℕ} (b : DegreeBound) (fileName : String) (cs : Circuit p)
-    (bs : BusSemantics p) (facts : BusFacts p bs) (verbose : Bool := false) : IO Unit := do
+    (bs : BusSemantics p) (facts : BusFacts p bs) (verbose : Bool := false)
+    (cloneProbe : Bool := false) : IO Unit := do
   let t0 ← IO.monoMsNow
   -- Encode once at the pipeline entry (reported on its own line, never charged to a pass).
   let tEnc0 ← IO.monoMsNow
@@ -356,8 +367,10 @@ def profileRun {p : ℕ} (b : DegreeBound) (fileName : String) (cs : Circuit p)
   let (st0, acc) ← denseRunCycleTimed (preludePasses (p := p) b) st0 bs facts ∅
   -- Step the dense cleanup fixpoint (the SAME `cleanupPasses` list the optimizer runs), threading
   -- the registry / dense system / coverage from pass to pass and iteration to iteration.
+  let cleanup := if cloneProbe then ("clone", denseClonePass) :: cleanupPasses (p := p) b
+                 else cleanupPasses (p := p) b
   let (stF, acc, iters) ←
-    denseProfileLoop (cleanupPasses (p := p) b) st0 bs facts acc 0 st0.2.1.sizeKey verbose
+    denseProfileLoop cleanup st0 bs facts acc 0 st0.2.1.sizeKey verbose
   -- Coda (dense, run once).
   let (stF, acc) ← denseRunCycleTimed (codaPasses (p := p) b) stF bs facts acc
   -- Decode once at the pipeline output (reported on its own line).
@@ -374,20 +387,23 @@ def profileRun {p : ℕ} (b : DegreeBound) (fileName : String) (cs : Circuit p)
     IO.println s!"  {name}: {ms} ms"
 
 /-- `profile [vm] <file>`: per-pass optimizer timing for the selected VM. -/
-def cmdProfile (vm fileName : String) (verbose : Bool := false) : IO Unit := do
+def cmdProfile (vm fileName : String) (verbose : Bool := false)
+    (cloneProbe : Bool := false) : IO Unit := do
   if isSp1 vm then
     let (cs, busMap) ← parseFileWith parseSp1 fileName
     profileRun ApcOptimizer.SP1.defaultDegreeBound fileName cs
       (ApcOptimizer.SP1.sp1BusSemantics ApcOptimizer.SP1.koalaBear busMap)
-      (ApcOptimizer.SP1.sp1Facts ApcOptimizer.SP1.koalaBear busMap) verbose
+      (ApcOptimizer.SP1.sp1Facts ApcOptimizer.SP1.koalaBear busMap) verbose cloneProbe
   else
     let (cs, busMap) ← parseFileWith parseOpenVm fileName
     profileRun defaultDegreeBound fileName cs
-      (openVmBusSemantics babyBear busMap) (openVmFacts babyBear busMap) verbose
+      (openVmBusSemantics babyBear busMap) (openVmFacts babyBear busMap) verbose cloneProbe
 
 def usage : String :=
   "usage: apc-optimizer run [vm] <file.json[.gz]>\n" ++
   "       apc-optimizer profile [vm] <file.json[.gz]>  (per-pass optimizer timing)\n" ++
+  "       apc-optimizer profile [vm] --clone-probe <file.json[.gz]>  (same, with a proven no-op\n" ++
+  "                                clone in the cleanup cycle: tests heap-layout sensitivity)\n" ++
   "       apc-optimizer compare [vm] <unopt.json[.gz]> <opt.json[.gz]>\n" ++
   "       apc-optimizer report  [vm] <unopt.json[.gz]> <opt.json[.gz]>  (JSON: stats + render x3)\n" ++
   "       apc-optimizer opt-export [vm] <in.json[.gz]> <out.json>  (optimize and write the result\n" ++
@@ -410,6 +426,7 @@ def main (args : List String) : IO Unit := do
   | ["run", fileName] => cmdRun vm fileName
   | ["profile", fileName] => cmdProfile vm fileName
   | ["profile", "-v", fileName] => cmdProfile vm fileName (verbose := true)
+  | ["profile", "--clone-probe", fileName] => cmdProfile vm fileName (cloneProbe := true)
   | ["report", unoptFile, optFile] => cmdReport vm unoptFile optFile
   | ["opt-export", inFile, outFile] => cmdOptExport vm inFile outFile
   | ["compare", unoptFile, optFile] => cmdCompare vm unoptFile optFile
