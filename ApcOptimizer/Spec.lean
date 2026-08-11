@@ -338,9 +338,7 @@ def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
 
 -- ANCHOR: isCompleteReplacementOf
 /-- Whether an optimized circuit is a complete replacement for an original
-    circuit. `Optimizer.isCorrect` demands this only of circuits exported by
-    powdr, whose variables all carry a powdr ID — the ones witness generation
-    reuses from the input assignment. -/
+    circuit. -/
 def Circuit.isCompleteReplacementOf
     (optimizedCircuit originalCircuit : Circuit p)
     (busSemantics : BusSemantics p) (ds : Derivations p) : Prop :=
