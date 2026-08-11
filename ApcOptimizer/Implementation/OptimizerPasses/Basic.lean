@@ -169,7 +169,7 @@ theorem OutputCircuit.mem_vars {cs : OutputCircuit p} {x : OutputVariable} :
     x ∈ cs.vars ↔
       (∃ c ∈ cs.algebraicConstraints, x ∈ c.vars) ∨
       (∃ bi ∈ cs.busInteractions, x ∈ bi.multiplicity.vars ∨ ∃ e ∈ bi.payload, x ∈ e.vars) := by
-  simp only [CircuitG.vars, List.mem_append, List.mem_flatMap]
+  simp only [Circuit.vars, List.mem_append, List.mem_flatMap]
 
 theorem OutputCircuit.mem_vars_of_constraint {cs : OutputCircuit p} {c : OutputExpression p}
     {x : OutputVariable} (hc : c ∈ cs.algebraicConstraints) (hx : x ∈ c.vars) : x ∈ cs.vars :=
@@ -187,9 +187,9 @@ theorem OutputCircuit.mem_vars_of_payload {cs : OutputCircuit p}
 
 /-! ## Decidable degree-bound check
 
-A `Bool` twin of the spec's `CircuitG.withinDegree` for the degree guard to branch on. -/
+A `Bool` twin of the spec's `Circuit.withinDegree` for the degree guard to branch on. -/
 
-/-- Decidable twin of `CircuitG.withinDegree`. -/
+/-- Decidable twin of `Circuit.withinDegree`. -/
 def OutputCircuit.withinDegreeB (s : OutputCircuit p) (b : DegreeBound) : Bool :=
   s.algebraicConstraints.all (fun c => c.degree ≤ b.identities) &&
   s.busInteractions.all (fun bi =>
@@ -198,7 +198,7 @@ def OutputCircuit.withinDegreeB (s : OutputCircuit p) (b : DegreeBound) : Bool :
 
 theorem OutputCircuit.withinDegreeB_iff (s : OutputCircuit p) (b : DegreeBound) :
     s.withinDegreeB b = true ↔ s.withinDegree b := by
-  unfold OutputCircuit.withinDegreeB CircuitG.withinDegree
+  unfold OutputCircuit.withinDegreeB Circuit.withinDegree
   rw [Bool.and_eq_true, List.all_eq_true, List.all_eq_true]
   constructor
   · rintro ⟨hc, hb⟩

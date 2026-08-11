@@ -181,7 +181,7 @@ def Derivations.safeMethodIdx (methods : Std.HashMap OutputVariable (Computation
 
 /-- Keep one structurally safe derivation for each no-ID output variable.
 
-    Both `CircuitG.vars` lists count variable *occurrences*, so every scan here is indexed:
+    Both `Circuit.vars` lists count variable *occurrences*, so every scan here is indexed:
     `methodFor` walks all of `ds` on each lookup, and the input-variable test would rescan
     `inputVars` per referenced variable. `forOutput_eq` is the index-free reading. -/
 def Derivations.forOutput (ds : Derivations p) (inputVars outputVars : List OutputVariable) :
@@ -358,7 +358,7 @@ theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List OutputV
 
 /-! ## Circuits exported by powdr
 
-`Optimizer.isCorrect` feeds the optimizer `CircuitG.toCircuit` of a powdr circuit; the
+`Optimizer.isCorrect` feeds the optimizer `Circuit.toCircuit` of a powdr circuit; the
 completeness proof below needs that all its variables carry a powdr ID. -/
 
 theorem Expression.vars_mapVar {V W : Type} (f : V → W) (e : Expression V p) :
@@ -369,15 +369,15 @@ theorem Expression.vars_mapVar {V W : Type} (f : V → W) (e : Expression V p) :
   | add e1 e2 ih1 ih2 => simp [mapVar, vars, ih1, ih2]
   | mul e1 e2 ih1 ih2 => simp [mapVar, vars, ih1, ih2]
 
-theorem CircuitG.vars_mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) :
+theorem Circuit.vars_mapVar {V W : Type} (f : V → W) (circuit : Circuit V p) :
     (circuit.mapVar f).vars = circuit.vars.map f := by
-  simp [CircuitG.mapVar, CircuitG.vars, List.flatMap_map, List.map_flatMap,
+  simp [Circuit.mapVar, Circuit.vars, List.flatMap_map, List.map_flatMap,
     Expression.vars_mapVar]
 
-theorem CircuitG.powdrId?_isSome_of_mem_vars (circuit : InputCircuit p) :
+theorem Circuit.powdrId?_isSome_of_mem_vars (circuit : InputCircuit p) :
     ∀ v ∈ circuit.toCircuit.vars, v.powdrId?.isSome := by
   intro v hv
-  rw [InputCircuit.toCircuit, CircuitG.vars_mapVar, List.mem_map] at hv
+  rw [InputCircuit.toCircuit, Circuit.vars_mapVar, List.mem_map] at hv
   obtain ⟨u, -, rfl⟩ := hv
   rfl
 
@@ -389,9 +389,9 @@ theorem Expression.degree_mapVar {V W : Type} (f : V → W) (e : Expression V p)
   | add e1 e2 ih1 ih2 => simp [mapVar, degree, ih1, ih2]
   | mul e1 e2 ih1 ih2 => simp [mapVar, degree, ih1, ih2]
 
-theorem CircuitG.withinDegree_mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p)
+theorem Circuit.withinDegree_mapVar {V W : Type} (f : V → W) (circuit : Circuit V p)
     (b : DegreeBound) : (circuit.mapVar f).withinDegree b ↔ circuit.withinDegree b := by
-  simp [CircuitG.withinDegree, CircuitG.mapVar, Expression.degree_mapVar]
+  simp [Circuit.withinDegree, Circuit.mapVar, Expression.degree_mapVar]
 
 /-- The optimizer on a converted circuit is correct: its output soundly replaces the input and
     completely replaces the input's real-trace executions (`witgen` on any admissible input trace
@@ -463,7 +463,7 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound)
       (optimizerWithBusFacts b facts inputCircuit).1.isCompleteReplacementOf
         inputCircuit.toCircuit bs (optimizerWithBusFacts b facts inputCircuit).2 :=
   optimizerOnCircuit_correct b facts inputCircuit.toCircuit
-    (CircuitG.powdrId?_isSome_of_mem_vars inputCircuit)
+    (Circuit.powdrId?_isSome_of_mem_vars inputCircuit)
 
 /-- The fact-aware optimizer never pushes a within-bound circuit past the zkVM's degree
     bound (every pass is degree-guarded). -/
@@ -472,4 +472,4 @@ theorem optimizerWithBusFacts_respectsDegree {bs : BusSemantics p} (b : DegreeBo
     (h : inputCircuit.withinDegree b) :
     (optimizerWithBusFacts b facts inputCircuit).1.withinDegree b :=
   pipeline_respectsDeg b inputCircuit.toCircuit bs facts
-    ((CircuitG.withinDegree_mapVar _ inputCircuit b).mpr h)
+    ((Circuit.withinDegree_mapVar _ inputCircuit b).mpr h)

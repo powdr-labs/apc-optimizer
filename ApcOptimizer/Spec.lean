@@ -182,7 +182,7 @@ abbrev BusState (p : ℕ) := BusMessage p → ZMod p
 --------- OutputCircuit ---------
 
 /-- A circuit representing a single zkVM chip. -/
-structure CircuitG (V : Type) (p : ℕ) where
+structure Circuit (V : Type) (p : ℕ) where
   /-- The list of algebraic constraints. For an assignment to be valid, all
       of them must evaluate to zero. -/
   algebraicConstraints : List (Expression V p)
@@ -191,7 +191,7 @@ structure CircuitG (V : Type) (p : ℕ) where
   busInteractions : List (BusInteraction (Expression V p))
 
 /-- Map a circuit between variable types -/
-def CircuitG.mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) : CircuitG W p :=
+def Circuit.mapVar {V W : Type} (f : V → W) (circuit : Circuit V p) : Circuit W p :=
   { algebraicConstraints := circuit.algebraicConstraints.map (·.mapVar f),
     busInteractions := circuit.busInteractions.map
       (fun bi => { busId := bi.busId,
@@ -199,13 +199,13 @@ def CircuitG.mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) : Circui
                    payload := bi.payload.map (·.mapVar f) }) }
 
 /-- A circuit over circuit variables. -/
-abbrev OutputCircuit (p : ℕ) := CircuitG OutputVariable p
+abbrev OutputCircuit (p : ℕ) := Circuit OutputVariable p
 
 /-- A circuit over powdr variables. -/
-abbrev InputCircuit (p : ℕ) := CircuitG InputVariable p
+abbrev InputCircuit (p : ℕ) := Circuit InputVariable p
 
 /-- The variables occurring anywhere in a circuit. -/
-def CircuitG.vars {V : Type} (circuit : CircuitG V p) : List V :=
+def Circuit.vars {V : Type} (circuit : Circuit V p) : List V :=
   circuit.algebraicConstraints.flatMap Expression.vars ++
     circuit.busInteractions.flatMap
       (fun bi => bi.multiplicity.vars ++ bi.payload.flatMap Expression.vars)
@@ -375,7 +375,7 @@ abbrev Optimizer (p : ℕ) := InputCircuit p → OutputCircuit p × Derivations 
 
 -- ANCHOR: degreeBound
 /-- Whether a circuit stays within a degree bound. -/
-def CircuitG.withinDegree {V : Type} (circuit : CircuitG V p) (b : DegreeBound) : Prop :=
+def Circuit.withinDegree {V : Type} (circuit : Circuit V p) (b : DegreeBound) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.degree ≤ b.identities) ∧
   (∀ bi ∈ circuit.busInteractions,
     bi.multiplicity.degree ≤ b.busInteractions ∧

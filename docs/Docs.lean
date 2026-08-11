@@ -125,9 +125,9 @@ As we will see below, we will assume that all circuits _including the circuit to
 
 # Circuits
 
-A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions, over the same variable type as its expressions ({name}`OutputCircuit` abbreviates {lean}`CircuitG OutputVariable`):
+A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions, over the same variable type as its expressions ({name}`OutputCircuit` abbreviates {lean}`Circuit OutputVariable`):
 
-{docstring CircuitG}
+{docstring Circuit}
 
 A circuit is satisfied under an assignment when all algebraic constraints evaluate to zero and every bus interaction message is accepted by the bus semantics:
 
@@ -336,7 +336,7 @@ Given a zkVM-specific degree bound and an optimizer, we state what it means for 
 
 ```anchor degreeBound
 /-- Whether a circuit stays within a degree bound. -/
-def CircuitG.withinDegree {V : Type} (circuit : CircuitG V p) (b : DegreeBound) : Prop :=
+def Circuit.withinDegree {V : Type} (circuit : Circuit V p) (b : DegreeBound) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.degree ≤ b.identities) ∧
   (∀ bi ∈ circuit.busInteractions,
     bi.multiplicity.degree ≤ b.busInteractions ∧
@@ -353,7 +353,7 @@ def optimizerRespectsDegreeBound (b : DegreeBound)
 
 # Optimizer
 
-Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit powdr exported to a new circuit and a list of derivations. Its input being a {lean}`CircuitG InputVariable` is what records that every variable it is given has a powdr ID: we do not assume this, we read it off the input type.
+Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit powdr exported to a new circuit and a list of derivations. Its input being a {lean}`Circuit InputVariable` is what records that every variable it is given has a powdr ID: we do not assume this, we read it off the input type.
 
 ```anchor optimizer
 abbrev Optimizer (p : ℕ) := InputCircuit p → OutputCircuit p × Derivations p
