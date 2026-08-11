@@ -364,7 +364,7 @@ The circuit the output is compared against is the one the input denotes, with ea
 ```anchor toVariableCircuit
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
-def CircuitG.toCircuit (circuit : InputCircuit p) : Circuit p :=
+def InputCircuit.toCircuit (circuit : InputCircuit p) : Circuit p :=
   circuit.mapVar InputVariable.toVariable
 ```
 
@@ -377,10 +377,9 @@ An optimizer is correct if, for every input circuit, replacing it with the optim
 def Optimizer.isCorrect (optimizer : Optimizer p)
     (busSemantics : BusSemantics p) (b : DegreeBound) : Prop :=
   (∀ inputCircuit : InputCircuit p,
-    let originalCircuit := inputCircuit.toCircuit
     let (optimizedCircuit, derivations) := optimizer inputCircuit
-    (optimizedCircuit.isSoundReplacementOf originalCircuit busSemantics) ∧
-    (optimizedCircuit.isCompleteReplacementOf originalCircuit
+    (optimizedCircuit.isSoundReplacementOf inputCircuit.toCircuit busSemantics) ∧
+    (optimizedCircuit.isCompleteReplacementOf inputCircuit.toCircuit
       busSemantics derivations))
   ∧ optimizerRespectsDegreeBound b optimizer
 ```
