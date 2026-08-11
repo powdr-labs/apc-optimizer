@@ -168,7 +168,7 @@ theorem pipeline_respectsDeg (b : DegreeBound) : RespectsDeg b (pipeline (p := p
 def Derivations.safeMethod (ds : Derivations p) (inputVars : List OutputVariable) (v : OutputVariable) :
     ComputationMethod p :=
   match ds.methodFor v with
-  | some cm => if ∀ x ∈ cm.vars, x.toVariable ∈ inputVars then cm else .const (zmodZeroP _)
+  | some cm => if ∀ x ∈ cm.vars, x.toOutputVariable ∈ inputVars then cm else .const (zmodZeroP _)
   | none => .const (zmodZeroP _)
 
 /-- `Derivations.safeMethod` with both of its scans served from indexes: `methods` is `ds` keyed by
@@ -176,7 +176,7 @@ def Derivations.safeMethod (ds : Derivations p) (inputVars : List OutputVariable
 def Derivations.safeMethodIdx (methods : Std.HashMap OutputVariable (ComputationMethod p))
     (inputs : Std.HashSet OutputVariable) (v : OutputVariable) : ComputationMethod p :=
   match methods[v]? with
-  | some cm => if cm.vars.all (fun x => inputs.contains x.toVariable) then cm else .const (zmodZeroP _)
+  | some cm => if cm.vars.all (fun x => inputs.contains x.toOutputVariable) then cm else .const (zmodZeroP _)
   | none => .const (zmodZeroP _)
 
 /-- Keep one structurally safe derivation for each no-ID output variable.
@@ -338,14 +338,14 @@ theorem Derivations.forOutput_methodFor {ds : Derivations p} {inputVars outputVa
   simp [hv, hpw]
 
 theorem Derivations.safeMethod_vars (ds : Derivations p) (inputVars : List OutputVariable) (v : OutputVariable) :
-    ∀ x ∈ (ds.safeMethod inputVars v).vars, x.toVariable ∈ inputVars := by
+    ∀ x ∈ (ds.safeMethod inputVars v).vars, x.toOutputVariable ∈ inputVars := by
   cases hm : ds.methodFor v with
   | none =>
       intro x hx
       simp [Derivations.safeMethod, hm, ComputationMethod.vars] at hx
   | some cm =>
       simp only [Derivations.safeMethod, hm]
-      by_cases hsafe : ∀ x ∈ cm.vars, x.toVariable ∈ inputVars
+      by_cases hsafe : ∀ x ∈ cm.vars, x.toOutputVariable ∈ inputVars
       · rw [if_pos hsafe]
         exact hsafe
       · rw [if_neg hsafe]
@@ -353,7 +353,7 @@ theorem Derivations.safeMethod_vars (ds : Derivations p) (inputVars : List Outpu
 
 theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List OutputVariable}
     {v : OutputVariable} {cm : ComputationMethod p} (hm : ds.methodFor v = some cm)
-    (hvars : ∀ x ∈ cm.vars, x.toVariable ∈ inputVars) :
+    (hvars : ∀ x ∈ cm.vars, x.toOutputVariable ∈ inputVars) :
     ds.safeMethod inputVars v = cm := by
   simp only [Derivations.safeMethod, hm]
   rw [if_pos hvars]
@@ -409,7 +409,7 @@ theorem Circuit.mapVar_map {V W X : Type} (f : V → W) (g : W → X) (circuit :
   simp [Circuit.mapVar, Expression.mapVar_map, List.map_map, Function.comp]
 
 private theorem inputExpr_roundtrip (e : InputExpression p) :
-    (e.mapVar InputVariable.toVariable).mapVar OutputVariable.toInput = e := by
+    (e.mapVar InputVariable.toOutputVariable).mapVar OutputVariable.toInput = e := by
   induction e with
   | const n => rfl
   | var x => simp [Expression.mapVar, InputVariable.toVariable_toInput]
@@ -418,9 +418,9 @@ private theorem inputExpr_roundtrip (e : InputExpression p) :
 
 private theorem inputBus_roundtrip (bi : BusInteraction (InputExpression p)) :
     { busId := bi.busId,
-      multiplicity := (bi.multiplicity.mapVar InputVariable.toVariable).mapVar OutputVariable.toInput,
+      multiplicity := (bi.multiplicity.mapVar InputVariable.toOutputVariable).mapVar OutputVariable.toInput,
       payload := bi.payload.map
-        (fun x => (x.mapVar InputVariable.toVariable).mapVar OutputVariable.toInput) } = bi := by
+        (fun x => (x.mapVar InputVariable.toOutputVariable).mapVar OutputVariable.toInput) } = bi := by
   cases bi
   simp [inputExpr_roundtrip]
 
@@ -433,7 +433,7 @@ theorem InputCircuit.toOutputCircuit_toInput (circuit : InputCircuit p) :
       · calc
           List.map
               ((fun x => Expression.mapVar OutputVariable.toInput x) ∘
-                fun x => Expression.mapVar InputVariable.toVariable x)
+                fun x => Expression.mapVar InputVariable.toOutputVariable x)
               ac
               = List.map id ac := by
                   apply List.map_congr_left
@@ -448,19 +448,19 @@ theorem InputCircuit.toOutputCircuit_toInput (circuit : InputCircuit p) :
                     payload := List.map (fun x => Expression.mapVar OutputVariable.toInput x) bi'.payload }) ∘
                 fun bi' : BusInteraction (InputExpression p) =>
                 { busId := bi'.busId,
-                  multiplicity := Expression.mapVar InputVariable.toVariable bi'.multiplicity,
-                  payload := List.map (fun x => Expression.mapVar InputVariable.toVariable x) bi'.payload })
+                  multiplicity := Expression.mapVar InputVariable.toOutputVariable bi'.multiplicity,
+                  payload := List.map (fun x => Expression.mapVar InputVariable.toOutputVariable x) bi'.payload })
               bi
               = List.map (fun bi' : BusInteraction (InputExpression p) =>
                   { busId := bi'.busId,
-                    multiplicity := (bi'.multiplicity.mapVar InputVariable.toVariable).mapVar
+                    multiplicity := (bi'.multiplicity.mapVar InputVariable.toOutputVariable).mapVar
                       OutputVariable.toInput,
                     payload := bi'.payload.map
-                      (fun x => (x.mapVar InputVariable.toVariable).mapVar OutputVariable.toInput) }) bi := by
+                      (fun x => (x.mapVar InputVariable.toOutputVariable).mapVar OutputVariable.toInput) }) bi := by
                   apply List.map_congr_left
                   intro bi' hbi
                   simp [Function.comp]
-          _ 
+          _
               = List.map id bi := by
                   apply List.map_congr_left
                   intro bi' hbi
@@ -587,7 +587,7 @@ theorem optimizerOnCircuit_correct {bs : BusSemantics p} (b : DegreeBound) (fact
     | none =>
         exact ⟨(pipeline b cs bs facts).derivs.safeMethod cs.vars v,
           Derivations.forOutput_methodFor hv hpw,
-          fun x hx => List.mem_map.mpr ⟨x.toVariable, Derivations.safeMethod_vars _ _ _ x hx,
+          fun x hx => List.mem_map.mpr ⟨x.toOutputVariable, Derivations.safeMethod_vars _ _ _ x hx,
             by simp [InputVariable.toVariable_toInput]⟩⟩
   refine ⟨?_, ?_, ?_⟩
   · -- `forOutput` records only no-ID variables occurring in the output.
@@ -622,7 +622,7 @@ theorem optimizerOnCircuit_correct {bs : BusSemantics p} (b : DegreeBound) (fact
           _ = env' v := (hA v (by simp [hpw])).symm
     | none =>
         obtain ⟨cm, hm, hxinput, heq⟩ := hrec v hv hpw
-        have hxinput' : ∀ x ∈ cm.vars, x.toVariable ∈ cs.vars := by
+        have hxinput' : ∀ x ∈ cm.vars, x.toOutputVariable ∈ cs.vars := by
           intro x hx
           rcases List.mem_map.mp (hxinput x hx) with ⟨y, hy, hxy⟩
           rw [← hxy]
@@ -638,10 +638,10 @@ theorem optimizerOnCircuit_correct {bs : BusSemantics p} (b : DegreeBound) (fact
           f v = ((pipeline b cs bs facts).derivs.forOutput cs.vars
               (pipeline b cs bs facts).out.vars).witgen hcover env v hv := hf v hv
           _ = cm.eval env := Derivations.witgen_methodFor hcover env hv hpw hm'
-          _ = cm.eval (fun x => env' x.toVariable) := by
+          _ = cm.eval (fun x => env' x.toOutputVariable) := by
                 apply ComputationMethod.eval_congr
                 intro x hx
-                exact (hA x.toVariable (by simp [InputVariable.toVariable])).symm
+                exact (hA x.toOutputVariable (by simp [InputVariable.toOutputVariable])).symm
           _ = env' v := heq
   have hse' : (cs.mapVar OutputVariable.toInput).sideEffects bs env =
       (pipeline b cs bs facts).out.sideEffects bs env' := by

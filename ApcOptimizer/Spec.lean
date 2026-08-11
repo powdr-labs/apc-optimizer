@@ -214,14 +214,14 @@ def Circuit.vars {V : Type} (circuit : Circuit V p) : List V :=
 --------- Circuits exported by powdr ---------
 
 /-- The `OutputVariable` a powdr variable denotes: its powdr ID is present. -/
-def InputVariable.toVariable (v : InputVariable) : OutputVariable :=
+def InputVariable.toOutputVariable (v : InputVariable) : OutputVariable :=
   { name := v.name, powdrId? := some v.id }
 
 -- ANCHOR: toVariableCircuit
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
 def InputCircuit.toOutputCircuit (circuit : InputCircuit p) : OutputCircuit p :=
-  circuit.mapVar InputVariable.toVariable
+  circuit.mapVar InputVariable.toOutputVariable
 -- ANCHOR_END: toVariableCircuit
 
 -- ANCHOR: sideEffects

@@ -32,17 +32,17 @@ def OutputVariable.toInput (v : OutputVariable) : InputVariable :=
   { name := v.name, id := v.powdrId?.get! }
 
 theorem OutputVariable.toInput_toVariable {v : OutputVariable} (h : v.powdrId?.isSome) :
-    v.toInput.toVariable = v := by
+    v.toInput.toOutputVariable = v := by
   cases v with
   | mk name powdrId =>
       cases powdrId with
       | none => simp at h
-      | some id => simp [OutputVariable.toInput, InputVariable.toVariable]
+      | some id => simp [OutputVariable.toInput, InputVariable.toOutputVariable]
 
 theorem InputVariable.toVariable_toInput (v : InputVariable) :
-    v.toVariable.toInput = v := by
+    v.toOutputVariable.toInput = v := by
   cases v
-  simp [InputVariable.toVariable, OutputVariable.toInput]
+  simp [InputVariable.toOutputVariable, OutputVariable.toInput]
 
 /-- Pinned to `OutputVariable`'s `DecidableEq`, so `LawfulBEq` below holds by `decide`. -/
 instance : BEq OutputVariable := ⟨fun a b => decide (a = b)⟩

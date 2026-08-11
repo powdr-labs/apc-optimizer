@@ -365,7 +365,7 @@ The circuit the output is compared against is the one the input denotes, with ea
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
 def InputCircuit.toOutputCircuit (circuit : InputCircuit p) : OutputCircuit p :=
-  circuit.mapVar InputVariable.toVariable
+  circuit.mapVar InputVariable.toOutputVariable
 ```
 
 An optimizer is correct if, for every input circuit, replacing it with the optimized circuit is both sound and complete, and the optimizer respects the degree bound.

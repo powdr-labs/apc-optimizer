@@ -311,7 +311,7 @@ theorem VarRegistry.decodeCS_guaranteesInvariants (reg : VarRegistry) {d : Dense
 
 private theorem decodeExprEval_toInput (reg : VarRegistry) (e : DenseExpr p) (E : OutputVariable → ZMod p)
     (hinput : ∀ i ∈ e.vars, reg.isInput i = true) :
-    ((reg.decodeExpr e).mapVar OutputVariable.toInput).eval (fun x => E x.toVariable)
+    ((reg.decodeExpr e).mapVar OutputVariable.toInput).eval (fun x => E x.toOutputVariable)
       = e.eval (fun i => E (reg.resolve i)) := by
   induction e with
   | const n => rfl
@@ -340,7 +340,7 @@ private theorem outputExprVars_map_toInput (e : OutputExpression p) :
 
 theorem VarRegistry.decodeCM_eval (reg : VarRegistry) (cm : DenseComputationMethod p)
     (E : OutputVariable → ZMod p) (hinput : ∀ i ∈ cm.vars, reg.isInput i = true) :
-    (reg.decodeCM cm).eval (fun x => E x.toVariable) = cm.eval (fun i => E (reg.resolve i)) := by
+    (reg.decodeCM cm).eval (fun x => E x.toOutputVariable) = cm.eval (fun i => E (reg.resolve i)) := by
   induction cm with
   | const c => rfl
   | quotientOrZero num den =>
@@ -755,7 +755,7 @@ theorem DensePassCorrect.lift {reg : VarRegistry} {d out : DenseConstraintSystem
     · intro v hpow; exact hpw4 v hpow
     · -- Reconstruction.
       intro inputVars hpowIn dsIn hrecIn
-      set inputVarIds := inputVars.filterMap (fun x => reg.idOf? x.toVariable) with hIVI
+      set inputVarIds := inputVars.filterMap (fun x => reg.idOf? x.toOutputVariable) with hIVI
       have hpowD : ∀ i ∈ d.occ, reg.isInput i = true → i ∈ inputVarIds := by
         intro i hi hisT
         have hvi : reg.Valid i := DenseConstraintSystem.occ_valid hcd i hi
@@ -794,8 +794,8 @@ theorem DensePassCorrect.lift {reg : VarRegistry} {d out : DenseConstraintSystem
             have hjm := hjInIds j hj
             rw [hIVI, List.mem_filterMap] at hjm
             obtain ⟨w, hw, hidof⟩ := hjm
-            have hres : reg.resolve j = w.toVariable := reg.resolve_idOf hidof
-            have hw' : w.toVariable.toInput ∈ inputVars := by
+            have hres : reg.resolve j = w.toOutputVariable := reg.resolve_idOf hidof
+            have hw' : w.toOutputVariable.toInput ∈ inputVars := by
               simpa [InputVariable.toVariable_toInput] using hw
             simpa [hres] using hw'
           · -- value: `(decodeCM dcm).eval env' = env' (resolve i)`.
@@ -814,8 +814,8 @@ theorem DensePassCorrect.lift {reg : VarRegistry} {d out : DenseConstraintSystem
           refine ⟨cm, ?_, hcmin, ?_⟩
           · rw [hMF, hdcm]; simpa using hmeth
           · -- value: `cm.eval env' = env' (resolve i)`.
-            rw [specCM_eval_congr cm (fun x => env' x.toVariable) (fun x => E x.toVariable)
-                (fun x hx => hpw4 x.toVariable (by simp [InputVariable.toVariable])),
+            rw [specCM_eval_congr cm (fun x => env' x.toOutputVariable) (fun x => E x.toOutputVariable)
+                (fun x hx => hpw4 x.toOutputVariable (by simp [InputVariable.toOutputVariable])),
               hcmeval, henv',
               reg.extendEnv_resolve denv' E hvi, hpres]
 

@@ -35,7 +35,7 @@ namespace ApcOptimizer.Serialize
 def distinctVars (cs : OutputCircuit p) (ds : Derivations p := []) : List OutputVariable :=
   let occ := cs.algebraicConstraints.flatMap Expression.vars ++
     cs.busInteractions.flatMap BusInteraction.vars ++
-    ds.flatMap (fun (v, cm) => v :: cm.vars.map InputVariable.toVariable)
+    ds.flatMap (fun (v, cm) => v :: cm.vars.map InputVariable.toOutputVariable)
   (occ.foldl (init := (∅ : Std.HashSet OutputVariable)) (·.insert ·)).toList
 
 /-- Assign each fresh (id-less) variable a unique id starting at `base`, returning the map plus the
@@ -63,7 +63,7 @@ def serializeExpr (m : Std.HashMap OutputVariable Nat) : OutputExpression p → 
 
 def serializeInputExpr (m : Std.HashMap OutputVariable Nat) : InputExpression p → Json
   | .const n => constJson n
-  | .var x => Json.str (refString m x.toVariable)
+  | .var x => Json.str (refString m x.toOutputVariable)
   | .add a b => Json.arr #[serializeInputExpr m a, Json.str "+", serializeInputExpr m b]
   | .mul a b => Json.arr #[serializeInputExpr m a, Json.str "*", serializeInputExpr m b]
 

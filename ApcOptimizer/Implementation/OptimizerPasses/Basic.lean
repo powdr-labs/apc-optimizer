@@ -72,7 +72,7 @@ def OutputCircuit.reconstructs (inputVars : List InputVariable) (cs : OutputCirc
   ∀ v ∈ cs.vars, v.powdrId? = none →
     ∃ cm, Derivations.methodFor ds v = some cm ∧
       (∀ x ∈ cm.vars, x ∈ inputVars) ∧
-      cm.eval (fun x => e x.toVariable) = e v
+      cm.eval (fun x => e x.toOutputVariable) = e v
 
 theorem OutputCircuit.implies_refl (cs : OutputCircuit p) (busSemantics : BusSemantics p) :
     cs.implies cs busSemantics :=
@@ -180,7 +180,7 @@ theorem OutputCircuit.mem_vars_of_payload {cs : OutputCircuit p}
 
 private theorem outputExprEval_toInput (e : OutputExpression p) (env : OutputVariable → ZMod p)
     (hpow : ∀ v ∈ e.vars, v.powdrId?.isSome) :
-    (e.mapVar OutputVariable.toInput).eval (fun x => env x.toVariable) = e.eval env := by
+    (e.mapVar OutputVariable.toInput).eval (fun x => env x.toOutputVariable) = e.eval env := by
   induction e with
   | const n => rfl
   | var v =>
@@ -202,18 +202,18 @@ private theorem busEval_toInput (bi : BusInteraction (OutputExpression p))
     ({ busId := bi.busId,
        multiplicity := bi.multiplicity.mapVar OutputVariable.toInput,
        payload := bi.payload.map (·.mapVar OutputVariable.toInput) } : BusInteraction (InputExpression p)).eval
-      (fun x => env x.toVariable) = bi.eval env := by
-  have hmult : (bi.multiplicity.mapVar OutputVariable.toInput).eval (fun x => env x.toVariable)
+      (fun x => env x.toOutputVariable) = bi.eval env := by
+  have hmult : (bi.multiplicity.mapVar OutputVariable.toInput).eval (fun x => env x.toOutputVariable)
       = bi.multiplicity.eval env :=
     outputExprEval_toInput bi.multiplicity env hmultIn
   have hpayEq :
-      bi.payload.map (fun e => e.mapVar OutputVariable.toInput |>.eval (fun x => env x.toVariable))
+      bi.payload.map (fun e => e.mapVar OutputVariable.toInput |>.eval (fun x => env x.toOutputVariable))
         = bi.payload.map (fun e => e.eval env) := by
     apply List.map_congr_left
     intro e he
     exact outputExprEval_toInput e env (hpayloadIn e he)
   have hpayEq' :
-      List.map ((fun e => e.eval (fun x => env x.toVariable)) ∘ fun x => x.mapVar OutputVariable.toInput)
+      List.map ((fun e => e.eval (fun x => env x.toOutputVariable)) ∘ fun x => x.mapVar OutputVariable.toInput)
         bi.payload = bi.payload.map (fun e => e.eval env) := by
     simpa [Function.comp] using hpayEq
   rw [BusInteraction.eval, BusInteraction.eval, hmult, List.map_map, hpayEq']
@@ -221,7 +221,7 @@ private theorem busEval_toInput (bi : BusInteraction (OutputExpression p))
 private theorem OutputCircuit.satisfies_toInput {cs : OutputCircuit p} {bs : BusSemantics p}
     (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) (env : OutputVariable → ZMod p) :
     cs.satisfies bs env →
-      (cs.mapVar OutputVariable.toInput).satisfies bs (fun x => env x.toVariable) := by
+      (cs.mapVar OutputVariable.toInput).satisfies bs (fun x => env x.toOutputVariable) := by
   intro hsat
   refine ⟨?_, ?_⟩
   · intro c hc
@@ -237,9 +237,9 @@ private theorem OutputCircuit.satisfies_toInput {cs : OutputCircuit p} {bs : Bus
 
 private theorem OutputCircuit.sideEffects_toInput {cs : OutputCircuit p} {bs : BusSemantics p}
     (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) (env : OutputVariable → ZMod p) :
-    (cs.mapVar OutputVariable.toInput).sideEffects bs (fun x => env x.toVariable) = cs.sideEffects bs env := by
+    (cs.mapVar OutputVariable.toInput).sideEffects bs (fun x => env x.toOutputVariable) = cs.sideEffects bs env := by
   have hmap : (cs.mapVar OutputVariable.toInput).busInteractions.map
-      (fun bi => bi.eval (fun x => env x.toVariable))
+      (fun bi => bi.eval (fun x => env x.toOutputVariable))
       = cs.busInteractions.map (fun bi => bi.eval env) := by
     rw [Circuit.mapVar, List.map_map]
     refine List.map_congr_left ?_
@@ -265,10 +265,10 @@ private theorem OutputCircuit.guaranteesInvariants_toInput {cs : OutputCircuit p
     (fun v hv => hpow v (OutputCircuit.mem_vars_of_mult hbi hv))
     (fun e he v hv => hpow v (OutputCircuit.mem_vars_of_payload hbi he hv))
   intro hmult
-  have hmaint := hgi (fun x => env x.toVariable) (OutputCircuit.satisfies_toInput hpow env hsat) bi' hbi'
-  change (bi'.eval (fun x => env x.toVariable)).multiplicity ≠ 0 →
-      bs.maintainsInvariants (bi'.eval (fun x => env x.toVariable)) at hmaint
-  have hmult' : (bi'.eval (fun x => env x.toVariable)).multiplicity ≠ 0 := by
+  have hmaint := hgi (fun x => env x.toOutputVariable) (OutputCircuit.satisfies_toInput hpow env hsat) bi' hbi'
+  change (bi'.eval (fun x => env x.toOutputVariable)).multiplicity ≠ 0 →
+      bs.maintainsInvariants (bi'.eval (fun x => env x.toOutputVariable)) at hmaint
+  have hmult' : (bi'.eval (fun x => env x.toOutputVariable)).multiplicity ≠ 0 := by
     simpa [bi', hbe] using hmult
   have hres := hmaint hmult'
   simpa [bi', hbe] using hres
@@ -282,7 +282,7 @@ theorem PassCorrect.toSound {cs out : OutputCircuit p} {ds : Derivations p}
   refine ⟨?_, ?_⟩
   · intro assignment hsat
     obtain ⟨assignment', hsat', hside⟩ := h.1 assignment hsat
-    refine ⟨fun x => assignment' x.toVariable, OutputCircuit.satisfies_toInput hpow assignment' hsat', ?_⟩
+    refine ⟨fun x => assignment' x.toOutputVariable, OutputCircuit.satisfies_toInput hpow assignment' hsat', ?_⟩
     rw [OutputCircuit.sideEffects_toInput hpow assignment']
     exact hside
   · intro hgi
