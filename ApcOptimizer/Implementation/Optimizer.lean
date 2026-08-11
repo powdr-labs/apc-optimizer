@@ -200,10 +200,10 @@ def optimizerOnCircuit {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts
   (r.out, r.derivs.forOutput cs.vars r.out.vars)
 
 /-- The fact-aware circuit optimizer: convert the powdr circuit to one over `OutputVariable`
-    (`InputCircuit.toCircuit`) and optimize it. -/
+    (`InputCircuit.toOutputCircuit`) and optimize it. -/
 def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs) :
     Optimizer p :=
-  fun inputCircuit => optimizerOnCircuit b facts inputCircuit.toCircuit
+  fun inputCircuit => optimizerOnCircuit b facts inputCircuit.toOutputCircuit
 
 /-! ## `witgen`'s two branches
 
@@ -358,7 +358,7 @@ theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List OutputV
 
 /-! ## Circuits exported by powdr
 
-`Optimizer.isCorrect` feeds the optimizer `Circuit.toCircuit` of a powdr circuit; the
+`Optimizer.isCorrect` feeds the optimizer `Circuit.toOutputCircuit` of a powdr circuit; the
 completeness proof below needs that all its variables carry a powdr ID. -/
 
 theorem Expression.vars_mapVar {V W : Type} (f : V → W) (e : Expression V p) :
@@ -375,9 +375,9 @@ theorem Circuit.vars_mapVar {V W : Type} (f : V → W) (circuit : Circuit V p) :
     Expression.vars_mapVar]
 
 theorem Circuit.powdrId?_isSome_of_mem_vars (circuit : InputCircuit p) :
-    ∀ v ∈ circuit.toCircuit.vars, v.powdrId?.isSome := by
+    ∀ v ∈ circuit.toOutputCircuit.vars, v.powdrId?.isSome := by
   intro v hv
-  rw [InputCircuit.toCircuit, Circuit.vars_mapVar, List.mem_map] at hv
+  rw [InputCircuit.toOutputCircuit, Circuit.vars_mapVar, List.mem_map] at hv
   obtain ⟨u, -, rfl⟩ := hv
   rfl
 
@@ -459,10 +459,10 @@ theorem optimizerOnCircuit_correct {bs : BusSemantics p} (b : DegreeBound) (fact
 theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound)
     (facts : BusFacts p bs) (inputCircuit : InputCircuit p) :
     (optimizerWithBusFacts b facts inputCircuit).1.isSoundReplacementOf
-        inputCircuit.toCircuit bs ∧
+        inputCircuit.toOutputCircuit bs ∧
       (optimizerWithBusFacts b facts inputCircuit).1.isCompleteReplacementOf
-        inputCircuit.toCircuit bs (optimizerWithBusFacts b facts inputCircuit).2 :=
-  optimizerOnCircuit_correct b facts inputCircuit.toCircuit
+        inputCircuit.toOutputCircuit bs (optimizerWithBusFacts b facts inputCircuit).2 :=
+  optimizerOnCircuit_correct b facts inputCircuit.toOutputCircuit
     (Circuit.powdrId?_isSome_of_mem_vars inputCircuit)
 
 /-- The fact-aware optimizer never pushes a within-bound circuit past the zkVM's degree
@@ -471,5 +471,5 @@ theorem optimizerWithBusFacts_respectsDegree {bs : BusSemantics p} (b : DegreeBo
     (facts : BusFacts p bs) (inputCircuit : InputCircuit p)
     (h : inputCircuit.withinDegree b) :
     (optimizerWithBusFacts b facts inputCircuit).1.withinDegree b :=
-  pipeline_respectsDeg b inputCircuit.toCircuit bs facts
+  pipeline_respectsDeg b inputCircuit.toOutputCircuit bs facts
     ((Circuit.withinDegree_mapVar _ inputCircuit b).mpr h)

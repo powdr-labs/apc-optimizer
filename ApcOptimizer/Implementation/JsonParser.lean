@@ -152,7 +152,7 @@ private def parseBusInteraction (j : Lean.Json) :
 
 The parser mints a fresh `String`/`InputVariable` per occurrence; interning rebuilds the system with
 one shared variable per distinct value, so the runtime's pointer fast-path in `String` equality
-short-circuits the many later equality tests (the names survive `InputCircuit.toCircuit`). The
+short-circuits the many later equality tests (the names survive `InputCircuit.toOutputCircuit`). The
 interned system is the same value (variables compare equal), so nothing downstream observes the
 difference except time. -/
 

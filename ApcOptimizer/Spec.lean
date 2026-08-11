@@ -219,7 +219,7 @@ def InputVariable.toVariable (v : InputVariable) : OutputVariable :=
 -- ANCHOR: toVariableCircuit
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
-def InputCircuit.toCircuit (circuit : InputCircuit p) : OutputCircuit p :=
+def InputCircuit.toOutputCircuit (circuit : InputCircuit p) : OutputCircuit p :=
   circuit.mapVar InputVariable.toVariable
 -- ANCHOR_END: toVariableCircuit
 
@@ -400,8 +400,8 @@ def Optimizer.isCorrect (optimizer : Optimizer p)
     (busSemantics : BusSemantics p) (b : DegreeBound) : Prop :=
   (∀ inputCircuit : InputCircuit p,
     let (optimizedCircuit, derivations) := optimizer inputCircuit
-    (optimizedCircuit.isSoundReplacementOf inputCircuit.toCircuit busSemantics) ∧
-    (optimizedCircuit.isCompleteReplacementOf inputCircuit.toCircuit
+    (optimizedCircuit.isSoundReplacementOf inputCircuit.toOutputCircuit busSemantics) ∧
+    (optimizedCircuit.isCompleteReplacementOf inputCircuit.toOutputCircuit
       busSemantics derivations))
   ∧ optimizerRespectsDegreeBound b optimizer
 -- ANCHOR_END: isCorrect

@@ -147,7 +147,7 @@ def cmdRunImpl {p : ℕ} {τ : Type} (be : VmBackend p τ) (fileName : String) :
   IO.println s!"Parsed {pcs.algebraicConstraints.length} constraints, \
     {pcs.busInteractions.length} bus interactions"
   -- The optimizer's own first step; the CLI needs it too, to measure the input it is given.
-  let cs := pcs.toCircuit
+  let cs := pcs.toOutputCircuit
   let before := statsOf cs
   let t0 ← IO.monoMsNow
   -- IO.lazyPure sequences the pure optimizer run between the clock reads (the compiler is
@@ -169,8 +169,8 @@ def cmdCompareImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
   cmdRunImpl be unoptFile
   let (csBefore, _) ← parseFileWith be.parse unoptFile
   let (csAfter, _) ← parseFileWith be.parse optFile
-  let statsBefore := statsOf csBefore.toCircuit
-  let statsAfter := statsOf csAfter.toCircuit
+  let statsBefore := statsOf csBefore.toOutputCircuit
+  let statsAfter := statsOf csAfter.toOutputCircuit
   printStats (label := "powdr        ") (stats := statsAfter)
   printEffectiveness (label := "powdr") (before := statsBefore) (after := statsAfter)
 
@@ -226,8 +226,8 @@ def cmdReportImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
   let (cs, busMap) ← parseFileWith be.parse unoptFile
   let (csPowdr, _) ← parseFileWith be.parse optFile
   let optimized := (be.optimize busMap cs).1
-  IO.println ("{\"original\":" ++ circuitJson cs.toCircuit ++
-    ",\"powdr\":" ++ circuitJson csPowdr.toCircuit ++
+  IO.println ("{\"original\":" ++ circuitJson cs.toOutputCircuit ++
+    ",\"powdr\":" ++ circuitJson csPowdr.toOutputCircuit ++
     ",\"apc-optimizer\":" ++ circuitJson optimized ++ "}")
 
 /-- The OpenVM backend: BabyBear field, `openVmOptimizer`, OpenVM's default degree bound. The
@@ -381,12 +381,12 @@ def profileRun {p : ℕ} (b : DegreeBound) (fileName : String) (cs : OutputCircu
 def cmdProfile (vm fileName : String) (verbose : Bool := false) : IO Unit := do
   if isSp1 vm then
     let (cs, busMap) ← parseFileWith parseSp1 fileName
-    profileRun ApcOptimizer.SP1.defaultDegreeBound fileName cs.toCircuit
+    profileRun ApcOptimizer.SP1.defaultDegreeBound fileName cs.toOutputCircuit
       (ApcOptimizer.SP1.sp1BusSemantics ApcOptimizer.SP1.koalaBear busMap)
       (ApcOptimizer.SP1.sp1Facts ApcOptimizer.SP1.koalaBear busMap) verbose
   else
     let (cs, busMap) ← parseFileWith parseOpenVm fileName
-    profileRun defaultDegreeBound fileName cs.toCircuit
+    profileRun defaultDegreeBound fileName cs.toOutputCircuit
       (openVmBusSemantics babyBear busMap) (openVmFacts babyBear busMap) verbose
 
 def usage : String :=
