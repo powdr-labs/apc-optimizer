@@ -394,7 +394,7 @@ def DensePassCorrect (isInput : VarId → Bool) (d out : DenseConstraintSystem p
 
 /-! ## Spec-level helpers -/
 
-private theorem specExpr_eval_congr (e : Expression p) (e1 e2 : Variable → ZMod p)
+private theorem specExpr_eval_congr (e : OutputExpression p) (e1 e2 : Variable → ZMod p)
     (h : ∀ v ∈ e.vars, e1 v = e2 v) : e.eval e1 = e.eval e2 := by
   induction e with
   | const n => rfl

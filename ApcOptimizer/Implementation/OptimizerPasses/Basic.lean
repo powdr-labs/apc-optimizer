@@ -31,7 +31,7 @@ def Circuit.contributions (circuit : Circuit p) (bs : BusSemantics p)
     (fun bi => let m := bi.eval env; ((m.busId, m.payload), m.multiplicity))
 
 theorem multiplicitySum_map_filter (bs : BusSemantics p) (env : Variable → ZMod p)
-    (message : BusMessage p) (bis : List (BusInteraction (Expression p))) :
+    (message : BusMessage p) (bis : List (BusInteraction (OutputExpression p))) :
     (((bis.map (fun bi => bi.eval env)).filter
         (fun m => bs.isStateful m.busId && decide ((m.busId, m.payload) = message))).map
       (fun m => m.multiplicity)).sum
@@ -171,17 +171,17 @@ theorem Circuit.mem_vars {cs : Circuit p} {x : Variable} :
       (∃ bi ∈ cs.busInteractions, x ∈ bi.multiplicity.vars ∨ ∃ e ∈ bi.payload, x ∈ e.vars) := by
   simp only [CircuitG.vars, List.mem_append, List.mem_flatMap]
 
-theorem Circuit.mem_vars_of_constraint {cs : Circuit p} {c : Expression p}
+theorem Circuit.mem_vars_of_constraint {cs : Circuit p} {c : OutputExpression p}
     {x : Variable} (hc : c ∈ cs.algebraicConstraints) (hx : x ∈ c.vars) : x ∈ cs.vars :=
   Circuit.mem_vars.2 (Or.inl ⟨c, hc, hx⟩)
 
 theorem Circuit.mem_vars_of_mult {cs : Circuit p}
-    {bi : BusInteraction (Expression p)} {x : Variable} (hbi : bi ∈ cs.busInteractions)
+    {bi : BusInteraction (OutputExpression p)} {x : Variable} (hbi : bi ∈ cs.busInteractions)
     (hx : x ∈ bi.multiplicity.vars) : x ∈ cs.vars :=
   Circuit.mem_vars.2 (Or.inr ⟨bi, hbi, Or.inl hx⟩)
 
 theorem Circuit.mem_vars_of_payload {cs : Circuit p}
-    {bi : BusInteraction (Expression p)} {e : Expression p} {x : Variable}
+    {bi : BusInteraction (OutputExpression p)} {e : OutputExpression p} {x : Variable}
     (hbi : bi ∈ cs.busInteractions) (he : e ∈ bi.payload) (hx : x ∈ e.vars) : x ∈ cs.vars :=
   Circuit.mem_vars.2 (Or.inr ⟨bi, hbi, Or.inr ⟨e, he, hx⟩⟩)
 

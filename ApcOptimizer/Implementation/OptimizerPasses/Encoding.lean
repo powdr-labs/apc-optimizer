@@ -127,7 +127,7 @@ The `…P` value lemmas are the same five obligations as `denseZModOps`' `_eq` f
 
 /-! ## Dense types -/
 
-/-- A dense arithmetic expression: the spec `Expression` with `VarId` leaves. -/
+/-- A dense arithmetic expression: the spec `OutputExpression` with `VarId` leaves. -/
 inductive DenseExpr (p : ℕ) where
   | const (n : ZMod p)
   | var (i : VarId)
@@ -306,7 +306,7 @@ theorem DenseExpr.coveredBy_mul {r : VarRegistry} {a b : DenseExpr p} :
 /-! ## Decoding -/
 
 /-- Decode a dense expression: resolve each `VarId` leaf through the registry. -/
-def VarRegistry.decodeExpr (r : VarRegistry) : DenseExpr p → Expression p
+def VarRegistry.decodeExpr (r : VarRegistry) : DenseExpr p → OutputExpression p
   | .const n => .const n
   | .var i => .var (r.resolve i)
   | .add a b => .add (r.decodeExpr a) (r.decodeExpr b)
@@ -318,7 +318,7 @@ def VarRegistry.decodeCM (r : VarRegistry) : DenseComputationMethod p → Comput
   | .ifEqZero cond thenM elseM => .ifEqZero (r.decodeExpr cond) (r.decodeCM thenM) (r.decodeCM elseM)
 
 def VarRegistry.decodeBI (r : VarRegistry) (bi : BusInteraction (DenseExpr p)) :
-    BusInteraction (Expression p) :=
+    BusInteraction (OutputExpression p) :=
   { busId := bi.busId,
     multiplicity := r.decodeExpr bi.multiplicity,
     payload := bi.payload.map r.decodeExpr }
@@ -384,7 +384,7 @@ theorem DenseExpr.CoveredBy.mono {r r' : VarRegistry} (h : r.Extends r') {e : De
 
 /-- Encode a spec expression into a dense one, threading the registry and registering each variable
     occurrence. -/
-def VarRegistry.encodeExpr (r : VarRegistry) : Expression p → VarRegistry × DenseExpr p
+def VarRegistry.encodeExpr (r : VarRegistry) : OutputExpression p → VarRegistry × DenseExpr p
   | .const n => (r, .const n)
   | .var x => let (r', i) := r.register x; (r', .var i)
   | .add a b =>
@@ -397,21 +397,21 @@ def VarRegistry.encodeExpr (r : VarRegistry) : Expression p → VarRegistry × D
       (r2, .mul a' b')
 
 def VarRegistry.encodeExprs (r : VarRegistry) :
-    List (Expression p) → VarRegistry × List (DenseExpr p)
+    List (OutputExpression p) → VarRegistry × List (DenseExpr p)
   | [] => (r, [])
   | e :: rest =>
       let (r1, e') := r.encodeExpr e
       let (r2, rest') := r1.encodeExprs rest
       (r2, e' :: rest')
 
-def VarRegistry.encodeBI (r : VarRegistry) (bi : BusInteraction (Expression p)) :
+def VarRegistry.encodeBI (r : VarRegistry) (bi : BusInteraction (OutputExpression p)) :
     VarRegistry × BusInteraction (DenseExpr p) :=
   let (r1, m) := r.encodeExpr bi.multiplicity
   let (r2, ps) := r1.encodeExprs bi.payload
   (r2, { busId := bi.busId, multiplicity := m, payload := ps })
 
 def VarRegistry.encodeBIs (r : VarRegistry) :
-    List (BusInteraction (Expression p)) → VarRegistry × List (BusInteraction (DenseExpr p))
+    List (BusInteraction (OutputExpression p)) → VarRegistry × List (BusInteraction (DenseExpr p))
   | [] => (r, [])
   | bi :: rest =>
       let (r1, bi') := r.encodeBI bi
@@ -427,7 +427,7 @@ def VarRegistry.encodeCS (r : VarRegistry) (cs : Circuit p) :
 
 /-! ## Encode: extension, coverage, round trip (expression level) -/
 
-theorem VarRegistry.encodeExpr_extends (r : VarRegistry) (e : Expression p) :
+theorem VarRegistry.encodeExpr_extends (r : VarRegistry) (e : OutputExpression p) :
     r.Extends (r.encodeExpr e).1 := by
   induction e generalizing r with
   | const n => exact VarRegistry.Extends.refl r
@@ -437,7 +437,7 @@ theorem VarRegistry.encodeExpr_extends (r : VarRegistry) (e : Expression p) :
   | mul a b iha ihb =>
       exact (iha r).trans (ihb (r.encodeExpr a).1)
 
-theorem VarRegistry.encodeExpr_covered (r : VarRegistry) (e : Expression p) :
+theorem VarRegistry.encodeExpr_covered (r : VarRegistry) (e : OutputExpression p) :
     (r.encodeExpr e).2.CoveredBy (r.encodeExpr e).1 := by
   induction e generalizing r with
   | const n => exact DenseExpr.coveredBy_const _ n
@@ -454,7 +454,7 @@ theorem VarRegistry.encodeExpr_covered (r : VarRegistry) (e : Expression p) :
       exact (iha r).mono ((r.encodeExpr a).1.encodeExpr_extends b)
 
 /-- Round trip: decoding an encoded expression is the identity. -/
-theorem VarRegistry.decodeExpr_encodeExpr (r : VarRegistry) (e : Expression p) :
+theorem VarRegistry.decodeExpr_encodeExpr (r : VarRegistry) (e : OutputExpression p) :
     (r.encodeExpr e).1.decodeExpr (r.encodeExpr e).2 = e := by
   induction e generalizing r with
   | const n => rfl
@@ -481,14 +481,14 @@ theorem VarRegistry.decodeExpr_encodeExpr (r : VarRegistry) (e : Expression p) :
 /-! ## Encode: extension, coverage, round trip (list / bus-interaction / system levels) -/
 
 /-- Structural unfolding of `encodeExprs` on a cons (holds by `rfl` via `Prod` eta). -/
-theorem VarRegistry.encodeExprs_cons (r : VarRegistry) (e : Expression p)
-    (rest : List (Expression p)) :
+theorem VarRegistry.encodeExprs_cons (r : VarRegistry) (e : OutputExpression p)
+    (rest : List (OutputExpression p)) :
     r.encodeExprs (e :: rest) =
       (((r.encodeExpr e).1.encodeExprs rest).1,
         (r.encodeExpr e).2 :: ((r.encodeExpr e).1.encodeExprs rest).2) := rfl
 
-theorem VarRegistry.encodeBIs_cons (r : VarRegistry) (bi : BusInteraction (Expression p))
-    (rest : List (BusInteraction (Expression p))) :
+theorem VarRegistry.encodeBIs_cons (r : VarRegistry) (bi : BusInteraction (OutputExpression p))
+    (rest : List (BusInteraction (OutputExpression p))) :
     r.encodeBIs (bi :: rest) =
       (((r.encodeBI bi).1.encodeBIs rest).1,
         (r.encodeBI bi).2 :: ((r.encodeBI bi).1.encodeBIs rest).2) := rfl
@@ -498,7 +498,7 @@ theorem VarRegistry.Extends.decodeExprs_eq {r r' : VarRegistry} (h : r.Extends r
     es.map r'.decodeExpr = es.map r.decodeExpr :=
   List.map_congr_left (fun e he => h.decodeExpr_eq (hc e he))
 
-theorem VarRegistry.encodeExprs_extends (r : VarRegistry) (es : List (Expression p)) :
+theorem VarRegistry.encodeExprs_extends (r : VarRegistry) (es : List (OutputExpression p)) :
     r.Extends (r.encodeExprs es).1 := by
   induction es generalizing r with
   | nil => exact Extends.refl r
@@ -506,7 +506,7 @@ theorem VarRegistry.encodeExprs_extends (r : VarRegistry) (es : List (Expression
       rw [encodeExprs_cons]
       exact (r.encodeExpr_extends e).trans (ih (r.encodeExpr e).1)
 
-theorem VarRegistry.encodeExprs_covered (r : VarRegistry) (es : List (Expression p)) :
+theorem VarRegistry.encodeExprs_covered (r : VarRegistry) (es : List (OutputExpression p)) :
     ∀ e ∈ (r.encodeExprs es).2, e.CoveredBy (r.encodeExprs es).1 := by
   induction es generalizing r with
   | nil => intro e he; simp [encodeExprs] at he
@@ -518,7 +518,7 @@ theorem VarRegistry.encodeExprs_covered (r : VarRegistry) (es : List (Expression
         exact (r.encodeExpr_covered e).mono ((r.encodeExpr e).1.encodeExprs_extends rest)
       · exact ih (r.encodeExpr e).1 e' hmem
 
-theorem VarRegistry.decodeExprs_encodeExprs (r : VarRegistry) (es : List (Expression p)) :
+theorem VarRegistry.decodeExprs_encodeExprs (r : VarRegistry) (es : List (OutputExpression p)) :
     ((r.encodeExprs es).2).map (r.encodeExprs es).1.decodeExpr = es := by
   induction es generalizing r with
   | nil => rfl
@@ -535,13 +535,13 @@ def denseBICovered (r : VarRegistry) (bi : BusInteraction (DenseExpr p)) : Prop 
   bi.multiplicity.CoveredBy r ∧ ∀ e ∈ bi.payload, e.CoveredBy r
 
 /-- Structural projections of `encodeBI` (each holds by `rfl` via `Prod` eta). -/
-theorem VarRegistry.encodeBI_fst (r : VarRegistry) (bi : BusInteraction (Expression p)) :
+theorem VarRegistry.encodeBI_fst (r : VarRegistry) (bi : BusInteraction (OutputExpression p)) :
     (r.encodeBI bi).1 = ((r.encodeExpr bi.multiplicity).1.encodeExprs bi.payload).1 := rfl
 
-theorem VarRegistry.encodeBI_mult (r : VarRegistry) (bi : BusInteraction (Expression p)) :
+theorem VarRegistry.encodeBI_mult (r : VarRegistry) (bi : BusInteraction (OutputExpression p)) :
     (r.encodeBI bi).2.multiplicity = (r.encodeExpr bi.multiplicity).2 := rfl
 
-theorem VarRegistry.encodeBI_payload (r : VarRegistry) (bi : BusInteraction (Expression p)) :
+theorem VarRegistry.encodeBI_payload (r : VarRegistry) (bi : BusInteraction (OutputExpression p)) :
     (r.encodeBI bi).2.payload = ((r.encodeExpr bi.multiplicity).1.encodeExprs bi.payload).2 := rfl
 
 theorem VarRegistry.Extends.decodeBI_eq {r r' : VarRegistry} (h : r.Extends r')
@@ -550,12 +550,12 @@ theorem VarRegistry.Extends.decodeBI_eq {r r' : VarRegistry} (h : r.Extends r')
   obtain ⟨hm, hp⟩ := hc
   simp only [VarRegistry.decodeBI, h.decodeExpr_eq hm, h.decodeExprs_eq hp]
 
-theorem VarRegistry.encodeBI_extends (r : VarRegistry) (bi : BusInteraction (Expression p)) :
+theorem VarRegistry.encodeBI_extends (r : VarRegistry) (bi : BusInteraction (OutputExpression p)) :
     r.Extends (r.encodeBI bi).1 :=
   (r.encodeExpr_extends bi.multiplicity).trans
     ((r.encodeExpr bi.multiplicity).1.encodeExprs_extends bi.payload)
 
-theorem VarRegistry.encodeBI_covered (r : VarRegistry) (bi : BusInteraction (Expression p)) :
+theorem VarRegistry.encodeBI_covered (r : VarRegistry) (bi : BusInteraction (OutputExpression p)) :
     denseBICovered (r.encodeBI bi).1 (r.encodeBI bi).2 := by
   rw [denseBICovered, encodeBI_mult, encodeBI_payload, encodeBI_fst]
   refine ⟨?_, ?_⟩
@@ -563,7 +563,7 @@ theorem VarRegistry.encodeBI_covered (r : VarRegistry) (bi : BusInteraction (Exp
       ((r.encodeExpr bi.multiplicity).1.encodeExprs_extends bi.payload)
   · exact (r.encodeExpr bi.multiplicity).1.encodeExprs_covered bi.payload
 
-theorem VarRegistry.decodeBI_encodeBI (r : VarRegistry) (bi : BusInteraction (Expression p)) :
+theorem VarRegistry.decodeBI_encodeBI (r : VarRegistry) (bi : BusInteraction (OutputExpression p)) :
     (r.encodeBI bi).1.decodeBI (r.encodeBI bi).2 = bi := by
   simp only [VarRegistry.decodeBI, encodeBI_fst, encodeBI_mult, encodeBI_payload]
   obtain ⟨busId, mult, payload⟩ := bi
@@ -574,7 +574,7 @@ theorem VarRegistry.decodeBI_encodeBI (r : VarRegistry) (bi : BusInteraction (Ex
   · exact (r.encodeExpr mult).1.decodeExprs_encodeExprs payload
 
 theorem VarRegistry.encodeBIs_extends (r : VarRegistry)
-    (bis : List (BusInteraction (Expression p))) : r.Extends (r.encodeBIs bis).1 := by
+    (bis : List (BusInteraction (OutputExpression p))) : r.Extends (r.encodeBIs bis).1 := by
   induction bis generalizing r with
   | nil => exact Extends.refl r
   | cons bi rest ih =>
@@ -582,7 +582,7 @@ theorem VarRegistry.encodeBIs_extends (r : VarRegistry)
       exact (r.encodeBI_extends bi).trans (ih (r.encodeBI bi).1)
 
 theorem VarRegistry.decodeBIs_encodeBIs (r : VarRegistry)
-    (bis : List (BusInteraction (Expression p))) :
+    (bis : List (BusInteraction (OutputExpression p))) :
     ((r.encodeBIs bis).2).map (r.encodeBIs bis).1.decodeBI = bis := by
   induction bis generalizing r with
   | nil => rfl

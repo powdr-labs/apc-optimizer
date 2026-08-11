@@ -12,7 +12,7 @@ namespace ApcOptimizer.Dense
 
 variable {p : ℕ}
 
-/-! ## Expression templates for the recognised gadget -/
+/-! ## OutputExpression templates for the recognised gadget -/
 
 def denseSeqzEM1 : DenseExpr p := .const (-1)
 def denseSeqzE0 : DenseExpr p := .const 0

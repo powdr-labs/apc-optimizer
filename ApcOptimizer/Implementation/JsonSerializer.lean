@@ -55,7 +55,7 @@ def refString (m : Std.HashMap Variable Nat) (x : Variable) : String :=
 def constJson (n : ZMod p) : Json :=
   Json.num (JsonNumber.fromNat n.val)
 
-def serializeExpr (m : Std.HashMap Variable Nat) : Expression p → Json
+def serializeExpr (m : Std.HashMap Variable Nat) : OutputExpression p → Json
   | .const n => constJson n
   | .var x => Json.str (refString m x)
   | .add a b => Json.arr #[serializeExpr m a, Json.str "+", serializeExpr m b]
@@ -83,7 +83,7 @@ def serializeDerivations (m : Std.HashMap Variable Nat) (ds : Derivations p) : J
     Json.arr #[Json.bool true, Json.str (refString m v), serializeComputationMethod m cm])).toArray
 
 /-- Serialize a bus interaction to a `{id, mult, args}` object. -/
-def serializeBus (m : Std.HashMap Variable Nat) (bi : BusInteraction (Expression p)) : Json :=
+def serializeBus (m : Std.HashMap Variable Nat) (bi : BusInteraction (OutputExpression p)) : Json :=
   Json.mkObj [
     ("id", Json.num (JsonNumber.fromNat bi.busId)),
     ("mult", serializeExpr m bi.multiplicity),

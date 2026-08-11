@@ -152,7 +152,7 @@ theorem denseEnvF_eq_varSubst (σ : VarId → Option (DenseExpr p)) (denv : VarI
     = ((match σ y with | some t => t | none => .var y) : DenseExpr p).eval denv
   cases σ y <;> rfl
 
-/-- Expression-level agreement from pointwise environment agreement. -/
+/-- OutputExpression-level agreement from pointwise environment agreement. -/
 theorem denseSubstF_eval_agree (σ : VarId → Option (DenseExpr p)) (denv₀ denv₁ : VarId → ZMod p)
     (e : DenseExpr p) (h : ∀ y ∈ e.vars, denseEnvF σ denv₀ y = denv₁ y) :
     (e.substF σ).eval denv₀ = e.eval denv₁ := by
@@ -1331,7 +1331,7 @@ soundness. Two facts carry the correctness: the gathered covered set *is* the fi
 `denseReencodeOut` of the old view with trivially-true constraints dropped (`denseRncWrite_view`) —
 the same two facts the list engine established with `denseWorkView_check` and `denseWorkOut_view`. -/
 
-/-! ### Expression predicate characterisations -/
+/-! ### OutputExpression predicate characterisations -/
 
 theorem denseHasVar_iff (e : DenseExpr p) : e.hasVar = true ↔ e.vars ≠ [] := by
   induction e with

@@ -232,7 +232,7 @@ Two assignments agreeing on `cs.vars` are interchangeable for `satisfies`/`admis
 The completeness proof below uses these to swap the abstract per-pass witness for `witgen`'s output. -/
 
 theorem Circuit.busEval_congr {cs : Circuit p} {f g : Variable → ZMod p}
-    (h : ∀ x ∈ cs.vars, f x = g x) {bi : BusInteraction (Expression p)}
+    (h : ∀ x ∈ cs.vars, f x = g x) {bi : BusInteraction (OutputExpression p)}
     (hbi : bi ∈ cs.busInteractions) : bi.eval f = bi.eval g :=
   BusInteraction.eval_congr bi f g (fun x hx => by
     simp only [BusInteraction.vars, List.mem_append, List.mem_flatMap] at hx
@@ -247,7 +247,7 @@ theorem Circuit.satisfies_congr {cs : Circuit p} {bs : BusSemantics p}
       cs.satisfies bs e1 → cs.satisfies bs e2 := by
     intro e1 e2 hh hsat
     refine ⟨fun c hc => ?_, fun bi hbi => ?_⟩
-    · rw [← Expression.eval_congr c e1 e2
+    · rw [← OutputExpression.eval_congr c e1 e2
         (fun x hx => hh x (Circuit.mem_vars_of_constraint hc hx))]
       exact hsat.1 c hc
     · have hbe : bi.eval e1 = bi.eval e2 := Circuit.busEval_congr hh hbi

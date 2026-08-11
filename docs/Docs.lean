@@ -64,7 +64,7 @@ Variables of the circuits the optimizer works on may also have been introduced b
 
 {docstring Variable}
 
-An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions. It is generic in the variable type, so the same definition serves both kinds of circuit; {name}`Expression` abbreviates the optimizer's instance {lean}`ExpressionG Variable`.
+An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions. It is generic in the variable type, so the same definition serves both kinds of circuit; {name}`OutputExpression` abbreviates the optimizer's instance {lean}`ExpressionG Variable`.
 
 {docstring ExpressionG}
 
@@ -86,7 +86,7 @@ A {deftech}_bus interaction_ sends a _payload_ tuple to a bus, weighted by a _mu
 
 {docstring BusInteraction}
 
-A circuit (defined below) contains a list of _symbolic bus interactions_ (i.e., elements of type `BusInteraction Expression`). For a concrete run of the zkVM, the circuit might be instantiated several times with different variable assignments. Evaluating the symbolic bus interactions under an assignment yields a list of _bus messages_ (i.e., elements of type `BusInteraction (ZMod p)`).
+A circuit (defined below) contains a list of _symbolic bus interactions_ (i.e., elements of type `BusInteraction OutputExpression`). For a concrete run of the zkVM, the circuit might be instantiated several times with different variable assignments. Evaluating the symbolic bus interactions under an assignment yields a list of _bus messages_ (i.e., elements of type `BusInteraction (ZMod p)`).
 
 ## Bus state
 

@@ -36,7 +36,7 @@ theorem denseBICovered_mono {r r' : VarRegistry} (h : r.Extends r')
   ⟨hc.1.mono h, fun e he => (hc.2 e he).mono h⟩
 
 theorem VarRegistry.encodeBIs_covered (r : VarRegistry)
-    (bis : List (BusInteraction (Expression p))) :
+    (bis : List (BusInteraction (OutputExpression p))) :
     ∀ bi ∈ (r.encodeBIs bis).2, denseBICovered (r.encodeBIs bis).1 bi := by
   induction bis generalizing r with
   | nil => intro bi hbi; simp [VarRegistry.encodeBIs] at hbi

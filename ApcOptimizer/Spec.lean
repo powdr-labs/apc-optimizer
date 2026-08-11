@@ -46,7 +46,7 @@ def ExpressionG.mapVar {V W : Type} (f : V → W) : ExpressionG V p → Expressi
   | .mul e1 e2 => .mul (e1.mapVar f) (e2.mapVar f)
 
 /-- An arithmetic expression over circuit variables and field constants. -/
-abbrev Expression (p : ℕ) := ExpressionG Variable p
+abbrev OutputExpression (p : ℕ) := ExpressionG Variable p
 
 /-- An arithmetic expression over circuit variables and field constants. -/
 abbrev InputExpression (p : ℕ) := ExpressionG InputVariable p
@@ -88,10 +88,10 @@ inductive ComputationMethod (p : ℕ) where
   /-- A constant value. -/
   | const (c : ZMod p)
   /-- The quotient of two expressions, or zero if the denominator is zero. -/
-  | quotientOrZero (num den : Expression p)
+  | quotientOrZero (num den : OutputExpression p)
   /-- Conditional computation: if `cond` evaluates to zero, use `thenM`, else
       use `elseM`. -/
-  | ifEqZero (cond : Expression p) (thenM elseM : ComputationMethod p)
+  | ifEqZero (cond : OutputExpression p) (thenM elseM : ComputationMethod p)
 
 /-- Evaluate a computation method under an assignment (cf. powdr's
     `evaluate_computation_method`). -/
@@ -133,7 +133,7 @@ structure BusInteraction (α : Type) where
 
 /-- Evaluate a bus interaction under an `assignment`, turning a symbolic bus
     interaction into a bus interaction message. -/
-def BusInteraction.eval (bi : BusInteraction (Expression p))
+def BusInteraction.eval (bi : BusInteraction (OutputExpression p))
     (assignment : Variable → ZMod p) : BusInteraction (ZMod p) :=
   { busId := bi.busId,
     multiplicity := bi.multiplicity.eval assignment,

@@ -11,7 +11,7 @@ variable {p : ℕ}
 
 /-! ## Evaluation depends only on an expression's variables -/
 
-theorem Expression.eval_congr (e : Expression p) (env1 env2 : Variable → ZMod p)
+theorem OutputExpression.eval_congr (e : OutputExpression p) (env1 env2 : Variable → ZMod p)
     (h : ∀ x ∈ e.vars, env1 x = env2 x) : e.eval env1 = e.eval env2 := by
   induction e with
   | const n => rfl
@@ -25,7 +25,7 @@ theorem Expression.eval_congr (e : Expression p) (env1 env2 : Variable → ZMod 
       rw [iha (fun x hx => h x (by simp [ExpressionG.vars, hx])),
           ihb (fun x hx => h x (by simp [ExpressionG.vars, hx]))]
 
-theorem BusInteraction.eval_congr (bi : BusInteraction (Expression p))
+theorem BusInteraction.eval_congr (bi : BusInteraction (OutputExpression p))
     (env1 env2 : Variable → ZMod p) (h : ∀ x ∈ bi.vars, env1 x = env2 x) :
     bi.eval env1 = bi.eval env2 := by
   have hmult : bi.multiplicity.eval env1 = bi.multiplicity.eval env2 :=
@@ -49,16 +49,16 @@ theorem ComputationMethod.eval_congr (cm : ComputationMethod p) (e1 e2 : Variabl
   | quotientOrZero num den =>
       intro h
       have hn : num.eval e1 = num.eval e2 :=
-        Expression.eval_congr num _ _ (fun v hv => h v (List.mem_append_left _ hv))
+        OutputExpression.eval_congr num _ _ (fun v hv => h v (List.mem_append_left _ hv))
       have hd : den.eval e1 = den.eval e2 :=
-        Expression.eval_congr den _ _ (fun v hv => h v (List.mem_append_right _ hv))
+        OutputExpression.eval_congr den _ _ (fun v hv => h v (List.mem_append_right _ hv))
       show (if den.eval e1 = 0 then 0 else (den.eval e1)⁻¹ * num.eval e1)
          = (if den.eval e2 = 0 then 0 else (den.eval e2)⁻¹ * num.eval e2)
       rw [hn, hd]
   | ifEqZero cond thenM elseM iht ihe =>
       intro h
       have hc : cond.eval e1 = cond.eval e2 :=
-        Expression.eval_congr cond _ _ (fun v hv =>
+        OutputExpression.eval_congr cond _ _ (fun v hv =>
           h v (List.mem_append_left _ (List.mem_append_left _ hv)))
       have ht := iht (fun v hv => h v (List.mem_append_left _ (List.mem_append_right _ hv)))
       have he := ihe (fun v hv => h v (List.mem_append_right _ hv))

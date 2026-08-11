@@ -12,7 +12,7 @@ audit, and `ApcOptimizer/Utils/` is tooling.
 ## The spec (`ApcOptimizer/Spec.lean`, audited)
 
 A `Circuit` is a list of algebraic constraints plus a list of bus interactions over
-`Expression`s. The correctness relation is **`refines`**, deliberately asymmetric:
+`OutputExpression`s. The correctness relation is **`refines`**, deliberately asymmetric:
 
 - **soundness** — `output.implies input`: every satisfying assignment of the output maps to one of
   the input with the same stateful side effects. Required for *all* assignments (a malicious prover

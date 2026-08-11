@@ -33,7 +33,7 @@ variable {p : ℕ}
 /-! ## Collecting variables -/
 
 /-- All variable names occurring in a bus interaction (multiplicity and payload). -/
-def BusInteraction.vars (bi : BusInteraction (Expression p)) : List Variable :=
+def BusInteraction.vars (bi : BusInteraction (OutputExpression p)) : List Variable :=
   bi.multiplicity.vars ++ bi.payload.flatMap ExpressionG.vars
 
 /-- The distinct variables of a constraint system, across constraints and bus interactions. -/
