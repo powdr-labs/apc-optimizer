@@ -27,6 +27,10 @@ def InputVariable.ofPowdrName (raw : String) : Except String InputVariable :=
       | none => .error s!"variable without a numeric powdr id: {raw}"
   | _ => .error s!"variable without a powdr id: {raw}"
 
+/-- Interpret an `OutputVariable` with a powdr id as the corresponding input variable. -/
+def OutputVariable.toInput (v : OutputVariable) : InputVariable :=
+  { name := v.name, id := v.powdrId?.get! }
+
 /-- Pinned to `OutputVariable`'s `DecidableEq`, so `LawfulBEq` below holds by `decide`. -/
 instance : BEq OutputVariable := ⟨fun a b => decide (a = b)⟩
 

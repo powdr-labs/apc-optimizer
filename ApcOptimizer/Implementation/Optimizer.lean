@@ -168,7 +168,7 @@ theorem pipeline_respectsDeg (b : DegreeBound) : RespectsDeg b (pipeline (p := p
 def Derivations.safeMethod (ds : Derivations p) (inputVars : List OutputVariable) (v : OutputVariable) :
     ComputationMethod p :=
   match ds.methodFor v with
-  | some cm => if ∀ x ∈ cm.vars, x ∈ inputVars then cm else .const (zmodZeroP _)
+  | some cm => if ∀ x ∈ cm.vars, x.toVariable ∈ inputVars then cm else .const (zmodZeroP _)
   | none => .const (zmodZeroP _)
 
 /-- `Derivations.safeMethod` with both of its scans served from indexes: `methods` is `ds` keyed by
@@ -176,7 +176,7 @@ def Derivations.safeMethod (ds : Derivations p) (inputVars : List OutputVariable
 def Derivations.safeMethodIdx (methods : Std.HashMap OutputVariable (ComputationMethod p))
     (inputs : Std.HashSet OutputVariable) (v : OutputVariable) : ComputationMethod p :=
   match methods[v]? with
-  | some cm => if cm.vars.all (fun x => inputs.contains x) then cm else .const (zmodZeroP _)
+  | some cm => if cm.vars.all (fun x => inputs.contains x.toVariable) then cm else .const (zmodZeroP _)
   | none => .const (zmodZeroP _)
 
 /-- Keep one structurally safe derivation for each no-ID output variable.

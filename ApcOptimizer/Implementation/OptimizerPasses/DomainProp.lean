@@ -25,6 +25,20 @@ theorem OutputExpression.eval_congr (e : OutputExpression p) (env1 env2 : Output
       rw [iha (fun x hx => h x (by simp [Expression.vars, hx])),
           ihb (fun x hx => h x (by simp [Expression.vars, hx]))]
 
+theorem InputExpression.eval_congr (e : InputExpression p) (env1 env2 : InputVariable → ZMod p)
+    (h : ∀ x ∈ e.vars, env1 x = env2 x) : e.eval env1 = e.eval env2 := by
+  induction e with
+  | const n => rfl
+  | var x => exact h x (by simp [Expression.vars])
+  | add a b iha ihb =>
+      simp only [Expression.eval]
+      rw [iha (fun x hx => h x (by simp [Expression.vars, hx])),
+          ihb (fun x hx => h x (by simp [Expression.vars, hx]))]
+  | mul a b iha ihb =>
+      simp only [Expression.eval]
+      rw [iha (fun x hx => h x (by simp [Expression.vars, hx])),
+          ihb (fun x hx => h x (by simp [Expression.vars, hx]))]
+
 theorem BusInteraction.eval_congr (bi : BusInteraction (OutputExpression p))
     (env1 env2 : OutputVariable → ZMod p) (h : ∀ x ∈ bi.vars, env1 x = env2 x) :
     bi.eval env1 = bi.eval env2 := by
@@ -42,23 +56,23 @@ theorem BusInteraction.eval_congr (bi : BusInteraction (OutputExpression p))
 
 /-- A computation method reads only its variables; consumed by the master-theorem completeness
     proof (`Implementation/Optimizer.lean`). -/
-theorem ComputationMethod.eval_congr (cm : ComputationMethod p) (e1 e2 : OutputVariable → ZMod p) :
+theorem ComputationMethod.eval_congr (cm : ComputationMethod p) (e1 e2 : InputVariable → ZMod p) :
     (∀ v ∈ cm.vars, e1 v = e2 v) → cm.eval e1 = cm.eval e2 := by
   induction cm with
   | const c => intro _; rfl
   | quotientOrZero num den =>
       intro h
       have hn : num.eval e1 = num.eval e2 :=
-        OutputExpression.eval_congr num _ _ (fun v hv => h v (List.mem_append_left _ hv))
+        InputExpression.eval_congr num _ _ (fun v hv => h v (List.mem_append_left _ hv))
       have hd : den.eval e1 = den.eval e2 :=
-        OutputExpression.eval_congr den _ _ (fun v hv => h v (List.mem_append_right _ hv))
+        InputExpression.eval_congr den _ _ (fun v hv => h v (List.mem_append_right _ hv))
       show (if den.eval e1 = 0 then 0 else (den.eval e1)⁻¹ * num.eval e1)
          = (if den.eval e2 = 0 then 0 else (den.eval e2)⁻¹ * num.eval e2)
       rw [hn, hd]
   | ifEqZero cond thenM elseM iht ihe =>
       intro h
       have hc : cond.eval e1 = cond.eval e2 :=
-        OutputExpression.eval_congr cond _ _ (fun v hv =>
+        InputExpression.eval_congr cond _ _ (fun v hv =>
           h v (List.mem_append_left _ (List.mem_append_left _ hv)))
       have ht := iht (fun v hv => h v (List.mem_append_left _ (List.mem_append_right _ hv)))
       have he := ihe (fun v hv => h v (List.mem_append_right _ hv))

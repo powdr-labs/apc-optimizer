@@ -27,6 +27,7 @@ structure InputVariable where
   id : Nat
   deriving DecidableEq, Repr
 
+
 /-- An arithmetic expression over variables of type `V` and field constants. -/
 inductive Expression (V : Type) (p : ℕ) where
   /-- A constant field element. -/
@@ -88,15 +89,15 @@ inductive ComputationMethod (p : ℕ) where
   /-- A constant value. -/
   | const (c : ZMod p)
   /-- The quotient of two expressions, or zero if the denominator is zero. -/
-  | quotientOrZero (num den : OutputExpression p)
+  | quotientOrZero (num den : InputExpression p)
   /-- Conditional computation: if `cond` evaluates to zero, use `thenM`, else
       use `elseM`. -/
-  | ifEqZero (cond : OutputExpression p) (thenM elseM : ComputationMethod p)
+  | ifEqZero (cond : InputExpression p) (thenM elseM : ComputationMethod p)
 
 /-- Evaluate a computation method under an assignment (cf. powdr's
     `evaluate_computation_method`). -/
 def ComputationMethod.eval :
-    ComputationMethod p → (OutputVariable → ZMod p) → ZMod p
+    ComputationMethod p → (InputVariable → ZMod p) → ZMod p
   | .const c, _ => c
   | .quotientOrZero num den, assignment =>
       if den.eval assignment = 0 then 0
@@ -106,7 +107,7 @@ def ComputationMethod.eval :
       else elseM.eval assignment
 
 /-- The variables a computation method may read. -/
-def ComputationMethod.vars : ComputationMethod p → List OutputVariable
+def ComputationMethod.vars : ComputationMethod p → List InputVariable
   | .const _ => []
   | .quotientOrZero num den => num.vars ++ den.vars
   | .ifEqZero cond thenM elseM => cond.vars ++ thenM.vars ++ elseM.vars
@@ -133,8 +134,8 @@ structure BusInteraction (α : Type) where
 
 /-- Evaluate a bus interaction under an `assignment`, turning a symbolic bus
     interaction into a bus interaction message. -/
-def BusInteraction.eval (bi : BusInteraction (OutputExpression p))
-    (assignment : OutputVariable → ZMod p) : BusInteraction (ZMod p) :=
+def BusInteraction.eval { V: Type } (bi : BusInteraction (Expression V p))
+    (assignment : V → ZMod p) : BusInteraction (ZMod p) :=
   { busId := bi.busId,
     multiplicity := bi.multiplicity.eval assignment,
     payload := bi.payload.map (fun e => e.eval assignment) }
@@ -226,8 +227,8 @@ def InputCircuit.toOutputCircuit (circuit : InputCircuit p) : OutputCircuit p :=
 -- ANCHOR: sideEffects
 /-- The side effects of a circuit under a given assignment and bus semantics:
     the net multiplicity with which each tuple is sent to a *stateful* bus. -/
-def OutputCircuit.sideEffects (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
-    (assignment : OutputVariable → ZMod p) : BusState p :=
+def Circuit.sideEffects { V: Type } (circuit : Circuit V p) (busSemantics : BusSemantics p)
+    (assignment : V → ZMod p) : BusState p :=
   fun message =>
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
       (fun m => busSemantics.isStateful m.busId &&
@@ -254,17 +255,17 @@ def Derivations.methodFor :
     from `inputVars`: each output variable is either an input variable (reused)
     or a derived variable with a method that reads only input variables. -/
 def Derivations.cover (ds : Derivations p)
-    (inputVars outputVars : List OutputVariable) : Prop :=
+    (inputVars: List InputVariable) (outputVars : List OutputVariable) : Prop :=
   ∀ v ∈ outputVars,
     match v.powdrId? with
-    | some _ => v ∈ inputVars
+    | some id => ⟨v.name, id⟩ ∈ inputVars
     | none => ∃ cm, ds.methodFor v = some cm ∧ ∀ x ∈ cm.vars, x ∈ inputVars
 -- ANCHOR_END: methodForCover
 
 omit [Fact p.Prime] in
 /- Support lemma, does not require audit. -/
 theorem Derivations.methodFor_isSome (ds : Derivations p)
-    {inputVars outputVars : List OutputVariable} (h : ds.cover inputVars outputVars)
+    {inputVars : List InputVariable } {outputVars : List OutputVariable} (h : ds.cover inputVars outputVars)
     {v : OutputVariable} (hv : v ∈ outputVars) (hp : v.powdrId? = none) :
     (ds.methodFor v).isSome := by
   have hc := h v hv
@@ -276,13 +277,13 @@ theorem Derivations.methodFor_isSome (ds : Derivations p)
 /-- Witness generation on a variable `ds` covers. Every powdr-ID (input)
     variable passes through unchanged; every other variable is computed by the
     method `ds` records for it. -/
-def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List OutputVariable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : OutputVariable → ZMod p)
+def Derivations.witgen (ds : Derivations p) {inputVars: List InputVariable } { outputVars : List OutputVariable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : InputVariable → ZMod p)
     (v : OutputVariable) (hv : v ∈ outputVars) : ZMod p :=
   match hp : v.powdrId? with
   -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
   -- variable of the output circuit also exists in the input circuit.
-  | some _ => inputAssignment v
+  | some id => inputAssignment ⟨v.name, id⟩
   | none => ((ds.methodFor v).get (ds.methodFor_isSome h hv hp)).eval inputAssignment
 -- ANCHOR_END: witgen
 
@@ -290,8 +291,8 @@ def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List OutputV
 
 -- ANCHOR: admissible
 /-- Whether a given assignment is admissible under the bus semantics. -/
-def OutputCircuit.admissible (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
-    (assignment : OutputVariable → ZMod p) : Prop :=
+def Circuit.admissible { V: Type } (circuit : Circuit V p) (busSemantics : BusSemantics p)
+    (assignment : V → ZMod p) : Prop :=
   busSemantics.admissible
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
       (fun m => decide (m.multiplicity ≠ 0) && busSemantics.isStateful m.busId))
@@ -301,8 +302,8 @@ def OutputCircuit.admissible (circuit : OutputCircuit p) (busSemantics : BusSema
 /-- Whether a circuit is satisfied under a given assignment and bus semantics,
     i.e., whether it satisfies all algebraic constraints and every active bus
     interaction message is accepted. -/
-def OutputCircuit.satisfies (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
-    (assignment : OutputVariable → ZMod p) : Prop :=
+def Circuit.satisfies { V: Type } (circuit : Circuit V p) (busSemantics : BusSemantics p)
+    (assignment : V → ZMod p) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.eval assignment = 0) ∧
   (∀ bi ∈ circuit.busInteractions,
     let message := bi.eval assignment
@@ -312,7 +313,7 @@ def OutputCircuit.satisfies (circuit : OutputCircuit p) (busSemantics : BusSeman
 -- ANCHOR: guaranteesInvariants
 /-- Whether a circuit guarantees that all invariants are maintained under a
     given bus semantics. -/
-def OutputCircuit.guaranteesInvariants (circuit : OutputCircuit p)
+def Circuit.guaranteesInvariants { V: Type } (circuit : Circuit V p)
     (busSemantics : BusSemantics p) : Prop :=
   ∀ assignment, circuit.satisfies busSemantics assignment →
     ∀ bi ∈ circuit.busInteractions,
@@ -326,7 +327,7 @@ def OutputCircuit.guaranteesInvariants (circuit : OutputCircuit p)
     circuit, there exists a corresponding satisfying assignment of the original
     circuit *with equal side effects*. Also, the optimized circuit must
     maintain all invariants guaranteed by the original circuit. -/
-def OutputCircuit.isSoundReplacementOf (optimizedCircuit originalCircuit : OutputCircuit p)
+def OutputCircuit.isSoundReplacementOf (optimizedCircuit : OutputCircuit p) (originalCircuit : InputCircuit p)
     (busSemantics : BusSemantics p) : Prop :=
   (∀ assignment, optimizedCircuit.satisfies busSemantics assignment →
     ∃ assignment', originalCircuit.satisfies busSemantics assignment' ∧
@@ -340,7 +341,7 @@ def OutputCircuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Outpu
 /-- Whether an optimized circuit is a complete replacement for an original
     circuit. -/
 def OutputCircuit.isCompleteReplacementOf
-    (optimizedCircuit originalCircuit : OutputCircuit p)
+    (optimizedCircuit: OutputCircuit p) (originalCircuit : InputCircuit p)
     (busSemantics : BusSemantics p) (ds : Derivations p) : Prop :=
 
   -- `ds` does not contain unused derivations.
@@ -400,8 +401,8 @@ def Optimizer.isCorrect (optimizer : Optimizer p)
     (busSemantics : BusSemantics p) (b : DegreeBound) : Prop :=
   (∀ inputCircuit : InputCircuit p,
     let (optimizedCircuit, derivations) := optimizer inputCircuit
-    (optimizedCircuit.isSoundReplacementOf inputCircuit.toOutputCircuit busSemantics) ∧
-    (optimizedCircuit.isCompleteReplacementOf inputCircuit.toOutputCircuit
+    (optimizedCircuit.isSoundReplacementOf inputCircuit busSemantics) ∧
+    (optimizedCircuit.isCompleteReplacementOf inputCircuit
       busSemantics derivations))
   ∧ optimizerRespectsDegreeBound b optimizer
 -- ANCHOR_END: isCorrect

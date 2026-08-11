@@ -67,13 +67,12 @@ def OutputCircuit.implies (self other : OutputCircuit p) (busSemantics : BusSema
 /-- Every no-powdr-ID variable of `cs` is computed by `ds`'s method for it, reading only powdr-ID
     variables from `inputVars`. Threaded through passes; the pipeline top uses it to match the
     spec's `witgen` output and `Derivations.cover`. -/
-def OutputCircuit.reconstructs (inputVars : List OutputVariable) (cs : OutputCircuit p)
+def OutputCircuit.reconstructs (inputVars : List InputVariable) (cs : OutputCircuit p)
     (ds : Derivations p) (e : OutputVariable → ZMod p) : Prop :=
   ∀ v ∈ cs.vars, v.powdrId? = none →
     ∃ cm, Derivations.methodFor ds v = some cm ∧
-      (∀ x ∈ cm.vars, x.powdrId?.isSome) ∧
       (∀ x ∈ cm.vars, x ∈ inputVars) ∧
-      cm.eval e = e v
+      cm.eval (fun x => e x.toVariable) = e v
 
 theorem OutputCircuit.implies_refl (cs : OutputCircuit p) (busSemantics : BusSemantics p) :
     cs.implies cs busSemantics :=
@@ -120,7 +119,7 @@ def PassCorrect (cs out : OutputCircuit p) (dsLocal : Derivations p) (bs : BusSe
     ∃ env', out.satisfies bs env' ∧ out.admissible bs env' ∧
       cs.sideEffects bs env = out.sideEffects bs env' ∧
       (∀ v, v.powdrId?.isSome → env' v = env v) ∧
-      (∀ inputVars, (∀ v ∈ cs.vars, v.powdrId?.isSome → v ∈ inputVars) →
+      (∀ inputVars, (∀ v ∈ cs.vars, v.powdrId?.isSome → v.toInput ∈ inputVars) →
         ∀ dsIn, cs.reconstructs inputVars dsIn env →
           out.reconstructs inputVars (dsIn ++ dsLocal) env'))
 
@@ -145,16 +144,10 @@ theorem PassCorrect.andThen {cs mid out : OutputCircuit p} {bs : BusSemantics p}
   refine ⟨env2, hs2, ha2, (he1.trans he2),
     ⟨fun v hpw => by rw [hpw2 v hpw, hpw1 v hpw],
       fun inputVars hpowIn dsIn hrec => ?_⟩⟩
-  have hmidIn : ∀ v ∈ mid.vars, v.powdrId?.isSome → v ∈ inputVars :=
+  have hmidIn : ∀ v ∈ mid.vars, v.powdrId?.isSome → v.toInput ∈ inputVars :=
     fun v hv hpw => hpowIn v (hf3 v hv hpw) hpw
   have := hr2 inputVars hmidIn (dsIn ++ df) (hr1 inputVars hpowIn dsIn hrec)
   rwa [List.append_assoc] at this
-
-/-- A `PassCorrect` gives the audited `isSoundReplacementOf`. The completeness half is discharged
-    at the pipeline top (`Implementation/Optimizer.lean`). -/
-theorem PassCorrect.toSound {cs out : OutputCircuit p} {ds : Derivations p}
-    {bs : BusSemantics p} (h : PassCorrect cs out ds bs) : out.isSoundReplacementOf cs bs :=
-  ⟨h.1, h.2.1⟩
 
 /-- The result of a verified pass: transformed system, introduced derivations, correctness proof. -/
 structure PassResult {p : ℕ} (cs : OutputCircuit p) (bs : BusSemantics p) where
@@ -184,6 +177,124 @@ theorem OutputCircuit.mem_vars_of_payload {cs : OutputCircuit p}
     {bi : BusInteraction (OutputExpression p)} {e : OutputExpression p} {x : OutputVariable}
     (hbi : bi ∈ cs.busInteractions) (he : e ∈ bi.payload) (hx : x ∈ e.vars) : x ∈ cs.vars :=
   OutputCircuit.mem_vars.2 (Or.inr ⟨bi, hbi, Or.inr ⟨e, he, hx⟩⟩)
+
+private theorem OutputVariable.toInput_toVariable {v : OutputVariable} (h : v.powdrId?.isSome) :
+    v.toInput.toVariable = v := by
+  cases v with
+  | mk name powdrId =>
+      cases powdrId with
+      | none => simp at h
+      | some id => simp [OutputVariable.toInput, InputVariable.toVariable]
+
+private theorem outputExprEval_toInput (e : OutputExpression p) (env : OutputVariable → ZMod p)
+    (hpow : ∀ v ∈ e.vars, v.powdrId?.isSome) :
+    (e.mapVar OutputVariable.toInput).eval (fun x => env x.toVariable) = e.eval env := by
+  induction e with
+  | const n => rfl
+  | var v =>
+      have hv : v.powdrId?.isSome := hpow v (by simp [Expression.vars])
+      simp [Expression.mapVar, Expression.eval, OutputVariable.toInput_toVariable hv]
+  | add a b iha ihb =>
+      simp [Expression.mapVar, Expression.eval,
+        iha (fun v hv => hpow v (by simp [Expression.vars, hv])),
+        ihb (fun v hv => hpow v (by simp [Expression.vars, hv]))]
+  | mul a b iha ihb =>
+      simp [Expression.mapVar, Expression.eval,
+        iha (fun v hv => hpow v (by simp [Expression.vars, hv])),
+        ihb (fun v hv => hpow v (by simp [Expression.vars, hv]))]
+
+private theorem busEval_toInput (bi : BusInteraction (OutputExpression p))
+    (env : OutputVariable → ZMod p)
+    (hmultIn : ∀ v ∈ bi.multiplicity.vars, v.powdrId?.isSome)
+    (hpayloadIn : ∀ e ∈ bi.payload, ∀ v ∈ e.vars, v.powdrId?.isSome) :
+    ({ busId := bi.busId,
+       multiplicity := bi.multiplicity.mapVar OutputVariable.toInput,
+       payload := bi.payload.map (·.mapVar OutputVariable.toInput) } : BusInteraction (InputExpression p)).eval
+      (fun x => env x.toVariable) = bi.eval env := by
+  have hmult : (bi.multiplicity.mapVar OutputVariable.toInput).eval (fun x => env x.toVariable)
+      = bi.multiplicity.eval env :=
+    outputExprEval_toInput bi.multiplicity env hmultIn
+  have hpayEq :
+      bi.payload.map (fun e => e.mapVar OutputVariable.toInput |>.eval (fun x => env x.toVariable))
+        = bi.payload.map (fun e => e.eval env) := by
+    apply List.map_congr_left
+    intro e he
+    exact outputExprEval_toInput e env (hpayloadIn e he)
+  have hpayEq' :
+      List.map ((fun e => e.eval (fun x => env x.toVariable)) ∘ fun x => x.mapVar OutputVariable.toInput)
+        bi.payload = bi.payload.map (fun e => e.eval env) := by
+    simpa [Function.comp] using hpayEq
+  rw [BusInteraction.eval, BusInteraction.eval, hmult, List.map_map, hpayEq']
+
+private theorem OutputCircuit.satisfies_toInput {cs : OutputCircuit p} {bs : BusSemantics p}
+    (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) (env : OutputVariable → ZMod p) :
+    cs.satisfies bs env →
+      (cs.mapVar OutputVariable.toInput).satisfies bs (fun x => env x.toVariable) := by
+  intro hsat
+  refine ⟨?_, ?_⟩
+  · intro c hc
+    rcases List.mem_map.mp hc with ⟨c', hc', rfl⟩
+    simpa [outputExprEval_toInput c' env (fun v hv => hpow v (OutputCircuit.mem_vars_of_constraint hc' hv))]
+      using hsat.1 c' hc'
+  · intro bi hbi
+    rcases List.mem_map.mp hbi with ⟨bi', hbi', rfl⟩
+    have hbe := busEval_toInput bi' env
+      (fun v hv => hpow v (OutputCircuit.mem_vars_of_mult hbi' hv))
+      (fun e he v hv => hpow v (OutputCircuit.mem_vars_of_payload hbi' he hv))
+    simpa [hbe] using hsat.2 bi' hbi'
+
+private theorem OutputCircuit.sideEffects_toInput {cs : OutputCircuit p} {bs : BusSemantics p}
+    (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) (env : OutputVariable → ZMod p) :
+    (cs.mapVar OutputVariable.toInput).sideEffects bs (fun x => env x.toVariable) = cs.sideEffects bs env := by
+  have hmap : (cs.mapVar OutputVariable.toInput).busInteractions.map
+      (fun bi => bi.eval (fun x => env x.toVariable))
+      = cs.busInteractions.map (fun bi => bi.eval env) := by
+    rw [Circuit.mapVar, List.map_map]
+    refine List.map_congr_left ?_
+    intro bi hbi
+    exact busEval_toInput bi env
+      (fun v hv => hpow v (OutputCircuit.mem_vars_of_mult hbi hv))
+      (fun e he v hv => hpow v (OutputCircuit.mem_vars_of_payload hbi he hv))
+  unfold Circuit.sideEffects
+  rw [hmap]
+
+private theorem OutputCircuit.guaranteesInvariants_toInput {cs : OutputCircuit p} {bs : BusSemantics p}
+    (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) :
+    (cs.mapVar OutputVariable.toInput).guaranteesInvariants bs → cs.guaranteesInvariants bs := by
+  intro hgi env hsat bi hbi
+  change (bi.eval env).multiplicity ≠ 0 → bs.maintainsInvariants (bi.eval env)
+  let bi' : BusInteraction (InputExpression p) :=
+    { busId := bi.busId,
+      multiplicity := bi.multiplicity.mapVar OutputVariable.toInput,
+      payload := bi.payload.map (·.mapVar OutputVariable.toInput) }
+  have hbi' : bi' ∈ (cs.mapVar OutputVariable.toInput).busInteractions := by
+    exact List.mem_map.mpr ⟨bi, hbi, rfl⟩
+  have hbe := busEval_toInput bi env
+    (fun v hv => hpow v (OutputCircuit.mem_vars_of_mult hbi hv))
+    (fun e he v hv => hpow v (OutputCircuit.mem_vars_of_payload hbi he hv))
+  intro hmult
+  have hmaint := hgi (fun x => env x.toVariable) (OutputCircuit.satisfies_toInput hpow env hsat) bi' hbi'
+  change (bi'.eval (fun x => env x.toVariable)).multiplicity ≠ 0 →
+      bs.maintainsInvariants (bi'.eval (fun x => env x.toVariable)) at hmaint
+  have hmult' : (bi'.eval (fun x => env x.toVariable)).multiplicity ≠ 0 := by
+    simpa [bi', hbe] using hmult
+  have hres := hmaint hmult'
+  simpa [bi', hbe] using hres
+
+/-- A `PassCorrect` gives the audited `isSoundReplacementOf` when the source circuit carries only
+    powdr-id variables. The completeness half is discharged at the pipeline top
+    (`Implementation/Optimizer.lean`). -/
+theorem PassCorrect.toSound {cs out : OutputCircuit p} {ds : Derivations p}
+    {bs : BusSemantics p} (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) (h : PassCorrect cs out ds bs) :
+    out.isSoundReplacementOf (cs.mapVar OutputVariable.toInput) bs := by
+  refine ⟨?_, ?_⟩
+  · intro assignment hsat
+    obtain ⟨assignment', hsat', hside⟩ := h.1 assignment hsat
+    refine ⟨fun x => assignment' x.toVariable, OutputCircuit.satisfies_toInput hpow assignment' hsat', ?_⟩
+    rw [OutputCircuit.sideEffects_toInput hpow assignment']
+    exact hside
+  · intro hgi
+    exact h.2.1 (OutputCircuit.guaranteesInvariants_toInput hpow hgi)
 
 /-! ## Decidable degree-bound check
 

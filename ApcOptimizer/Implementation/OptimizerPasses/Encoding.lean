@@ -314,8 +314,11 @@ def VarRegistry.decodeExpr (r : VarRegistry) : DenseExpr p → OutputExpression 
 
 def VarRegistry.decodeCM (r : VarRegistry) : DenseComputationMethod p → ComputationMethod p
   | .const c => .const c
-  | .quotientOrZero num den => .quotientOrZero (r.decodeExpr num) (r.decodeExpr den)
-  | .ifEqZero cond thenM elseM => .ifEqZero (r.decodeExpr cond) (r.decodeCM thenM) (r.decodeCM elseM)
+  | .quotientOrZero num den =>
+      .quotientOrZero ((r.decodeExpr num).mapVar OutputVariable.toInput)
+        ((r.decodeExpr den).mapVar OutputVariable.toInput)
+  | .ifEqZero cond thenM elseM =>
+      .ifEqZero ((r.decodeExpr cond).mapVar OutputVariable.toInput) (r.decodeCM thenM) (r.decodeCM elseM)
 
 def VarRegistry.decodeBI (r : VarRegistry) (bi : BusInteraction (DenseExpr p)) :
     BusInteraction (OutputExpression p) :=
