@@ -73,13 +73,13 @@ def parseFileWith {p : ℕ} {τ : Type}
 /-- The OpenVM (BabyBear) file parser: resolve the `BusMapList` to a lookup, dropping `next_free_id`
     (the CLI does not need powdr's column cursor). -/
 def parseOpenVm (contents : String) :
-    Except String (Circuit babyBear × (Nat → Option OpenVmBusType)) :=
+    Except String (Circuit babyBear × BusMap) :=
   (parseJsonSystem (p := babyBear) contents).map (fun (s, bm, _) => (s, bm.toBusMap))
 
 /-- The SP1 (KoalaBear) file parser. -/
 def parseSp1 (contents : String) :
     Except String (Circuit ApcOptimizer.SP1.koalaBear ×
-      (Nat → Option ApcOptimizer.SP1.Sp1BusType)) :=
+      ApcOptimizer.SP1.BusMap) :=
   (parseJsonSystemSp1 (p := ApcOptimizer.SP1.koalaBear) contents).map
     (fun (s, bm, _) => (s, bm.toBusMap))
 
