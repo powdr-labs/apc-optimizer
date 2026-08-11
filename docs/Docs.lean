@@ -56,7 +56,7 @@ In the remainder of this document, we formalize the properties that an optimizer
 
 # Variables, expressions and assignments
 
-A {deftech}_variable_ is how the _runtime witness data_ is referenced in a circuit. Every variable of the circuit exported by powdr carries a _powdr ID_, so its type records the ID unconditionally:
+A {deftech}_variable_ is how the _runtime witness data_ is referenced in a circuit. Every variable of the circuit exported by powdr carries a _powdr ID_:
 
 {docstring InputVariable}
 
