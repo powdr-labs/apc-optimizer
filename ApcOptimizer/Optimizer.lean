@@ -29,7 +29,7 @@ namespace ApcOptimizer.OpenVM
 
 /-- Optimizer specialized for the OpenVM semantics. -/
 def openVmOptimizer (busMap : BusMap := defaultBusMap) (b : DegreeBound := defaultDegreeBound) :
-    Circuit babyBear → Circuit babyBear × Derivations babyBear :=
+    Optimizer babyBear :=
   optimizerWithBusFacts b (openVmFacts babyBear busMap)
 
 end ApcOptimizer.OpenVM
@@ -38,7 +38,7 @@ namespace ApcOptimizer.SP1
 
 /-- Optimizer specialized for the SP1 semantics. -/
 def sp1Optimizer (busMap : BusMap := defaultBusMap) (b : DegreeBound := defaultDegreeBound) :
-    Circuit koalaBear → Circuit koalaBear × Derivations koalaBear :=
+    Optimizer koalaBear :=
   optimizerWithBusFacts b (sp1Facts koalaBear busMap)
 
 end ApcOptimizer.SP1
