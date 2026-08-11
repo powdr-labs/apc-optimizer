@@ -151,7 +151,7 @@ private theorem size_fold_map_resolve (r : VarRegistry) :
 
 /-- The occurrence list of a decoded system is the dense occurrence list, resolved elementwise. -/
 theorem VarRegistry.decodeCS_occ (r : VarRegistry) (d : DenseConstraintSystem p) :
-    (r.decodeCS d).algebraicConstraints.flatMap ExpressionG.vars ++
+    (r.decodeCS d).algebraicConstraints.flatMap Expression.vars ++
         (r.decodeCS d).busInteractions.flatMap BusInteraction.vars
       = d.occ.map r.resolve := by
   simp only [VarRegistry.decodeCS, DenseConstraintSystem.occ, List.map_append]

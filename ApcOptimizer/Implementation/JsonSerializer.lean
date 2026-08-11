@@ -33,7 +33,7 @@ namespace ApcOptimizer.Serialize
 /-- Distinct variables occurring anywhere in the system and (optionally) its derivations, so each
     gets a stable fresh id shared across its occurrences and derived-column entry. -/
 def distinctVars (cs : OutputCircuit p) (ds : Derivations p := []) : List OutputVariable :=
-  let occ := cs.algebraicConstraints.flatMap ExpressionG.vars ++
+  let occ := cs.algebraicConstraints.flatMap Expression.vars ++
     cs.busInteractions.flatMap BusInteraction.vars ++
     ds.flatMap (fun (v, cm) => v :: cm.vars)
   (occ.foldl (init := (∅ : Std.HashSet OutputVariable)) (·.insert ·)).toList

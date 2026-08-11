@@ -28,33 +28,33 @@ structure InputVariable where
   deriving DecidableEq, Repr
 
 /-- An arithmetic expression over variables of type `V` and field constants. -/
-inductive ExpressionG (V : Type) (p : ℕ) where
+inductive Expression (V : Type) (p : ℕ) where
   /-- A constant field element. -/
   | const (n : ZMod p)
   /-- A reference to a variable. -/
   | var (x : V)
   /-- The sum of two expressions. -/
-  | add (e1 e2 : ExpressionG V p)
+  | add (e1 e2 : Expression V p)
   /-- The product of two expressions. -/
-  | mul (e1 e2 : ExpressionG V p)
+  | mul (e1 e2 : Expression V p)
 
 /-- Map an expression between variable types -/
-def ExpressionG.mapVar {V W : Type} (f : V → W) : ExpressionG V p → ExpressionG W p
+def Expression.mapVar {V W : Type} (f : V → W) : Expression V p → Expression W p
   | .const n => .const n
   | .var x => .var (f x)
   | .add e1 e2 => .add (e1.mapVar f) (e2.mapVar f)
   | .mul e1 e2 => .mul (e1.mapVar f) (e2.mapVar f)
 
 /-- An arithmetic expression over circuit variables and field constants. -/
-abbrev OutputExpression (p : ℕ) := ExpressionG OutputVariable p
+abbrev OutputExpression (p : ℕ) := Expression OutputVariable p
 
 /-- An arithmetic expression over circuit variables and field constants. -/
-abbrev InputExpression (p : ℕ) := ExpressionG InputVariable p
+abbrev InputExpression (p : ℕ) := Expression InputVariable p
 
 /-- Evaluate an expression under an `assignment` of variables to field
     elements. -/
 -- ANCHOR: exprEval
-def ExpressionG.eval {V : Type} (e : ExpressionG V p)
+def Expression.eval {V : Type} (e : Expression V p)
     (assignment : V → ZMod p) : ZMod p :=
   match e with
   | .const n => n
@@ -65,7 +65,7 @@ def ExpressionG.eval {V : Type} (e : ExpressionG V p)
 
 -- ANCHOR: degree
 /-- The multiplicative degree of an expression. -/
-def ExpressionG.degree {V : Type} : ExpressionG V p → Nat
+def Expression.degree {V : Type} : Expression V p → Nat
   | .const _ => 0
   | .var _ => 1
   | .add e1 e2 => max e1.degree e2.degree
@@ -73,7 +73,7 @@ def ExpressionG.degree {V : Type} : ExpressionG V p → Nat
 -- ANCHOR_END: degree
 
 /-- The variables occurring in an expression. -/
-def ExpressionG.vars {V : Type} : ExpressionG V p → List V
+def Expression.vars {V : Type} : Expression V p → List V
   | .const _ => []
   | .var x => [x]
   | .add e1 e2 => e1.vars ++ e2.vars
@@ -185,10 +185,10 @@ abbrev BusState (p : ℕ) := BusMessage p → ZMod p
 structure CircuitG (V : Type) (p : ℕ) where
   /-- The list of algebraic constraints. For an assignment to be valid, all
       of them must evaluate to zero. -/
-  algebraicConstraints : List (ExpressionG V p)
+  algebraicConstraints : List (Expression V p)
   /-- The list of symbolic bus interactions. These include both the stateless
       bus interactions (lookups) and the stateful bus interactions. -/
-  busInteractions : List (BusInteraction (ExpressionG V p))
+  busInteractions : List (BusInteraction (Expression V p))
 
 /-- Map a circuit between variable types -/
 def CircuitG.mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) : CircuitG W p :=
@@ -206,9 +206,9 @@ abbrev InputCircuit (p : ℕ) := CircuitG InputVariable p
 
 /-- The variables occurring anywhere in a circuit. -/
 def CircuitG.vars {V : Type} (circuit : CircuitG V p) : List V :=
-  circuit.algebraicConstraints.flatMap ExpressionG.vars ++
+  circuit.algebraicConstraints.flatMap Expression.vars ++
     circuit.busInteractions.flatMap
-      (fun bi => bi.multiplicity.vars ++ bi.payload.flatMap ExpressionG.vars)
+      (fun bi => bi.multiplicity.vars ++ bi.payload.flatMap Expression.vars)
 
 --------- Circuits exported by powdr ---------
 

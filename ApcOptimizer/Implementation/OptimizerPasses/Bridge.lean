@@ -398,15 +398,15 @@ private theorem specExpr_eval_congr (e : OutputExpression p) (e1 e2 : OutputVari
     (h : ∀ v ∈ e.vars, e1 v = e2 v) : e.eval e1 = e.eval e2 := by
   induction e with
   | const n => rfl
-  | var x => exact h x (by simp [ExpressionG.vars])
+  | var x => exact h x (by simp [Expression.vars])
   | add a b iha ihb =>
-      simp only [ExpressionG.eval]
-      rw [iha (fun v hv => h v (by simp [ExpressionG.vars, hv])),
-          ihb (fun v hv => h v (by simp [ExpressionG.vars, hv]))]
+      simp only [Expression.eval]
+      rw [iha (fun v hv => h v (by simp [Expression.vars, hv])),
+          ihb (fun v hv => h v (by simp [Expression.vars, hv]))]
   | mul a b iha ihb =>
-      simp only [ExpressionG.eval]
-      rw [iha (fun v hv => h v (by simp [ExpressionG.vars, hv])),
-          ihb (fun v hv => h v (by simp [ExpressionG.vars, hv]))]
+      simp only [Expression.eval]
+      rw [iha (fun v hv => h v (by simp [Expression.vars, hv])),
+          ihb (fun v hv => h v (by simp [Expression.vars, hv]))]
 
 private theorem specCM_eval_congr (cm : ComputationMethod p) (e1 e2 : OutputVariable → ZMod p)
     (h : ∀ v ∈ cm.vars, e1 v = e2 v) : cm.eval e1 = cm.eval e2 := by

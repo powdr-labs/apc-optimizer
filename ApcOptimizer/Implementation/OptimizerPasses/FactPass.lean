@@ -27,7 +27,7 @@ the optimizer's effectiveness priority. -/
 /-- Number of distinct variables via a `HashSet` (linear); same value as `OutputCircuit.size`,
     used only for the loop measure. -/
 def OutputCircuit.varCount (cs : OutputCircuit p) : Nat :=
-  ((cs.algebraicConstraints.flatMap ExpressionG.vars ++
+  ((cs.algebraicConstraints.flatMap Expression.vars ++
       cs.busInteractions.flatMap BusInteraction.vars).foldl
         (init := (∅ : Std.HashSet OutputVariable)) (·.insert ·)).size
 

@@ -15,15 +15,15 @@ theorem OutputExpression.eval_congr (e : OutputExpression p) (env1 env2 : Output
     (h : ∀ x ∈ e.vars, env1 x = env2 x) : e.eval env1 = e.eval env2 := by
   induction e with
   | const n => rfl
-  | var x => exact h x (by simp [ExpressionG.vars])
+  | var x => exact h x (by simp [Expression.vars])
   | add a b iha ihb =>
-      simp only [ExpressionG.eval]
-      rw [iha (fun x hx => h x (by simp [ExpressionG.vars, hx])),
-          ihb (fun x hx => h x (by simp [ExpressionG.vars, hx]))]
+      simp only [Expression.eval]
+      rw [iha (fun x hx => h x (by simp [Expression.vars, hx])),
+          ihb (fun x hx => h x (by simp [Expression.vars, hx]))]
   | mul a b iha ihb =>
-      simp only [ExpressionG.eval]
-      rw [iha (fun x hx => h x (by simp [ExpressionG.vars, hx])),
-          ihb (fun x hx => h x (by simp [ExpressionG.vars, hx]))]
+      simp only [Expression.eval]
+      rw [iha (fun x hx => h x (by simp [Expression.vars, hx])),
+          ihb (fun x hx => h x (by simp [Expression.vars, hx]))]
 
 theorem BusInteraction.eval_congr (bi : BusInteraction (OutputExpression p))
     (env1 env2 : OutputVariable → ZMod p) (h : ∀ x ∈ bi.vars, env1 x = env2 x) :

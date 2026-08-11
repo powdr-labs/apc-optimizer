@@ -361,7 +361,7 @@ theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List OutputV
 `Optimizer.isCorrect` feeds the optimizer `CircuitG.toCircuit` of a powdr circuit; the
 completeness proof below needs that all its variables carry a powdr ID. -/
 
-theorem ExpressionG.vars_mapVar {V W : Type} (f : V → W) (e : ExpressionG V p) :
+theorem Expression.vars_mapVar {V W : Type} (f : V → W) (e : Expression V p) :
     (e.mapVar f).vars = e.vars.map f := by
   induction e with
   | const n => rfl
@@ -372,7 +372,7 @@ theorem ExpressionG.vars_mapVar {V W : Type} (f : V → W) (e : ExpressionG V p)
 theorem CircuitG.vars_mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) :
     (circuit.mapVar f).vars = circuit.vars.map f := by
   simp [CircuitG.mapVar, CircuitG.vars, List.flatMap_map, List.map_flatMap,
-    ExpressionG.vars_mapVar]
+    Expression.vars_mapVar]
 
 theorem CircuitG.powdrId?_isSome_of_mem_vars (circuit : InputCircuit p) :
     ∀ v ∈ circuit.toCircuit.vars, v.powdrId?.isSome := by
@@ -381,7 +381,7 @@ theorem CircuitG.powdrId?_isSome_of_mem_vars (circuit : InputCircuit p) :
   obtain ⟨u, -, rfl⟩ := hv
   rfl
 
-theorem ExpressionG.degree_mapVar {V W : Type} (f : V → W) (e : ExpressionG V p) :
+theorem Expression.degree_mapVar {V W : Type} (f : V → W) (e : Expression V p) :
     (e.mapVar f).degree = e.degree := by
   induction e with
   | const n => rfl
@@ -391,7 +391,7 @@ theorem ExpressionG.degree_mapVar {V W : Type} (f : V → W) (e : ExpressionG V 
 
 theorem CircuitG.withinDegree_mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p)
     (b : DegreeBound) : (circuit.mapVar f).withinDegree b ↔ circuit.withinDegree b := by
-  simp [CircuitG.withinDegree, CircuitG.mapVar, ExpressionG.degree_mapVar]
+  simp [CircuitG.withinDegree, CircuitG.mapVar, Expression.degree_mapVar]
 
 /-- The optimizer on a converted circuit is correct: its output soundly replaces the input and
     completely replaces the input's real-trace executions (`witgen` on any admissible input trace

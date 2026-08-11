@@ -64,14 +64,14 @@ Variables of the circuits the optimizer works on may also have been introduced b
 
 {docstring OutputVariable}
 
-An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions. It is generic in the variable type, so the same definition serves both kinds of circuit; {name}`OutputExpression` abbreviates the optimizer's instance {lean}`ExpressionG OutputVariable`.
+An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions. It is generic in the variable type, so the same definition serves both kinds of circuit; {name}`OutputExpression` abbreviates the optimizer's instance {lean}`Expression OutputVariable`.
 
-{docstring ExpressionG}
+{docstring Expression}
 
 An {deftech}_assignment_ maps every variable to a concrete field value. An expression is _evaluated_ under an assignment by folding its constants, variables, sums, and products into a single field element.
 
 ```anchor exprEval
-def ExpressionG.eval {V : Type} (e : ExpressionG V p)
+def Expression.eval {V : Type} (e : Expression V p)
     (assignment : V → ZMod p) : ZMod p :=
   match e with
   | .const n => n
@@ -321,7 +321,7 @@ def OutputCircuit.isCompleteReplacementOf
 The {deftech}_multiplicative degree_ of an expression is defined structurally: constants have degree 0, variables have degree 1, addition takes the maximum, and multiplication adds the degrees.
 ```anchor degree
 /-- The multiplicative degree of an expression. -/
-def ExpressionG.degree {V : Type} : ExpressionG V p → Nat
+def Expression.degree {V : Type} : Expression V p → Nat
   | .const _ => 0
   | .var _ => 1
   | .add e1 e2 => max e1.degree e2.degree
