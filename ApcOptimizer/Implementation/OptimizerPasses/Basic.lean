@@ -178,14 +178,6 @@ theorem OutputCircuit.mem_vars_of_payload {cs : OutputCircuit p}
     (hbi : bi ∈ cs.busInteractions) (he : e ∈ bi.payload) (hx : x ∈ e.vars) : x ∈ cs.vars :=
   OutputCircuit.mem_vars.2 (Or.inr ⟨bi, hbi, Or.inr ⟨e, he, hx⟩⟩)
 
-private theorem OutputVariable.toInput_toVariable {v : OutputVariable} (h : v.powdrId?.isSome) :
-    v.toInput.toVariable = v := by
-  cases v with
-  | mk name powdrId =>
-      cases powdrId with
-      | none => simp at h
-      | some id => simp [OutputVariable.toInput, InputVariable.toVariable]
-
 private theorem outputExprEval_toInput (e : OutputExpression p) (env : OutputVariable → ZMod p)
     (hpow : ∀ v ∈ e.vars, v.powdrId?.isSome) :
     (e.mapVar OutputVariable.toInput).eval (fun x => env x.toVariable) = e.eval env := by

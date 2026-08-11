@@ -217,7 +217,7 @@ theorem VarRegistry.decodeBI_eval (reg : VarRegistry) (bi : BusInteraction (Dens
 theorem VarRegistry.decodeCS_satisfies (reg : VarRegistry) (d : DenseConstraintSystem p)
     (bs : BusSemantics p) (E : OutputVariable → ZMod p) :
     (reg.decodeCS d).satisfies bs E ↔ d.satisfies bs (fun i => E (reg.resolve i)) := by
-  simp only [OutputCircuit.satisfies, DenseConstraintSystem.satisfies, VarRegistry.decodeCS,
+  simp only [Circuit.satisfies, DenseConstraintSystem.satisfies, VarRegistry.decodeCS,
     List.mem_map, forall_exists_index, and_imp]
   constructor
   · rintro ⟨h1, h2⟩
@@ -247,7 +247,7 @@ theorem VarRegistry.decodeCS_admissible (reg : VarRegistry) (d : DenseConstraint
     simp only [Function.comp_apply]
     exact reg.decodeBI_eval bi E
   have hAeq : (reg.decodeCS d).admissible bs E = d.admissible bs (fun i => E (reg.resolve i)) := by
-    unfold OutputCircuit.admissible DenseConstraintSystem.admissible
+    unfold Circuit.admissible DenseConstraintSystem.admissible
     rw [hlist]
   exact iff_of_eq hAeq
 
@@ -279,7 +279,7 @@ theorem VarRegistry.decodeCS_sideEffects (reg : VarRegistry) (d : DenseConstrain
 theorem VarRegistry.decodeCS_guaranteesInvariants (reg : VarRegistry) {d : DenseConstraintSystem p}
     (bs : BusSemantics p) (hc : d.CoveredBy reg) :
     (reg.decodeCS d).guaranteesInvariants bs ↔ d.guaranteesInvariants bs := by
-  unfold OutputCircuit.guaranteesInvariants DenseConstraintSystem.guaranteesInvariants
+  unfold Circuit.guaranteesInvariants DenseConstraintSystem.guaranteesInvariants
   constructor
   · -- decode → dense (needs coverage, to transport a dense env to a spec one)
     intro hgi denv hsat bi hbi
@@ -309,28 +309,62 @@ theorem VarRegistry.decodeCS_guaranteesInvariants (reg : VarRegistry) {d : Dense
     rw [reg.decodeCS_satisfies] at hsat
     exact fun hne => hgi _ hsat bi hbi hne
 
+private theorem decodeExprEval_toInput (reg : VarRegistry) (e : DenseExpr p) (E : OutputVariable → ZMod p)
+    (hinput : ∀ i ∈ e.vars, reg.isInput i = true) :
+    ((reg.decodeExpr e).mapVar OutputVariable.toInput).eval (fun x => E x.toVariable)
+      = e.eval (fun i => E (reg.resolve i)) := by
+  induction e with
+  | const n => rfl
+  | var i =>
+      have hi : (reg.resolve i).powdrId?.isSome = true := by
+        have hi' : reg.isInput i = true := hinput i (by simp [DenseExpr.vars])
+        simpa [VarRegistry.isInput] using hi'
+      rw [VarRegistry.decodeExpr, Expression.mapVar, Expression.eval, DenseExpr.eval]
+      rw [OutputVariable.toInput_toVariable hi]
+  | add a b iha ihb =>
+      simp [VarRegistry.decodeExpr, Expression.mapVar, Expression.eval, DenseExpr.eval,
+        iha (fun i hi => hinput i (by simp [DenseExpr.vars, hi])),
+        ihb (fun i hi => hinput i (by simp [DenseExpr.vars, hi]))]
+  | mul a b iha ihb =>
+      simp [VarRegistry.decodeExpr, Expression.mapVar, Expression.eval, DenseExpr.eval,
+        iha (fun i hi => hinput i (by simp [DenseExpr.vars, hi])),
+        ihb (fun i hi => hinput i (by simp [DenseExpr.vars, hi]))]
+
+private theorem outputExprVars_map_toInput (e : OutputExpression p) :
+    (e.mapVar OutputVariable.toInput).vars = e.vars.map OutputVariable.toInput := by
+  induction e with
+  | const n => rfl
+  | var x => rfl
+  | add a b iha ihb => simp [Expression.mapVar, Expression.vars, iha, ihb]
+  | mul a b iha ihb => simp [Expression.mapVar, Expression.vars, iha, ihb]
+
 theorem VarRegistry.decodeCM_eval (reg : VarRegistry) (cm : DenseComputationMethod p)
-    (E : OutputVariable → ZMod p) :
-    (reg.decodeCM cm).eval E = cm.eval (fun i => E (reg.resolve i)) := by
+    (E : OutputVariable → ZMod p) (hinput : ∀ i ∈ cm.vars, reg.isInput i = true) :
+    (reg.decodeCM cm).eval (fun x => E x.toVariable) = cm.eval (fun i => E (reg.resolve i)) := by
   induction cm with
   | const c => rfl
   | quotientOrZero num den =>
-      simp only [VarRegistry.decodeCM, ComputationMethod.eval, DenseComputationMethod.eval,
-        reg.decodeExpr_eval]
+      simp only [VarRegistry.decodeCM, ComputationMethod.eval, DenseComputationMethod.eval]
+      rw [decodeExprEval_toInput reg num E (fun i hi => hinput i (by simp [DenseComputationMethod.vars, hi])),
+        decodeExprEval_toInput reg den E (fun i hi => hinput i (by simp [DenseComputationMethod.vars, hi]))]
   | ifEqZero cond thenM elseM iht ihe =>
-      simp only [VarRegistry.decodeCM, ComputationMethod.eval, DenseComputationMethod.eval,
-        reg.decodeExpr_eval, iht, ihe]
+      simp only [VarRegistry.decodeCM, ComputationMethod.eval, DenseComputationMethod.eval]
+      rw [decodeExprEval_toInput reg cond E (fun i hi => hinput i (by
+            simp [DenseComputationMethod.vars, hi])),
+        iht (fun i hi => hinput i (by simp [DenseComputationMethod.vars, hi])),
+        ihe (fun i hi => hinput i (by simp [DenseComputationMethod.vars, hi]))]
 
 theorem VarRegistry.decodeCM_vars (reg : VarRegistry) (cm : DenseComputationMethod p) :
-    (reg.decodeCM cm).vars = cm.vars.map reg.resolve := by
+    (reg.decodeCM cm).vars = cm.vars.map (fun i => (reg.resolve i).toInput) := by
   induction cm with
   | const c => rfl
   | quotientOrZero num den =>
-      simp only [VarRegistry.decodeCM, ComputationMethod.vars, DenseComputationMethod.vars,
-        reg.decodeExpr_vars, List.map_append]
+      simp [VarRegistry.decodeCM, ComputationMethod.vars, DenseComputationMethod.vars,
+        outputExprVars_map_toInput, reg.decodeExpr_vars, List.map_map]
+      exact congrArg₂ List.append (by simp [Function.comp]) (by simp [Function.comp])
   | ifEqZero cond thenM elseM iht ihe =>
-      simp only [VarRegistry.decodeCM, ComputationMethod.vars, DenseComputationMethod.vars,
-        reg.decodeExpr_vars, iht, ihe, List.map_append]
+      simp [VarRegistry.decodeCM, ComputationMethod.vars, DenseComputationMethod.vars,
+        outputExprVars_map_toInput, reg.decodeExpr_vars, iht, ihe, List.map_map]
 
 /-- Decoding `methodFor`: for a valid ID, the decoded derivations' method for its resolved variable
     is the dense method, decoded. -/
@@ -408,21 +442,35 @@ private theorem specExpr_eval_congr (e : OutputExpression p) (e1 e2 : OutputVari
       rw [iha (fun v hv => h v (by simp [Expression.vars, hv])),
           ihb (fun v hv => h v (by simp [Expression.vars, hv]))]
 
-private theorem specCM_eval_congr (cm : ComputationMethod p) (e1 e2 : OutputVariable → ZMod p)
+private theorem specInputExpr_eval_congr (e : InputExpression p) (e1 e2 : InputVariable → ZMod p)
+    (h : ∀ v ∈ e.vars, e1 v = e2 v) : e.eval e1 = e.eval e2 := by
+  induction e with
+  | const n => rfl
+  | var x => exact h x (by simp [Expression.vars])
+  | add a b iha ihb =>
+      simp only [Expression.eval]
+      rw [iha (fun v hv => h v (by simp [Expression.vars, hv])),
+          ihb (fun v hv => h v (by simp [Expression.vars, hv]))]
+  | mul a b iha ihb =>
+      simp only [Expression.eval]
+      rw [iha (fun v hv => h v (by simp [Expression.vars, hv])),
+          ihb (fun v hv => h v (by simp [Expression.vars, hv]))]
+
+private theorem specCM_eval_congr (cm : ComputationMethod p) (e1 e2 : InputVariable → ZMod p)
     (h : ∀ v ∈ cm.vars, e1 v = e2 v) : cm.eval e1 = cm.eval e2 := by
   induction cm with
   | const c => rfl
   | quotientOrZero num den =>
       have hn : num.eval e1 = num.eval e2 :=
-        specExpr_eval_congr num _ _ (fun v hv => h v (List.mem_append_left _ hv))
+        specInputExpr_eval_congr num _ _ (fun v hv => h v (List.mem_append_left _ hv))
       have hd : den.eval e1 = den.eval e2 :=
-        specExpr_eval_congr den _ _ (fun v hv => h v (List.mem_append_right _ hv))
+        specInputExpr_eval_congr den _ _ (fun v hv => h v (List.mem_append_right _ hv))
       show (if den.eval e1 = 0 then 0 else (den.eval e1)⁻¹ * num.eval e1)
          = (if den.eval e2 = 0 then 0 else (den.eval e2)⁻¹ * num.eval e2)
       rw [hn, hd]
   | ifEqZero cond thenM elseM iht ihe =>
       have hc : cond.eval e1 = cond.eval e2 :=
-        specExpr_eval_congr cond _ _ (fun v hv => h v (by
+        specInputExpr_eval_congr cond _ _ (fun v hv => h v (by
           simp only [ComputationMethod.vars, List.mem_append]; exact Or.inl (Or.inl hv)))
       show (if cond.eval e1 = 0 then thenM.eval e1 else elseM.eval e1)
          = (if cond.eval e2 = 0 then thenM.eval e2 else elseM.eval e2)
@@ -707,16 +755,17 @@ theorem DensePassCorrect.lift {reg : VarRegistry} {d out : DenseConstraintSystem
     · intro v hpow; exact hpw4 v hpow
     · -- Reconstruction.
       intro inputVars hpowIn dsIn hrecIn
-      set inputVarIds := inputVars.filterMap reg.idOf? with hIVI
+      set inputVarIds := inputVars.filterMap (fun x => reg.idOf? x.toVariable) with hIVI
       have hpowD : ∀ i ∈ d.occ, reg.isInput i = true → i ∈ inputVarIds := by
         intro i hi hisT
         have hvi : reg.Valid i := DenseConstraintSystem.occ_valid hcd i hi
         have hvmem : reg.resolve i ∈ (reg.decodeCS d).vars :=
           (reg.mem_decodeCS_vars d).mpr ⟨i, hi, rfl⟩
         have hpow : (reg.resolve i).powdrId?.isSome := by simpa [VarRegistry.isInput] using hisT
-        have hin : reg.resolve i ∈ inputVars := hpowIn _ hvmem hpow
+        have hin : (reg.resolve i).toInput ∈ inputVars := hpowIn _ hvmem hpow
         rw [hIVI, List.mem_filterMap]
-        exact ⟨reg.resolve i, hin, reg.idOf_resolve hvi⟩
+        refine ⟨(reg.resolve i).toInput, hin, ?_⟩
+        rw [OutputVariable.toInput_toVariable hpow, reg.idOf_resolve hvi]
       have hrecOut := hrec inputVarIds hpowD
       intro v hvout hvnone
       rw [reg.mem_decodeCS_vars] at hvout
@@ -737,21 +786,20 @@ theorem DensePassCorrect.lift {reg : VarRegistry} {d out : DenseConstraintSystem
       | some dcm =>
           rw [hdcm] at hbranch
           obtain ⟨hjIn, hjInIds, hEval⟩ := hbranch
-          refine ⟨reg.decodeCM dcm, ?_, ?_, ?_, ?_⟩
+          refine ⟨reg.decodeCM dcm, ?_, ?_, ?_⟩
           · rw [hMF, hdcm]; rfl
-          · intro x hx
-            rw [reg.decodeCM_vars, List.mem_map] at hx
-            obtain ⟨j, hj, rfl⟩ := hx
-            simpa [VarRegistry.isInput] using hjIn j hj
           · intro x hx
             rw [reg.decodeCM_vars, List.mem_map] at hx
             obtain ⟨j, hj, rfl⟩ := hx
             have hjm := hjInIds j hj
             rw [hIVI, List.mem_filterMap] at hjm
             obtain ⟨w, hw, hidof⟩ := hjm
-            rw [reg.resolve_idOf hidof]; exact hw
+            have hres : reg.resolve j = w.toVariable := reg.resolve_idOf hidof
+            have hw' : w.toVariable.toInput ∈ inputVars := by
+              simpa [InputVariable.toVariable_toInput] using hw
+            simpa [hres] using hw'
           · -- value: `(decodeCM dcm).eval env' = env' (resolve i)`.
-            rw [reg.decodeCM_eval]
+            rw [VarRegistry.decodeCM_eval reg dcm env' hjIn]
             have hagree : ∀ j ∈ dcm.vars, env' (reg.resolve j) = denv' j := by
               intro j hj
               exact reg.extendEnv_resolve denv' E (reg.isInput_valid (hjIn j hj))
@@ -762,11 +810,13 @@ theorem DensePassCorrect.lift {reg : VarRegistry} {d out : DenseConstraintSystem
           obtain ⟨hiD, hpres⟩ := hbranch
           have hvmem : reg.resolve i ∈ (reg.decodeCS d).vars :=
             (reg.mem_decodeCS_vars d).mpr ⟨i, hiD, rfl⟩
-          obtain ⟨cm, hmeth, hcmpow, hcmin, hcmeval⟩ := hrecIn (reg.resolve i) hvmem hvnone
-          refine ⟨cm, ?_, hcmpow, hcmin, ?_⟩
+          obtain ⟨cm, hmeth, hcmin, hcmeval⟩ := hrecIn (reg.resolve i) hvmem hvnone
+          refine ⟨cm, ?_, hcmin, ?_⟩
           · rw [hMF, hdcm]; simpa using hmeth
           · -- value: `cm.eval env' = env' (resolve i)`.
-            rw [specCM_eval_congr cm env' E (fun x hx => hpw4 x (hcmpow x hx)), hcmeval, henv',
+            rw [specCM_eval_congr cm (fun x => env' x.toVariable) (fun x => E x.toVariable)
+                (fun x hx => hpw4 x.toVariable (by simp [InputVariable.toVariable])),
+              hcmeval, henv',
               reg.extendEnv_resolve denv' E hvi, hpres]
 
 /-! ## The dense-pass builder -/
