@@ -1311,7 +1311,7 @@ theorem dfCollectBis_spec (ctx : DfCtx p) (bis : Array (BusInteraction (DenseExp
       · rw [dif_neg hi] at hqb; exact hacc qb hqb
 
 
-/-! ## Variable containment, independent of any assignment -/
+/-! ## OutputVariable containment, independent of any assignment -/
 
 theorem dfRebuild_vars (isAdd : Bool) (mk : DenseExpr p → DenseExpr p → DenseExpr p)
     (hvars : ∀ x y : DenseExpr p, (mk x y).vars = x.vars ++ y.vars)

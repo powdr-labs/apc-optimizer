@@ -343,7 +343,7 @@ theorem VarRegistry.decodeExpr_degree (r : VarRegistry) (e : DenseExpr p) :
 
 /-- Decoding commutes with evaluation: evaluating the decoded expression under `env` equals
     evaluating the dense expression under `env ∘ resolve`. -/
-theorem VarRegistry.decodeExpr_eval (r : VarRegistry) (e : DenseExpr p) (env : Variable → ZMod p) :
+theorem VarRegistry.decodeExpr_eval (r : VarRegistry) (e : DenseExpr p) (env : OutputVariable → ZMod p) :
     (r.decodeExpr e).eval env = e.eval (fun i => env (r.resolve i)) := by
   induction e with
   | const n => rfl

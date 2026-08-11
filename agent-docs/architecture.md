@@ -53,7 +53,7 @@ semantics-specific optimizer be an instance).
 
 A **`DenseVerifiedPassW`** (`Pass.lean`) maps a registry + dense system to a new one *bundled with
 a `PassCorrect` proof on the decode* (`refines` + invariant preservation) — so a pass cannot be
-written without discharging its obligations. `Basic.lean` carries the `Variable`-level relation
+written without discharging its obligations. `Basic.lean` carries the `OutputVariable`-level relation
 glue (`PassCorrect` itself and its composition lemmas) that the dense results decode into.
 
 - `andThen` composes passes (correctness by composing the per-pass `PassCorrect` proofs, with
@@ -63,7 +63,7 @@ glue (`PassCorrect` itself and its composition lemmas) that the dense results de
 - `guardDegree` falls back to a pass's input if the output would exceed the degree bound; the
   pipeline's `guardAll` applies it to every stage-list entry, so degree safety is uniform with
   zero per-pass proof burden.
-- `VerifiedPassW` (`FactPass.lean`) is the `Variable`-level pass type that may additionally
+- `VerifiedPassW` (`FactPass.lean`) is the `OutputVariable`-level pass type that may additionally
   consult proven `BusFacts` (below); the pipeline is its one inhabitant, wrapping the dense
   pipeline between one encode and one decode.
 
@@ -153,7 +153,7 @@ constraint (`degenRange` is the worked example) — and `DenseVerifiedPassW.ofAd
 builds an append-only pass from an emitted-constraint list plus its containment/entailment
 obligations (`oneHotAnnihilate`, `zeroRegister`, `xorEqExtract`). The pipeline encodes the system into the dense `VarId`
 representation once at entry and decodes once at output; the `DensePassCorrect` is lifted to the
-audited `Variable`-based `PassCorrect` at that boundary (`Bridge.lean`). Correctness follows from the
+audited `OutputVariable`-based `PassCorrect` at that boundary (`Bridge.lean`). Correctness follows from the
 pass's own `DensePassCorrect`, and the profiler picks up the new pass for free since it consumes the
 same list; do not touch `Spec.lean`, the audited `ApcOptimizer/Optimizer.lean`, or the `Basic.lean`
 glue. Build with `lake build`.

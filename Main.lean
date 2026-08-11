@@ -94,14 +94,14 @@ structure Stats where
 def distinctVarCount {p : ℕ} (cs : OutputCircuit p) : Nat :=
   let occurrences := cs.algebraicConstraints.flatMap ExpressionG.vars ++
     cs.busInteractions.flatMap BusInteraction.vars
-  (occurrences.foldl (init := (∅ : Std.HashSet Variable)) (·.insert ·)).size
+  (occurrences.foldl (init := (∅ : Std.HashSet OutputVariable)) (·.insert ·)).size
 
 /-- The distinct variable names of a constraint system, sorted and rendered for display.
-    Variables may carry structured powdr IDs internally, but reports show only `Variable.name`. -/
+    Variables may carry structured powdr IDs internally, but reports show only `OutputVariable.name`. -/
 def distinctVars {p : ℕ} (cs : OutputCircuit p) : List String :=
   let occurrences := cs.algebraicConstraints.flatMap ExpressionG.vars ++
     cs.busInteractions.flatMap BusInteraction.vars
-  ((occurrences.foldl (init := (∅ : Std.HashSet Variable)) (·.insert ·)).toList.map
+  ((occurrences.foldl (init := (∅ : Std.HashSet OutputVariable)) (·.insert ·)).toList.map
     (fun x => x.name)).mergeSort (fun a b => decide (a ≤ b))
 
 def statsOf {p : ℕ} (cs : OutputCircuit p) : Stats :=

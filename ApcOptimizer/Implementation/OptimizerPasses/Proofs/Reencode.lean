@@ -1072,7 +1072,7 @@ Each step is `DensePassCorrect` at its own output registry (reject branches by
 composes them via `DensePassCorrect.andThen`, threading pointwise `isInput`-preservation to a
 uniform final registry. `denseReencodePass` packages `denseReencodeF` through `ofExtending`. -/
 
-theorem register_isInput_eq (reg : VarRegistry) (v : Variable) (hv : v.powdrId? = none)
+theorem register_isInput_eq (reg : VarRegistry) (v : OutputVariable) (hv : v.powdrId? = none)
     (i : VarId) : (reg.register v).1.isInput i = reg.isInput i := by
   by_cases hvalid : reg.Valid i
   · rw [VarRegistry.isInput, VarRegistry.isInput,
@@ -1096,13 +1096,13 @@ theorem register_isInput_eq (reg : VarRegistry) (v : Variable) (hv : v.powdrId? 
 private def rbStep (fb : String) (acc : VarRegistry × List VarId) (j : Nat) :
     VarRegistry × List VarId :=
   let (r, bs) := acc
-  let (r', i) := r.register ({ name := fb ++ "_" ++ toString j } : Variable)
+  let (r', i) := r.register ({ name := fb ++ "_" ++ toString j } : OutputVariable)
   (r', bs ++ [i])
 
 private theorem rbStep_eq (fb : String) (racc : VarRegistry) (bacc : List VarId) (j : Nat) :
     rbStep fb (racc, bacc) j
-      = ((racc.register ({ name := fb ++ "_" ++ toString j } : Variable)).1,
-         bacc ++ [(racc.register ({ name := fb ++ "_" ++ toString j } : Variable)).2]) := rfl
+      = ((racc.register ({ name := fb ++ "_" ++ toString j } : OutputVariable)).1,
+         bacc ++ [(racc.register ({ name := fb ++ "_" ++ toString j } : OutputVariable)).2]) := rfl
 
 theorem registerBits_fold_inv (fb : String) (r0 : VarRegistry) :
     ∀ (l : List Nat) (racc : VarRegistry) (bacc : List VarId),

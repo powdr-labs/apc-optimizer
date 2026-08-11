@@ -983,7 +983,7 @@ cycle strictly lex-decreases, and the first non-decreasing cycle *is* the struct
 two stops coincide, so zero effectiveness change (outputs reproduce exactly, e.g. apc_069 28/6/22,
 apc_001 42/18/38, apc_100 1003/601/1866). Also removed the `iters`/`--iters` CLI flag and updated
 `benchmark.py`, the READMEs, the architecture doc, and CLAUDE.md. The FFI entry point `ApcOptimizer/Ffi.lean`
-drops its now-stale `openVmOptimizer … 32 …` iters argument (the serializer's own `Variable`-struct
+drops its now-stale `openVmOptimizer … 32 …` iters argument (the serializer's own `OutputVariable`-struct
 reconciliation landed separately on `main`).
 
 ### 45. Optimizer runtime: profile-guided speedups (effectiveness unchanged)
@@ -2043,7 +2043,7 @@ only by eliminating the variable (C4) or deeper structural reasoning, outside C2
 `lake build` green; all three `maintainsCorrectness` theorems still `{propext, Classical.choice,
 Quot.sound}`-only; `check-proof-integrity.sh` passes.
 
-**Impact.** Variable- and constraint-neutral by construction (a coda `filterBus`). Full 100-case
+**Impact.** OutputVariable- and constraint-neutral by construction (a coda `filterBus`). Full 100-case
 sweep vs the C1 (entry-67) line, per-case: **bus dropped on 57 cases, 0 regressions**; totals
 variables 28645 (unchanged), constraints 11215 (unchanged), bus 18887 → 18341 (−546). Aggregate vs
 powdr:
@@ -2487,7 +2487,7 @@ one build; the two changes touch disjoint families).
   noisy on this machine, but the direction is not increase).
 
 **Impact — openvm-eth (full 100-case benchmark.py sweep; post-#105 baseline → C4b, same build).**
-Variable-positive and per-case-neutral: variables 4.507× → **4.509×** agg (3.818× → 3.820× geo), bus
+OutputVariable-positive and per-case-neutral: variables 4.507× → **4.509×** agg (3.818× → 3.820× geo), bus
 interactions 3.405× → 3.401× agg (2.707× → 2.705× geo), constraints 10.595× → 10.590× agg
 (11.585× → 11.578× geo); the per-case standings vs powdr are **unchanged at 25 W / 42 L / 33 T**. The
 variable gain lands on the register/shift blocks carrying `255`-complement (NOT) results (the
@@ -3202,7 +3202,7 @@ Needs `p ≠ 0` only (val/cast round-trip); no primality.
 **Measured (per-case JSON A/B vs main `2b1e5c1`, all 100 eth cases + keccak):**
 - openvm-eth: vars **27,768 → 27,762 (−6)**, bus 16,429 → 16,424 (−5), constraints unchanged;
   exactly two cases move — apc_034 −3 vars/−3 bus → **105/22/80 = exact powdr parity**, apc_066
-  −3 vars/−2 bus → **49/10/37 = exact powdr parity** — and nothing else changes. Variable
+  −3 vars/−2 bus → **49/10/37 = exact powdr parity** — and nothing else changes. OutputVariable
   W/L/T vs powdr **31/9/60 → 31/7/62**; agg vars 4.551× → 4.552× (geo 3.884× → 3.887×), bus
   3.542× → 3.543× (geo 2.800× → 2.803×).
 - keccak: bit-identical (2021 / 1752 / 186); runtime 369 s vs main 383 s **solo on the same
@@ -3309,7 +3309,7 @@ have a variable-bearing difference that `addrAffineNeq` correctly declines).
 | apc_005              | — | 184 | 200 | **0.92×** | — |
 | apc_022              | — | 21 | 21 | 1.00× | — |
 
-Variable effectiveness reaches **powdr parity or better on every case measured** (apc_006 and
+OutputVariable effectiveness reaches **powdr parity or better on every case measured** (apc_006 and
 apc_005 beat powdr outright); constraints likewise at/near parity (apc_006 88 vs powdr 548;
 apc_012 1034 = 1034; apc_004 118 = 118). The residual is entirely **bus interactions** (apc_037
 2317 vs 1430, apc_006 1934 vs 1479, apc_022 19 vs 15): the byte-identical AS-5 fp-cell pairs and
@@ -3992,15 +3992,15 @@ stale-bucket refresh apply there too — recorded in `agent-docs/ideas.md` R3. *
 
 Third runtime batch. Two changes, both output byte-identical (11-case export set):
 
-- **Variable interning (`JsonParser.lean`)**: the parser minted a fresh `String` per variable
+- **OutputVariable interning (`JsonParser.lean`)**: the parser minted a fresh `String` per variable
   *occurrence* (~10⁵ heap-distinct copies of a few thousand names). `internSystem` rebuilds the
-  parsed system with one shared `Variable` object per distinct value — the same *value*, so
+  parsed system with one shared `OutputVariable` object per distinct value — the same *value*, so
   nothing downstream can observe it except time: the Lean runtime's string equality
   (`lean_string_eq`) starts with a pointer test, so every equal-name comparison across the whole
   optimizer (hash-map probes, dedups, substitution lookups) now short-circuits.
 - **identitySubst was rebuilding its map per variable occurrence.** Profiling showed the pass at
   2.8 s on apc_030 with… 4 pairs and 607 interactions, and bisection pinned all of it on the one
-  `substF`. Cause: `identityF`'s shape `def identityF facts cs : Variable → Option _ :=
+  `substF`. Cause: `identityF`'s shape `def identityF facts cs : OutputVariable → Option _ :=
   let m := …; fun y => …` — the compiler arity-expands the def, so the `let` (pair extraction +
   map build over every interaction) re-ran **per queried occurrence**. (The pre-104 pair-list
   version had the same bug; entry 104's HashMap swap kept the shape, so it didn't help.) The fix
@@ -4012,7 +4012,7 @@ Third runtime batch. Two changes, both output byte-identical (11-case export set
 
 **Working rule (added to ideas):** a `def … : X → Y := let heavy := …; fun y => …` re-evaluates
 `heavy` per call by arity expansion — bind heavy values in the fully-applied pass body and pass
-them as parameters. Audited the other `Variable → Option (OutputExpression p)` closures (`Solved.fn`,
+them as parameters. Audited the other `OutputVariable → Option (OutputExpression p)` closures (`Solved.fn`,
 `ptFun`, `groupSubst`) — none carries a heavy `let`.
 
 Build warning-free; proof integrity green; byte-identical exports. **Worked: yes.**
@@ -4158,7 +4158,7 @@ Follow-ups from the gdb-sampled attribution (200 whole-run stack samples, functi
   `collectAllBuses`), so the occurrence-list HashSet is gone entirely — with the filter provably
   unchanged — and the bucket map is built only when `eqs` is nonempty.
 - **domainFold's remaining direct-path cost was the slow spec-side `varsIn`** — a `List.elem`
-  running the full `Variable` `DecidableEq` (name-`String` compare first) per AST node inside
+  running the full `OutputVariable` `DecidableEq` (name-`String` compare first) per AST node inside
   `foldRewriteGo`'s gates and `hasFoldable` — 26 % of all whole-run samples. Swapped for the
   `containsFast`-backed `varsInF` (`powdrId?` compared first; `varsInF_eq` proves the value
   unchanged, so the output is provably identical). Both fold paths share the fix.
@@ -4241,7 +4241,7 @@ Two R4/R5-slice items from the round-2 sample attribution:
 profile steady at **111.0 s** (both items are a few-percent class on this container; they also
 shrink every future cycle-heavy case). **Worked: yes.**
 
-### 116. Runtime: `Hashable Variable` powdrId?-first — tried, leaks, reverted (no code change)
+### 116. Runtime: `Hashable OutputVariable` powdrId?-first — tried, leaks, reverted (no code change)
 
 The R4 idea (hash the O(1) `powdrId?` discriminator instead of walking the name string on every
 hash-map probe) was implemented and export-checked: **openvm-eth apc_100 byte-identical, sp1
@@ -4305,7 +4305,7 @@ sp1/rsp (100 ranked) sets plus both keccak stress sets against the pre-refactor 
 - **Dead code**: the sparse `VerifiedPass` combinators (`Basic.lean`) and the dead half of
   `BridgeSteps.lean` (`foldList`, toy pass, projection glue, `denseBIMapExpr`) removed;
   `Adapter.lean` folded into `Measure.lean`, dropping a duplicate coverage-monotonicity lemma;
-  `Variable`/`VarId` hash-key lawfulness reduced to a single `LawfulBEq` instance (rest inferred).
+  `OutputVariable`/`VarId` hash-key lawfulness reduced to a single `LawfulBEq` instance (rest inferred).
 - **Consolidation**: `subsumedRange` + `subsumedCheck` now instantiate one generic
   `denseSubsumedDropF` skeleton with per-recognizer `SubsumedRecognizerSound` obligations
   (`SubsumedCheck.lean` + its proof file); `SubsumedRange.lean` deleted. A new subsumption shape

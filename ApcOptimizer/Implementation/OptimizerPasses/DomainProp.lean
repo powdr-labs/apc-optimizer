@@ -11,7 +11,7 @@ variable {p : ℕ}
 
 /-! ## Evaluation depends only on an expression's variables -/
 
-theorem OutputExpression.eval_congr (e : OutputExpression p) (env1 env2 : Variable → ZMod p)
+theorem OutputExpression.eval_congr (e : OutputExpression p) (env1 env2 : OutputVariable → ZMod p)
     (h : ∀ x ∈ e.vars, env1 x = env2 x) : e.eval env1 = e.eval env2 := by
   induction e with
   | const n => rfl
@@ -26,7 +26,7 @@ theorem OutputExpression.eval_congr (e : OutputExpression p) (env1 env2 : Variab
           ihb (fun x hx => h x (by simp [ExpressionG.vars, hx]))]
 
 theorem BusInteraction.eval_congr (bi : BusInteraction (OutputExpression p))
-    (env1 env2 : Variable → ZMod p) (h : ∀ x ∈ bi.vars, env1 x = env2 x) :
+    (env1 env2 : OutputVariable → ZMod p) (h : ∀ x ∈ bi.vars, env1 x = env2 x) :
     bi.eval env1 = bi.eval env2 := by
   have hmult : bi.multiplicity.eval env1 = bi.multiplicity.eval env2 :=
     bi.multiplicity.eval_congr env1 env2
@@ -42,7 +42,7 @@ theorem BusInteraction.eval_congr (bi : BusInteraction (OutputExpression p))
 
 /-- A computation method reads only its variables; consumed by the master-theorem completeness
     proof (`Implementation/Optimizer.lean`). -/
-theorem ComputationMethod.eval_congr (cm : ComputationMethod p) (e1 e2 : Variable → ZMod p) :
+theorem ComputationMethod.eval_congr (cm : ComputationMethod p) (e1 e2 : OutputVariable → ZMod p) :
     (∀ v ∈ cm.vars, e1 v = e2 v) → cm.eval e1 = cm.eval e2 := by
   induction cm with
   | const c => intro _; rfl

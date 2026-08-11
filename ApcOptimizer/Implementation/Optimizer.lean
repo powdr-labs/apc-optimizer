@@ -165,7 +165,7 @@ theorem pipeline_respectsDeg (b : DegreeBound) : RespectsDeg b (pipeline (p := p
     (by rw [VarRegistry.empty.decodeCS_encodeCS cs]; exact hin)
 
 /-- Use `ds`'s method for `v` when it reads only `inputVars`; otherwise use a constant fallback. -/
-def Derivations.safeMethod (ds : Derivations p) (inputVars : List Variable) (v : Variable) :
+def Derivations.safeMethod (ds : Derivations p) (inputVars : List OutputVariable) (v : OutputVariable) :
     ComputationMethod p :=
   match ds.methodFor v with
   | some cm => if ∀ x ∈ cm.vars, x ∈ inputVars then cm else .const (zmodZeroP _)
@@ -173,8 +173,8 @@ def Derivations.safeMethod (ds : Derivations p) (inputVars : List Variable) (v :
 
 /-- `Derivations.safeMethod` with both of its scans served from indexes: `methods` is `ds` keyed by
     derived variable, `inputs` holds the input variables (`safeMethodIdx_eq`). -/
-def Derivations.safeMethodIdx (methods : Std.HashMap Variable (ComputationMethod p))
-    (inputs : Std.HashSet Variable) (v : Variable) : ComputationMethod p :=
+def Derivations.safeMethodIdx (methods : Std.HashMap OutputVariable (ComputationMethod p))
+    (inputs : Std.HashSet OutputVariable) (v : OutputVariable) : ComputationMethod p :=
   match methods[v]? with
   | some cm => if cm.vars.all (fun x => inputs.contains x) then cm else .const (zmodZeroP _)
   | none => .const (zmodZeroP _)
@@ -184,7 +184,7 @@ def Derivations.safeMethodIdx (methods : Std.HashMap Variable (ComputationMethod
     Both `CircuitG.vars` lists count variable *occurrences*, so every scan here is indexed:
     `methodFor` walks all of `ds` on each lookup, and the input-variable test would rescan
     `inputVars` per referenced variable. `forOutput_eq` is the index-free reading. -/
-def Derivations.forOutput (ds : Derivations p) (inputVars outputVars : List Variable) :
+def Derivations.forOutput (ds : Derivations p) (inputVars outputVars : List OutputVariable) :
     Derivations p :=
   let methods := Std.HashMap.ofList ds
   let inputs := Std.HashSet.ofList inputVars
@@ -199,7 +199,7 @@ def optimizerOnCircuit {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts
   let r := pipeline b cs bs facts
   (r.out, r.derivs.forOutput cs.vars r.out.vars)
 
-/-- The fact-aware circuit optimizer: convert the powdr circuit to one over `Variable`
+/-- The fact-aware circuit optimizer: convert the powdr circuit to one over `OutputVariable`
     (`InputCircuit.toCircuit`) and optimize it. -/
 def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs) :
     Optimizer p :=
@@ -210,15 +210,15 @@ def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFa
 So the completeness proof never unfolds the spec's `Derivations.witgen`. -/
 
 /-- On an input variable, `witgen` passes the input assignment through. -/
-theorem Derivations.witgen_powdrId {ds : Derivations p} {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
+theorem Derivations.witgen_powdrId {ds : Derivations p} {inputVars outputVars : List OutputVariable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : OutputVariable → ZMod p) {v : OutputVariable}
     {w : Nat} (hv : v ∈ outputVars) (hp : v.powdrId? = some w) :
     ds.witgen h inputAssignment v hv = inputAssignment v := by
   unfold Derivations.witgen; split <;> simp_all
 
 /-- On a derived variable, `witgen` evaluates the method `ds` records for it. -/
-theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
+theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars : List OutputVariable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : OutputVariable → ZMod p) {v : OutputVariable}
     {cm : ComputationMethod p} (hv : v ∈ outputVars) (hp : v.powdrId? = none)
     (hm : ds.methodFor v = some cm) :
     ds.witgen h inputAssignment v hv = cm.eval inputAssignment := by
@@ -231,7 +231,7 @@ theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars 
 Two assignments agreeing on `cs.vars` are interchangeable for `satisfies`/`admissible`/`sideEffects`.
 The completeness proof below uses these to swap the abstract per-pass witness for `witgen`'s output. -/
 
-theorem OutputCircuit.busEval_congr {cs : OutputCircuit p} {f g : Variable → ZMod p}
+theorem OutputCircuit.busEval_congr {cs : OutputCircuit p} {f g : OutputVariable → ZMod p}
     (h : ∀ x ∈ cs.vars, f x = g x) {bi : BusInteraction (OutputExpression p)}
     (hbi : bi ∈ cs.busInteractions) : bi.eval f = bi.eval g :=
   BusInteraction.eval_congr bi f g (fun x hx => by
@@ -241,9 +241,9 @@ theorem OutputCircuit.busEval_congr {cs : OutputCircuit p} {f g : Variable → Z
     · exact h x (OutputCircuit.mem_vars_of_payload hbi he hx))
 
 theorem OutputCircuit.satisfies_congr {cs : OutputCircuit p} {bs : BusSemantics p}
-    {f g : Variable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
+    {f g : OutputVariable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
     cs.satisfies bs f ↔ cs.satisfies bs g := by
-  have imp : ∀ e1 e2 : Variable → ZMod p, (∀ x ∈ cs.vars, e1 x = e2 x) →
+  have imp : ∀ e1 e2 : OutputVariable → ZMod p, (∀ x ∈ cs.vars, e1 x = e2 x) →
       cs.satisfies bs e1 → cs.satisfies bs e2 := by
     intro e1 e2 hh hsat
     refine ⟨fun c hc => ?_, fun bi hbi => ?_⟩
@@ -257,7 +257,7 @@ theorem OutputCircuit.satisfies_congr {cs : OutputCircuit p} {bs : BusSemantics 
   exact ⟨imp f g h, imp g f (fun x hx => (h x hx).symm)⟩
 
 theorem OutputCircuit.admissible_congr {cs : OutputCircuit p} {bs : BusSemantics p}
-    {f g : Variable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
+    {f g : OutputVariable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
     cs.admissible bs f ↔ cs.admissible bs g := by
   have hmap : (cs.busInteractions.map (fun bi => bi.eval f))
       = (cs.busInteractions.map (fun bi => bi.eval g)) :=
@@ -266,7 +266,7 @@ theorem OutputCircuit.admissible_congr {cs : OutputCircuit p} {bs : BusSemantics
   rw [hmap]
 
 theorem OutputCircuit.sideEffects_congr {cs : OutputCircuit p} {bs : BusSemantics p}
-    {f g : Variable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
+    {f g : OutputVariable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
     cs.sideEffects bs f = cs.sideEffects bs g := by
   have hmap : cs.busInteractions.map (fun bi => bi.eval f)
       = cs.busInteractions.map (fun bi => bi.eval g) :=
@@ -274,8 +274,8 @@ theorem OutputCircuit.sideEffects_congr {cs : OutputCircuit p} {bs : BusSemantic
   unfold OutputCircuit.sideEffects
   rw [hmap]
 
-theorem Derivations.methodFor_map_same (vs : List Variable)
-    (f : Variable → ComputationMethod p) (v : Variable) :
+theorem Derivations.methodFor_map_same (vs : List OutputVariable)
+    (f : OutputVariable → ComputationMethod p) (v : OutputVariable) :
     Derivations.methodFor (vs.map (fun u => (u, f u))) v =
       if v ∈ vs then some (f v) else none := by
   induction vs with
@@ -292,7 +292,7 @@ theorem Derivations.methodFor_map_same (vs : List Variable)
 
 /-- `methodFor` is `findSomeRev?` with a keyed probe — the shape `Std.HashMap`'s `insertMany` lookup
     lemma reports, so the two agree in `getElem?_ofList`. -/
-theorem Derivations.methodFor_eq_findSomeRev? (ds : Derivations p) (v : Variable) :
+theorem Derivations.methodFor_eq_findSomeRev? (ds : Derivations p) (v : OutputVariable) :
     ds.findSomeRev? (fun ⟨u, cm⟩ => if u == v then some cm else none) = ds.methodFor v := by
   induction ds with
   | nil => rfl
@@ -305,14 +305,14 @@ theorem Derivations.methodFor_eq_findSomeRev? (ds : Derivations p) (v : Variable
 
 /-- Keying `ds` by variable preserves `methodFor`: `insertMany` keeps the last binding for a
     duplicated key, and so does `methodFor`. -/
-theorem Derivations.getElem?_ofList (ds : Derivations p) (v : Variable) :
+theorem Derivations.getElem?_ofList (ds : Derivations p) (v : OutputVariable) :
     (Std.HashMap.ofList ds)[v]? = ds.methodFor v := by
   rw [Std.HashMap.ofList_eq_insertMany_empty, Std.HashMap.getElem?_insertMany_list,
     Std.HashMap.getElem?_empty, Derivations.methodFor_eq_findSomeRev?]
   cases ds.methodFor v <;> rfl
 
-theorem Derivations.safeMethodIdx_eq (ds : Derivations p) (inputVars : List Variable)
-    (v : Variable) :
+theorem Derivations.safeMethodIdx_eq (ds : Derivations p) (inputVars : List OutputVariable)
+    (v : OutputVariable) :
     Derivations.safeMethodIdx (Std.HashMap.ofList ds) (Std.HashSet.ofList inputVars) v
       = ds.safeMethod inputVars v := by
   rw [Derivations.safeMethodIdx, Derivations.safeMethod, Derivations.getElem?_ofList]
@@ -321,21 +321,21 @@ theorem Derivations.safeMethodIdx_eq (ds : Derivations p) (inputVars : List Vari
   | some cm =>
       exact if_congr (by simp [List.all_eq_true, Std.HashSet.contains_ofList]) rfl rfl
 
-theorem Derivations.forOutput_eq (ds : Derivations p) (inputVars outputVars : List Variable) :
+theorem Derivations.forOutput_eq (ds : Derivations p) (inputVars outputVars : List OutputVariable) :
     ds.forOutput inputVars outputVars
       = (outputVars.filter (fun v => v.powdrId?.isNone)).eraseDups.map
           (fun v => (v, ds.safeMethod inputVars v)) := by
   simp only [Derivations.forOutput, HashedDedup.hashedEraseDups_eq]
   exact List.map_congr_left fun v _ => by rw [Derivations.safeMethodIdx_eq]
 
-theorem Derivations.forOutput_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
-    {v : Variable} (hv : v ∈ outputVars) (hpw : v.powdrId? = none) :
+theorem Derivations.forOutput_methodFor {ds : Derivations p} {inputVars outputVars : List OutputVariable}
+    {v : OutputVariable} (hv : v ∈ outputVars) (hpw : v.powdrId? = none) :
     (ds.forOutput inputVars outputVars).methodFor v = some (ds.safeMethod inputVars v) := by
   rw [Derivations.forOutput_eq]
   rw [Derivations.methodFor_map_same, if_pos]
   simp [hv, hpw]
 
-theorem Derivations.safeMethod_vars (ds : Derivations p) (inputVars : List Variable) (v : Variable) :
+theorem Derivations.safeMethod_vars (ds : Derivations p) (inputVars : List OutputVariable) (v : OutputVariable) :
     ∀ x ∈ (ds.safeMethod inputVars v).vars, x ∈ inputVars := by
   cases hm : ds.methodFor v with
   | none =>
@@ -349,8 +349,8 @@ theorem Derivations.safeMethod_vars (ds : Derivations p) (inputVars : List Varia
       · rw [if_neg hsafe]
         simp [ComputationMethod.vars]
 
-theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List Variable}
-    {v : Variable} {cm : ComputationMethod p} (hm : ds.methodFor v = some cm)
+theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List OutputVariable}
+    {v : OutputVariable} {cm : ComputationMethod p} (hm : ds.methodFor v = some cm)
     (hvars : ∀ x ∈ cm.vars, x ∈ inputVars) :
     ds.safeMethod inputVars v = cm := by
   simp only [Derivations.safeMethod, hm]

@@ -33,11 +33,11 @@ variable {p : ℕ}
 /-! ## Collecting variables -/
 
 /-- All variable names occurring in a bus interaction (multiplicity and payload). -/
-def BusInteraction.vars (bi : BusInteraction (OutputExpression p)) : List Variable :=
+def BusInteraction.vars (bi : BusInteraction (OutputExpression p)) : List OutputVariable :=
   bi.multiplicity.vars ++ bi.payload.flatMap ExpressionG.vars
 
 /-- The distinct variables of a constraint system, across constraints and bus interactions. -/
-def OutputCircuit.variables (cs : OutputCircuit p) : List Variable :=
+def OutputCircuit.variables (cs : OutputCircuit p) : List OutputVariable :=
   (cs.algebraicConstraints.flatMap ExpressionG.vars ++
     cs.busInteractions.flatMap BusInteraction.vars).dedup
 
@@ -56,7 +56,7 @@ def OutputCircuit.busInteractionCount (cs : OutputCircuit p) : Nat :=
 
 /-- Number of occurrences of `x` (with multiplicity) across the whole system. Used e.g. to pick
     substitution pivots that minimize expression duplication. -/
-def OutputCircuit.occurrences (cs : OutputCircuit p) (x : Variable) : Nat :=
+def OutputCircuit.occurrences (cs : OutputCircuit p) (x : OutputVariable) : Nat :=
   (cs.algebraicConstraints.flatMap ExpressionG.vars
     ++ cs.busInteractions.flatMap BusInteraction.vars).count x
 
@@ -68,7 +68,7 @@ def effectivenessBy (measure : OutputCircuit p → Nat)
     (cs : OutputCircuit p) (bs : BusSemantics p) : ℚ :=
   (measure cs : ℚ) / (measure (optimizer cs bs) : ℚ)
 
-/-- **Variable effectiveness** (primary): the factor by which the optimizer shrinks the distinct
+/-- **OutputVariable effectiveness** (primary): the factor by which the optimizer shrinks the distinct
     variable count. -/
 def effectiveness (optimizer : OutputCircuit p → BusSemantics p → OutputCircuit p)
     (cs : OutputCircuit p) (bs : BusSemantics p) : ℚ :=

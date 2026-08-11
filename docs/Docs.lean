@@ -62,9 +62,9 @@ A {deftech}_variable_ is how the _runtime witness data_ is referenced in a circu
 
 Variables of the circuits the optimizer works on may also have been introduced by the optimizer itself, in which case they have no powdr ID:
 
-{docstring Variable}
+{docstring OutputVariable}
 
-An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions. It is generic in the variable type, so the same definition serves both kinds of circuit; {name}`OutputExpression` abbreviates the optimizer's instance {lean}`ExpressionG Variable`.
+An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions. It is generic in the variable type, so the same definition serves both kinds of circuit; {name}`OutputExpression` abbreviates the optimizer's instance {lean}`ExpressionG OutputVariable`.
 
 {docstring ExpressionG}
 
@@ -125,7 +125,7 @@ As we will see below, we will assume that all circuits _including the circuit to
 
 # Circuits
 
-A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions, over the same variable type as its expressions ({name}`OutputCircuit` abbreviates {lean}`CircuitG Variable`):
+A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions, over the same variable type as its expressions ({name}`OutputCircuit` abbreviates {lean}`CircuitG OutputVariable`):
 
 {docstring CircuitG}
 
@@ -136,7 +136,7 @@ A circuit is satisfied under an assignment when all algebraic constraints evalua
     i.e., whether it satisfies all algebraic constraints and every active bus
     interaction message is accepted. -/
 def OutputCircuit.satisfies (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
-    (assignment : Variable → ZMod p) : Prop :=
+    (assignment : OutputVariable → ZMod p) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.eval assignment = 0) ∧
   (∀ bi ∈ circuit.busInteractions,
     let message := bi.eval assignment
@@ -165,7 +165,7 @@ First, we define the side effects of a circuit under an assignment as the net ef
 /-- The side effects of a circuit under a given assignment and bus semantics:
     the net multiplicity with which each tuple is sent to a *stateful* bus. -/
 def OutputCircuit.sideEffects (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
-    (assignment : Variable → ZMod p) : BusState p :=
+    (assignment : OutputVariable → ZMod p) : BusState p :=
   fun message =>
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
       (fun m => busSemantics.isStateful m.busId &&
@@ -215,7 +215,7 @@ First, we define what it means for an assignment to be _admissible_ under a bus 
 ```anchor admissible
 /-- Whether a given assignment is admissible under the bus semantics. -/
 def OutputCircuit.admissible (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
-    (assignment : Variable → ZMod p) : Prop :=
+    (assignment : OutputVariable → ZMod p) : Prop :=
   busSemantics.admissible
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
       (fun m => decide (m.multiplicity ≠ 0) && busSemantics.isStateful m.busId))
@@ -232,7 +232,7 @@ Second, we need to guarantee that the prover can also compute a satisfying assig
 ```anchor derivations
 /-- A list of derived variables paired with how to compute each, consumed by
     witness generation. -/
-abbrev Derivations (p : ℕ) := List (Variable × ComputationMethod p)
+abbrev Derivations (p : ℕ) := List (OutputVariable × ComputationMethod p)
 ```
 
 With the data structures in place, we can define a prescribed witness generation algorithm that we expect the prover to implement. The algorithm derives a valid assignment for the optimized circuit from a valid assignment for the input circuit. In essence, for each variable in the output circuit:
@@ -246,7 +246,7 @@ For this to be well-defined, the derivations must _cover_ the output variables:
     multiple times, the last derivation is returned; `none` if `v` has no
     derivation. -/
 def Derivations.methodFor :
-    Derivations p → Variable → Option (ComputationMethod p)
+    Derivations p → OutputVariable → Option (ComputationMethod p)
   | [], _ => none
   | (u, cm) :: rest, v =>
       match Derivations.methodFor rest v with
@@ -258,7 +258,7 @@ def Derivations.methodFor :
     from `inputVars`: each output variable is either an input variable (reused)
     or a derived variable with a method that reads only input variables. -/
 def Derivations.cover (ds : Derivations p)
-    (inputVars outputVars : List Variable) : Prop :=
+    (inputVars outputVars : List OutputVariable) : Prop :=
   ∀ v ∈ outputVars,
     match v.powdrId? with
     | some _ => v ∈ inputVars
@@ -271,9 +271,9 @@ Witness generation generates an assignment as described above. It is only define
 /-- Witness generation on a variable `ds` covers. Every powdr-ID (input)
     variable passes through unchanged; every other variable is computed by the
     method `ds` records for it. -/
-def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
-    (v : Variable) (hv : v ∈ outputVars) : ZMod p :=
+def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List OutputVariable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : OutputVariable → ZMod p)
+    (v : OutputVariable) (hv : v ∈ outputVars) : ZMod p :=
   match hp : v.powdrId? with
   -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
   -- variable of the output circuit also exists in the input circuit.
@@ -307,7 +307,7 @@ def OutputCircuit.isCompleteReplacementOf
   ∀ assignment,
     originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
-    ∀ assignment' : Variable → ZMod p,
+    ∀ assignment' : OutputVariable → ZMod p,
     (∀ v (hv : v ∈ optimizedCircuit.vars),
       assignment' v = ds.witgen hcover assignment v hv) →
     optimizedCircuit.satisfies busSemantics assignment' ∧
@@ -359,7 +359,7 @@ Putting the pieces together, we define what it means for an optimizer to be _cor
 abbrev Optimizer (p : ℕ) := InputCircuit p → OutputCircuit p × Derivations p
 ```
 
-The circuit the output is compared against is the one the input denotes, with each variable turned into a {name}`Variable` carrying its ID:
+The circuit the output is compared against is the one the input denotes, with each variable turned into a {name}`OutputVariable` carrying its ID:
 
 ```anchor toVariableCircuit
 /-- The circuit denoted by a circuit exported by powdr: every variable of the

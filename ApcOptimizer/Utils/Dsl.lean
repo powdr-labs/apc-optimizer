@@ -38,7 +38,7 @@ upper half of `[0, p)` as negatives — so `x + (p-1) * y` prints as `x - y` and
 Parentheses are emitted only around sum factors of a product, where precedence requires them.
 
 Variables render using only their display name; any parsed powdr witness-column ID is kept
-in the structured `Variable` value but hidden in rendered output. -/
+in the structured `OutputVariable` value but hidden in rendered output. -/
 
 /-- Split a field constant into a sign and magnitude: constants in the upper half of `[0, p)`
     are shown as negatives (e.g. `p - 1` renders as `-1`, `p - 2` as `-2`). -/

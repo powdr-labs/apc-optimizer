@@ -29,7 +29,7 @@ the optimizer's effectiveness priority. -/
 def OutputCircuit.varCount (cs : OutputCircuit p) : Nat :=
   ((cs.algebraicConstraints.flatMap ExpressionG.vars ++
       cs.busInteractions.flatMap BusInteraction.vars).foldl
-        (init := (∅ : Std.HashSet Variable)) (·.insert ·)).size
+        (init := (∅ : Std.HashSet OutputVariable)) (·.insert ·)).size
 
 /-- The lexicographic size key `(#distinct vars, #bus interactions, #constraints)`. Well-founded
     under `<`, so it serves as the fixpoint termination measure. -/

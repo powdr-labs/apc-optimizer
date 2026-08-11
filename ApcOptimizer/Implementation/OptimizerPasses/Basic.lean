@@ -26,11 +26,11 @@ def multiplicitySum (message : BusMessage p) (state : List (BusMessage p × ZMod
 
 /-- The contribution list of a circuit's stateful interactions under `env`. -/
 def OutputCircuit.contributions (circuit : OutputCircuit p) (bs : BusSemantics p)
-    (env : Variable → ZMod p) : List (BusMessage p × ZMod p) :=
+    (env : OutputVariable → ZMod p) : List (BusMessage p × ZMod p) :=
   (circuit.busInteractions.filter (fun bi => bs.isStateful bi.busId)).map
     (fun bi => let m := bi.eval env; ((m.busId, m.payload), m.multiplicity))
 
-theorem multiplicitySum_map_filter (bs : BusSemantics p) (env : Variable → ZMod p)
+theorem multiplicitySum_map_filter (bs : BusSemantics p) (env : OutputVariable → ZMod p)
     (message : BusMessage p) (bis : List (BusInteraction (OutputExpression p))) :
     (((bis.map (fun bi => bi.eval env)).filter
         (fun m => bs.isStateful m.busId && decide ((m.busId, m.payload) = message))).map
@@ -50,7 +50,7 @@ theorem multiplicitySum_map_filter (bs : BusSemantics p) (env : Variable → ZMo
       · simp [hb, hstate, ih]
 
 /-- The spec's `sideEffects` is the net multiplicity of the contribution list. -/
-theorem OutputCircuit.sideEffects_eq (cs : OutputCircuit p) (bs : BusSemantics p) (env : Variable → ZMod p)
+theorem OutputCircuit.sideEffects_eq (cs : OutputCircuit p) (bs : BusSemantics p) (env : OutputVariable → ZMod p)
     (message : BusMessage p) :
     cs.sideEffects bs env message = multiplicitySum message (cs.contributions bs env) :=
   multiplicitySum_map_filter bs env message cs.busInteractions
@@ -67,8 +67,8 @@ def OutputCircuit.implies (self other : OutputCircuit p) (busSemantics : BusSema
 /-- Every no-powdr-ID variable of `cs` is computed by `ds`'s method for it, reading only powdr-ID
     variables from `inputVars`. Threaded through passes; the pipeline top uses it to match the
     spec's `witgen` output and `Derivations.cover`. -/
-def OutputCircuit.reconstructs (inputVars : List Variable) (cs : OutputCircuit p)
-    (ds : Derivations p) (e : Variable → ZMod p) : Prop :=
+def OutputCircuit.reconstructs (inputVars : List OutputVariable) (cs : OutputCircuit p)
+    (ds : Derivations p) (e : OutputVariable → ZMod p) : Prop :=
   ∀ v ∈ cs.vars, v.powdrId? = none →
     ∃ cm, Derivations.methodFor ds v = some cm ∧
       (∀ x ∈ cm.vars, x.powdrId?.isSome) ∧
@@ -162,26 +162,26 @@ structure PassResult {p : ℕ} (cs : OutputCircuit p) (bs : BusSemantics p) wher
   derivs : Derivations p
   correct : PassCorrect cs out derivs bs
 
-/-! ## Variable-set membership -/
+/-! ## OutputVariable-set membership -/
 
 /-- A variable of `cs.vars` occurs in some constraint, multiplicity, or payload expression. -/
-theorem OutputCircuit.mem_vars {cs : OutputCircuit p} {x : Variable} :
+theorem OutputCircuit.mem_vars {cs : OutputCircuit p} {x : OutputVariable} :
     x ∈ cs.vars ↔
       (∃ c ∈ cs.algebraicConstraints, x ∈ c.vars) ∨
       (∃ bi ∈ cs.busInteractions, x ∈ bi.multiplicity.vars ∨ ∃ e ∈ bi.payload, x ∈ e.vars) := by
   simp only [CircuitG.vars, List.mem_append, List.mem_flatMap]
 
 theorem OutputCircuit.mem_vars_of_constraint {cs : OutputCircuit p} {c : OutputExpression p}
-    {x : Variable} (hc : c ∈ cs.algebraicConstraints) (hx : x ∈ c.vars) : x ∈ cs.vars :=
+    {x : OutputVariable} (hc : c ∈ cs.algebraicConstraints) (hx : x ∈ c.vars) : x ∈ cs.vars :=
   OutputCircuit.mem_vars.2 (Or.inl ⟨c, hc, hx⟩)
 
 theorem OutputCircuit.mem_vars_of_mult {cs : OutputCircuit p}
-    {bi : BusInteraction (OutputExpression p)} {x : Variable} (hbi : bi ∈ cs.busInteractions)
+    {bi : BusInteraction (OutputExpression p)} {x : OutputVariable} (hbi : bi ∈ cs.busInteractions)
     (hx : x ∈ bi.multiplicity.vars) : x ∈ cs.vars :=
   OutputCircuit.mem_vars.2 (Or.inr ⟨bi, hbi, Or.inl hx⟩)
 
 theorem OutputCircuit.mem_vars_of_payload {cs : OutputCircuit p}
-    {bi : BusInteraction (OutputExpression p)} {e : OutputExpression p} {x : Variable}
+    {bi : BusInteraction (OutputExpression p)} {e : OutputExpression p} {x : OutputVariable}
     (hbi : bi ∈ cs.busInteractions) (he : e ∈ bi.payload) (hx : x ∈ e.vars) : x ∈ cs.vars :=
   OutputCircuit.mem_vars.2 (Or.inr ⟨bi, hbi, Or.inr ⟨e, he, hx⟩⟩)
 

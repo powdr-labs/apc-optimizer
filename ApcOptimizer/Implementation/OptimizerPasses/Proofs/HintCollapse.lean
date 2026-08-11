@@ -402,7 +402,7 @@ theorem hcMemOcc {d : DenseConstraintSystem p} {i : VarId} :
   simp only [DenseConstraintSystem.occ, List.mem_append, List.mem_flatMap]
 
 /-- The `VarId` `register` returns for an already-registered variable is exactly its existing ID. -/
-theorem register_snd_eq_of_idOf {reg : VarRegistry} {v : Variable} {i : VarId}
+theorem register_snd_eq_of_idOf {reg : VarRegistry} {v : OutputVariable} {i : VarId}
     (h : reg.idOf? v = some i) : (reg.register v).2 = i := by
   have h1 := VarRegistry.register_idOf reg v
   have h2 := (VarRegistry.register_extends reg v).idOf_eq h
@@ -410,12 +410,12 @@ theorem register_snd_eq_of_idOf {reg : VarRegistry} {v : Variable} {i : VarId}
   exact Option.some.inj h2
 
 /-- For an unregistered variable, `register` allocates the trailing (fresh) `VarId`. -/
-theorem register_snd_eq_of_none {reg : VarRegistry} {v : Variable}
+theorem register_snd_eq_of_none {reg : VarRegistry} {v : OutputVariable}
     (h : reg.idOf? v = none) : (reg.register v).2 = ⟨reg.byId.size⟩ := by
   grind [VarRegistry.register, VarRegistry.idOf?]
 
 /-- Registering a `powdrId? = none` variable preserves `isInput` pointwise. -/
-theorem hcRegisterIsInputEq (reg : VarRegistry) (v : Variable) (hv : v.powdrId? = none)
+theorem hcRegisterIsInputEq (reg : VarRegistry) (v : OutputVariable) (hv : v.powdrId? = none)
     (i : VarId) : (reg.register v).1.isInput i = reg.isInput i := by
   by_cases hvalid : reg.Valid i
   · rw [VarRegistry.isInput, VarRegistry.isInput,
@@ -439,7 +439,7 @@ theorem hcRegisterIsInputEq (reg : VarRegistry) (v : Variable) (hv : v.powdrId? 
 /-- The freshly-minted witness does not occur in the current system: on an existing registration the
     `denseIsFresh` gate ruled out `d.occ` membership; on a fresh registration the new trailing `VarId`
     is out of range, hence not a covered occurrence. -/
-theorem denseIsFresh_notMem {reg : VarRegistry} {d : DenseConstraintSystem p} {v : Variable}
+theorem denseIsFresh_notMem {reg : VarRegistry} {d : DenseConstraintSystem p} {v : OutputVariable}
     (hcov : d.CoveredBy reg) (h : denseIsFresh reg d v = true) :
     (reg.register v).2 ∉ d.occ := by
   unfold denseIsFresh at h
@@ -690,7 +690,7 @@ theorem hcOutOcc {d : DenseConstraintSystem p} {E E' : DenseExpr p} {i : VarId}
     (`powdrId? = none`, so `isInput` is preserved pointwise), extend the registry, and combine coverage
     of the output/derivations with `dense_collapse_correct`. Both `tryOne`/`tryOneSq` discharge only
     the pure structural hypotheses and call this. -/
-theorem dense_collapse_bundle [Fact p.Prime] (reg : VarRegistry) (invVar : Variable)
+theorem dense_collapse_bundle [Fact p.Prime] (reg : VarRegistry) (invVar : OutputVariable)
     (hpv : invVar.powdrId? = none) (d : DenseConstraintSystem p) (bs : BusSemantics p)
     (E denom rest : DenseExpr p) (D : List VarId)
     (reasg : (VarId → ZMod p) → ZMod p → (VarId → ZMod p)) (hcov : d.CoveredBy reg)
@@ -1262,7 +1262,7 @@ theorem denseHcBounds_sound (bs : BusSemantics p) (facts : BusFacts p bs) (nvars
 /-! ## Freshness from the occurrence codes -/
 
 /-- The array-served freshness test is the `d.occ` test: a `0` code means no occurrence. -/
-private theorem hcFresh_isFresh {reg : VarRegistry} {d : DenseConstraintSystem p} {v : Variable}
+private theorem hcFresh_isFresh {reg : VarRegistry} {d : DenseConstraintSystem p} {v : OutputVariable}
     (h : denseHcFresh reg (denseHcScan reg.byId.size d) v = true) : denseIsFresh reg d v = true := by
   unfold denseHcFresh at h
   unfold denseIsFresh
@@ -1281,7 +1281,7 @@ private theorem hcFresh_isFresh {reg : VarRegistry} {d : DenseConstraintSystem p
 /-- The `ofExtending` bundle for an accepted collapse at a known index: with the target unique in
     the list, the indexed replacement is the by-value one, and `dense_collapse_bundle` transports
     it. -/
-theorem denseHcAccept_correct [Fact p.Prime] (reg : VarRegistry) (invVar : Variable)
+theorem denseHcAccept_correct [Fact p.Prime] (reg : VarRegistry) (invVar : OutputVariable)
     (hpv : invVar.powdrId? = none) (d : DenseConstraintSystem p) (bs : BusSemantics p)
     (E denom rest : DenseExpr p) (D : List VarId) (idx : Nat)
     (reasg : (VarId → ZMod p) → ZMod p → (VarId → ZMod p)) (hcov : d.CoveredBy reg)

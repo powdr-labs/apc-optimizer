@@ -156,7 +156,7 @@ structure BusFacts (p : ℕ) (bs : BusSemantics p) where
            m.multiplicity = -shape.setNewMult) →
       bs.admissible (A ++ S :: B ++ R :: C) →
       bs.admissible (A ++ B ++ C)
-  /-- Variable-range-checker stateless bus: `[x, b]` accepted iff
+  /-- OutputVariable-range-checker stateless bus: `[x, b]` accepted iff
       `b.val ≤ 17 ∧ x.val < 2 ^ b.val`. -/
   varRangeBus : (busId : Nat) → Bool
   varRangeBus_sound :

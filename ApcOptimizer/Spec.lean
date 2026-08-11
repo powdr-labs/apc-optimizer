@@ -8,7 +8,7 @@ variable {p : ℕ} [Fact p.Prime]
 --------- Expressions ---------
 
 /-- A circuit variable. -/
-structure Variable where
+structure OutputVariable where
   /-- The display name of the variable. -/
   name : String
   /-- The optional powdr variable ID. All variables mentioned in the input
@@ -18,7 +18,7 @@ structure Variable where
   powdrId? : Option Nat := none
   deriving DecidableEq, Repr
 
-/-- A variable of a circuit as exported by powdr. Unlike a `Variable`, it always
+/-- A variable of a circuit as exported by powdr. Unlike a `OutputVariable`, it always
     carries a powdr ID: the input circuit has no derived variables. -/
 structure InputVariable where
   /-- The display name of the variable. -/
@@ -46,7 +46,7 @@ def ExpressionG.mapVar {V W : Type} (f : V → W) : ExpressionG V p → Expressi
   | .mul e1 e2 => .mul (e1.mapVar f) (e2.mapVar f)
 
 /-- An arithmetic expression over circuit variables and field constants. -/
-abbrev OutputExpression (p : ℕ) := ExpressionG Variable p
+abbrev OutputExpression (p : ℕ) := ExpressionG OutputVariable p
 
 /-- An arithmetic expression over circuit variables and field constants. -/
 abbrev InputExpression (p : ℕ) := ExpressionG InputVariable p
@@ -96,7 +96,7 @@ inductive ComputationMethod (p : ℕ) where
 /-- Evaluate a computation method under an assignment (cf. powdr's
     `evaluate_computation_method`). -/
 def ComputationMethod.eval :
-    ComputationMethod p → (Variable → ZMod p) → ZMod p
+    ComputationMethod p → (OutputVariable → ZMod p) → ZMod p
   | .const c, _ => c
   | .quotientOrZero num den, assignment =>
       if den.eval assignment = 0 then 0
@@ -106,7 +106,7 @@ def ComputationMethod.eval :
       else elseM.eval assignment
 
 /-- The variables a computation method may read. -/
-def ComputationMethod.vars : ComputationMethod p → List Variable
+def ComputationMethod.vars : ComputationMethod p → List OutputVariable
   | .const _ => []
   | .quotientOrZero num den => num.vars ++ den.vars
   | .ifEqZero cond thenM elseM => cond.vars ++ thenM.vars ++ elseM.vars
@@ -114,7 +114,7 @@ def ComputationMethod.vars : ComputationMethod p → List Variable
 -- ANCHOR: derivations
 /-- A list of derived variables paired with how to compute each, consumed by
     witness generation. -/
-abbrev Derivations (p : ℕ) := List (Variable × ComputationMethod p)
+abbrev Derivations (p : ℕ) := List (OutputVariable × ComputationMethod p)
 -- ANCHOR_END: derivations
 
 --------- Bus Interactions ---------
@@ -134,7 +134,7 @@ structure BusInteraction (α : Type) where
 /-- Evaluate a bus interaction under an `assignment`, turning a symbolic bus
     interaction into a bus interaction message. -/
 def BusInteraction.eval (bi : BusInteraction (OutputExpression p))
-    (assignment : Variable → ZMod p) : BusInteraction (ZMod p) :=
+    (assignment : OutputVariable → ZMod p) : BusInteraction (ZMod p) :=
   { busId := bi.busId,
     multiplicity := bi.multiplicity.eval assignment,
     payload := bi.payload.map (fun e => e.eval assignment) }
@@ -199,7 +199,7 @@ def CircuitG.mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) : Circui
                    payload := bi.payload.map (·.mapVar f) }) }
 
 /-- A circuit over circuit variables. -/
-abbrev OutputCircuit (p : ℕ) := CircuitG Variable p
+abbrev OutputCircuit (p : ℕ) := CircuitG OutputVariable p
 
 /-- A circuit over powdr variables. -/
 abbrev InputCircuit (p : ℕ) := CircuitG InputVariable p
@@ -212,8 +212,8 @@ def CircuitG.vars {V : Type} (circuit : CircuitG V p) : List V :=
 
 --------- Circuits exported by powdr ---------
 
-/-- The `Variable` a powdr variable denotes: its powdr ID is present. -/
-def InputVariable.toVariable (v : InputVariable) : Variable :=
+/-- The `OutputVariable` a powdr variable denotes: its powdr ID is present. -/
+def InputVariable.toVariable (v : InputVariable) : OutputVariable :=
   { name := v.name, powdrId? := some v.id }
 
 -- ANCHOR: toVariableCircuit
@@ -227,7 +227,7 @@ def InputCircuit.toCircuit (circuit : InputCircuit p) : OutputCircuit p :=
 /-- The side effects of a circuit under a given assignment and bus semantics:
     the net multiplicity with which each tuple is sent to a *stateful* bus. -/
 def OutputCircuit.sideEffects (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
-    (assignment : Variable → ZMod p) : BusState p :=
+    (assignment : OutputVariable → ZMod p) : BusState p :=
   fun message =>
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
       (fun m => busSemantics.isStateful m.busId &&
@@ -242,7 +242,7 @@ def OutputCircuit.sideEffects (circuit : OutputCircuit p) (busSemantics : BusSem
     multiple times, the last derivation is returned; `none` if `v` has no
     derivation. -/
 def Derivations.methodFor :
-    Derivations p → Variable → Option (ComputationMethod p)
+    Derivations p → OutputVariable → Option (ComputationMethod p)
   | [], _ => none
   | (u, cm) :: rest, v =>
       match Derivations.methodFor rest v with
@@ -254,7 +254,7 @@ def Derivations.methodFor :
     from `inputVars`: each output variable is either an input variable (reused)
     or a derived variable with a method that reads only input variables. -/
 def Derivations.cover (ds : Derivations p)
-    (inputVars outputVars : List Variable) : Prop :=
+    (inputVars outputVars : List OutputVariable) : Prop :=
   ∀ v ∈ outputVars,
     match v.powdrId? with
     | some _ => v ∈ inputVars
@@ -264,8 +264,8 @@ def Derivations.cover (ds : Derivations p)
 omit [Fact p.Prime] in
 /- Support lemma, does not require audit. -/
 theorem Derivations.methodFor_isSome (ds : Derivations p)
-    {inputVars outputVars : List Variable} (h : ds.cover inputVars outputVars)
-    {v : Variable} (hv : v ∈ outputVars) (hp : v.powdrId? = none) :
+    {inputVars outputVars : List OutputVariable} (h : ds.cover inputVars outputVars)
+    {v : OutputVariable} (hv : v ∈ outputVars) (hp : v.powdrId? = none) :
     (ds.methodFor v).isSome := by
   have hc := h v hv
   simp only [hp] at hc
@@ -276,9 +276,9 @@ theorem Derivations.methodFor_isSome (ds : Derivations p)
 /-- Witness generation on a variable `ds` covers. Every powdr-ID (input)
     variable passes through unchanged; every other variable is computed by the
     method `ds` records for it. -/
-def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
-    (v : Variable) (hv : v ∈ outputVars) : ZMod p :=
+def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List OutputVariable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : OutputVariable → ZMod p)
+    (v : OutputVariable) (hv : v ∈ outputVars) : ZMod p :=
   match hp : v.powdrId? with
   -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
   -- variable of the output circuit also exists in the input circuit.
@@ -291,7 +291,7 @@ def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variabl
 -- ANCHOR: admissible
 /-- Whether a given assignment is admissible under the bus semantics. -/
 def OutputCircuit.admissible (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
-    (assignment : Variable → ZMod p) : Prop :=
+    (assignment : OutputVariable → ZMod p) : Prop :=
   busSemantics.admissible
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
       (fun m => decide (m.multiplicity ≠ 0) && busSemantics.isStateful m.busId))
@@ -302,7 +302,7 @@ def OutputCircuit.admissible (circuit : OutputCircuit p) (busSemantics : BusSema
     i.e., whether it satisfies all algebraic constraints and every active bus
     interaction message is accepted. -/
 def OutputCircuit.satisfies (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
-    (assignment : Variable → ZMod p) : Prop :=
+    (assignment : OutputVariable → ZMod p) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.eval assignment = 0) ∧
   (∀ bi ∈ circuit.busInteractions,
     let message := bi.eval assignment
@@ -356,7 +356,7 @@ def OutputCircuit.isCompleteReplacementOf
   ∀ assignment,
     originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
-    ∀ assignment' : Variable → ZMod p,
+    ∀ assignment' : OutputVariable → ZMod p,
     (∀ v (hv : v ∈ optimizedCircuit.vars),
       assignment' v = ds.witgen hcover assignment v hv) →
     optimizedCircuit.satisfies busSemantics assignment' ∧

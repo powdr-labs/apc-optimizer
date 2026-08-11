@@ -124,7 +124,7 @@ def DenseConstraintSystem.varCount (d : DenseConstraintSystem p) : Nat :=
 /-- HashSet distinct-count is invariant under the injective `resolve` relabeling: folding valid IDs
     and their resolutions into hash sets yields equal sizes. -/
 private theorem size_fold_map_resolve (r : VarRegistry) :
-    ∀ (l : List VarId) (sI : Std.HashSet VarId) (sV : Std.HashSet Variable),
+    ∀ (l : List VarId) (sI : Std.HashSet VarId) (sV : Std.HashSet OutputVariable),
       (∀ j, r.Valid j → (j ∈ sI ↔ r.resolve j ∈ sV)) → sI.size = sV.size →
       (∀ i ∈ l, r.Valid i) →
       ((l.map r.resolve).foldl (·.insert ·) sV).size = (l.foldl (·.insert ·) sI).size

@@ -380,8 +380,8 @@ index gate**  ·  domainFold **done (entry 167)**, reencode open:
      appended to the array), which is the larger half of the project.
 
 **R4. Constant-factor levers that touch every pass**  ·  *medium value, cheap*:
-   - **Variable interning-lite, `Implementation/`-only**: parse-time interning is **done (entry
-     106)**. The `powdrId?`-first `Hashable Variable` swap was **tried and reverted (entry
+   - **OutputVariable interning-lite, `Implementation/`-only**: parse-time interning is **done (entry
+     106)**. The `powdrId?`-first `Hashable OutputVariable` swap was **tried and reverted (entry
      116)**: hash values leak into `Std.HashMap`/`HashSet` iteration orders, and *some* consumer
      lets that order reach the output — sp1 apc_030's export changed (openvm-eth apc_100 was
      identical). Before re-proposing, find and order-normalize the leaking `toList`/`fold`
@@ -1248,7 +1248,7 @@ are non-survivors" argument (`a·y + b = 0` has at most one root when `a ≠ 0`)
   fold is *incorrect*, not merely unproven (`isCompleteReplacementOf` quantifies over admissible
   assignments).
 - **Timestamp-decomp / mem_ptr encodings**: count-neutral representation choices, verified 1:1.
-- **Variable count via derived columns / functional dependence**: structurally impossible
+- **OutputVariable count via derived columns / functional dependence**: structurally impossible
   (variables are counted syntactically).
 - **`identitySubst` in the cleanup cycle**: still a regression (re-encode explosion); its coda
   placement (now pre-drop/pack, entry 103) is the working point.

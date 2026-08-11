@@ -227,13 +227,13 @@ def denseHcWits (st : Array Nat) (idx : Nat) (E : DenseExpr p) : List VarId :=
 
 /-- Is `v` absent from the current system? An unregistered candidate cannot be a member (`none`);
     otherwise membership in `d.occ` (`Measure.lean`) is checked by `VarId`. -/
-def denseIsFresh (reg : VarRegistry) (d : DenseConstraintSystem p) (v : Variable) : Bool :=
+def denseIsFresh (reg : VarRegistry) (d : DenseConstraintSystem p) (v : OutputVariable) : Bool :=
   match reg.idOf? v with
   | some i => !d.occ.contains i
   | none => true
 
 /-- `denseIsFresh` served from the occurrence codes: `i ∈ d.occ` is exactly `st[i] ≠ 0`. -/
-def denseHcFresh (reg : VarRegistry) (st : Array Nat) (v : Variable) : Bool :=
+def denseHcFresh (reg : VarRegistry) (st : Array Nat) (v : OutputVariable) : Bool :=
   match reg.idOf? v with
   | some i => st.getD i.index 0 == 0
   | none => true
@@ -279,7 +279,7 @@ def denseHcBounds (bs : BusSemantics p) (facts : BusFacts p bs) (nvars : Nat) (w
 /-- The accepted collapse: mint `invVar` and replace the target at its index. Replacing at the index
     rather than by value is the same list — the target is unique among the constraints, since a
     duplicate entry would have disqualified every witness (`hcSet_eq_map` in the proof). -/
-def denseHcAccept (reg : VarRegistry) (d : DenseConstraintSystem p) (idx : Nat) (invVar : Variable)
+def denseHcAccept (reg : VarRegistry) (d : DenseConstraintSystem p) (idx : Nat) (invVar : OutputVariable)
     (denom rest : DenseExpr p) : VarRegistry × DenseConstraintSystem p × DenseDerivations p :=
   let invId := (reg.register invVar).2
   ((reg.register invVar).1,
@@ -300,12 +300,12 @@ def denseHcTry (bs : BusSemantics p) (facts : BusFacts p bs) (reg : VarRegistry)
     if rest.vars.all (fun x => reg.isInput x) then
       let Bm := denseHcBounds bs facts st.size (denseHcWantVars coeffs) d.busInteractions
       if denseCoeffsByteOK reg Bm D coeffs && decide (coeffs.length * 256 ≤ p) then
-        let invVar : Variable := ⟨"hcinv#" ++ (reg.resolve (D.headD default)).name, none⟩
+        let invVar : OutputVariable := ⟨"hcinv#" ++ (reg.resolve (D.headD default)).name, none⟩
         if denseHcFresh reg st invVar then
           some (denseHcAccept reg d idx invVar (denseSumExpr coeffs) rest)
         else none
       else if denseSqCoeffsOK reg Bm D coeffs && decide (coeffs.length * 65536 ≤ p) then
-        let invVar : Variable := ⟨"hcsq#" ++ (reg.resolve (D.headD default)).name, none⟩
+        let invVar : OutputVariable := ⟨"hcsq#" ++ (reg.resolve (D.headD default)).name, none⟩
         if denseHcFresh reg st invVar then
           some (denseHcAccept reg d idx invVar
             (denseSumExpr (coeffs.map (fun c => DenseExpr.mul c c))) rest)

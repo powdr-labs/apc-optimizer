@@ -5,7 +5,7 @@ set_option autoImplicit false
 /-! # Dense correctness and the central lift bridge
 
 Passes are proved correct over dense environments `VarId → ZMod p` and connected to the audited
-`Variable`-level spec once, at the optimizer boundary. This module defines the dense semantics
+`OutputVariable`-level spec once, at the optimizer boundary. This module defines the dense semantics
 (evaluation, satisfaction, admissibility, side effects, refinement), `DensePassCorrect` (the dense
 analogue of `PassCorrect`, parameterised by `isInput : VarId → Bool`), the lift theorem
 `DensePassCorrect.lift`, and the pass builders `DenseVerifiedPassW.of` / `.ofExtending`. -/
@@ -180,19 +180,19 @@ def VarRegistry.isInput (reg : VarRegistry) (i : VarId) : Bool := (reg.resolve i
 /-- Extend a dense environment to a spec environment: registered variables read their dense value,
     everything else falls back to `E`. The fallback keeps unregistered powdr columns fixed, as the
     spec completeness clause requires. -/
-def VarRegistry.extendEnv (reg : VarRegistry) (denv : VarId → ZMod p) (E : Variable → ZMod p) :
-    Variable → ZMod p :=
+def VarRegistry.extendEnv (reg : VarRegistry) (denv : VarId → ZMod p) (E : OutputVariable → ZMod p) :
+    OutputVariable → ZMod p :=
   fun v => match reg.idOf? v with
     | some i => denv i
     | none => E v
 
 theorem VarRegistry.extendEnv_resolve (reg : VarRegistry) (denv : VarId → ZMod p)
-    (E : Variable → ZMod p) {i : VarId} (hi : reg.Valid i) :
+    (E : OutputVariable → ZMod p) {i : VarId} (hi : reg.Valid i) :
     reg.extendEnv denv E (reg.resolve i) = denv i := by
   simp only [VarRegistry.extendEnv, reg.idOf_resolve hi]
 
 theorem VarRegistry.extendEnv_unregistered (reg : VarRegistry) (denv : VarId → ZMod p)
-    (E : Variable → ZMod p) {v : Variable} (h : reg.idOf? v = none) :
+    (E : OutputVariable → ZMod p) {v : OutputVariable} (h : reg.idOf? v = none) :
     reg.extendEnv denv E v = E v := by
   simp only [VarRegistry.extendEnv, h]
 
@@ -209,13 +209,13 @@ theorem VarRegistry.isInput_valid {reg : VarRegistry} {i : VarId} (h : reg.isInp
     semantics under `E ∘ resolve` -/
 
 theorem VarRegistry.decodeBI_eval (reg : VarRegistry) (bi : BusInteraction (DenseExpr p))
-    (E : Variable → ZMod p) :
+    (E : OutputVariable → ZMod p) :
     (reg.decodeBI bi).eval E = denseBIEval bi (fun i => E (reg.resolve i)) := by
   simp only [VarRegistry.decodeBI, BusInteraction.eval, denseBIEval, reg.decodeExpr_eval,
     List.map_map, Function.comp_def]
 
 theorem VarRegistry.decodeCS_satisfies (reg : VarRegistry) (d : DenseConstraintSystem p)
-    (bs : BusSemantics p) (E : Variable → ZMod p) :
+    (bs : BusSemantics p) (E : OutputVariable → ZMod p) :
     (reg.decodeCS d).satisfies bs E ↔ d.satisfies bs (fun i => E (reg.resolve i)) := by
   simp only [OutputCircuit.satisfies, DenseConstraintSystem.satisfies, VarRegistry.decodeCS,
     List.mem_map, forall_exists_index, and_imp]
@@ -234,7 +234,7 @@ theorem VarRegistry.decodeCS_satisfies (reg : VarRegistry) (d : DenseConstraintS
       rw [reg.decodeBI_eval]; exact h2 bi0 hbi0
 
 theorem VarRegistry.decodeCS_admissible (reg : VarRegistry) (d : DenseConstraintSystem p)
-    (bs : BusSemantics p) (E : Variable → ZMod p) :
+    (bs : BusSemantics p) (E : OutputVariable → ZMod p) :
     (reg.decodeCS d).admissible bs E ↔ d.admissible bs (fun i => E (reg.resolve i)) := by
   have hlist : (((reg.decodeCS d).busInteractions.map (fun bi => bi.eval E)).filter
         (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId))
@@ -266,7 +266,7 @@ theorem VarRegistry.decodeBI_filter_comm (reg : VarRegistry) (d : DenseConstrain
       · rw [if_neg hb, if_neg (show ¬ bs.isStateful (reg.decodeBI b).busId = true from hb), ih]
 
 theorem VarRegistry.decodeCS_sideEffects (reg : VarRegistry) (d : DenseConstraintSystem p)
-    (bs : BusSemantics p) (E : Variable → ZMod p) :
+    (bs : BusSemantics p) (E : OutputVariable → ZMod p) :
     (reg.decodeCS d).sideEffects bs E = d.sideEffects bs (fun i => E (reg.resolve i)) := by
   funext message
   rw [OutputCircuit.sideEffects_eq]
@@ -310,7 +310,7 @@ theorem VarRegistry.decodeCS_guaranteesInvariants (reg : VarRegistry) {d : Dense
     exact fun hne => hgi _ hsat bi hbi hne
 
 theorem VarRegistry.decodeCM_eval (reg : VarRegistry) (cm : DenseComputationMethod p)
-    (E : Variable → ZMod p) :
+    (E : OutputVariable → ZMod p) :
     (reg.decodeCM cm).eval E = cm.eval (fun i => E (reg.resolve i)) := by
   induction cm with
   | const c => rfl
@@ -359,7 +359,7 @@ theorem VarRegistry.decodeDerivs_methodFor (reg : VarRegistry) {dd : DenseDeriva
             simp [hne, huv]
 
 theorem VarRegistry.mem_decodeCS_vars (reg : VarRegistry) (d : DenseConstraintSystem p)
-    {v : Variable} : v ∈ (reg.decodeCS d).vars ↔ ∃ i ∈ d.occ, reg.resolve i = v := by
+    {v : OutputVariable} : v ∈ (reg.decodeCS d).vars ↔ ∃ i ∈ d.occ, reg.resolve i = v := by
   rw [show (reg.decodeCS d).vars = d.occ.map reg.resolve from reg.decodeCS_occ d, List.mem_map]
 
 /-! ## `DensePassCorrect`: the dense analogue of `PassCorrect`
@@ -379,7 +379,7 @@ def DenseOutReconstructs (isInput : VarId → Bool) (inputVarIds : List VarId)
     | none => i ∈ d.occ ∧ denv' i = denv i
 
 /-- The per-pass correctness obligation over dense environments: the dense analogue of
-    `PassCorrect`. Fully `Variable`-free and decode-free; all evidence is `Prop` (erases). -/
+    `PassCorrect`. Fully `OutputVariable`-free and decode-free; all evidence is `Prop` (erases). -/
 def DensePassCorrect (isInput : VarId → Bool) (d out : DenseConstraintSystem p)
     (dd : DenseDerivations p) (bs : BusSemantics p) : Prop :=
   out.implies d bs ∧
@@ -394,7 +394,7 @@ def DensePassCorrect (isInput : VarId → Bool) (d out : DenseConstraintSystem p
 
 /-! ## Spec-level helpers -/
 
-private theorem specExpr_eval_congr (e : OutputExpression p) (e1 e2 : Variable → ZMod p)
+private theorem specExpr_eval_congr (e : OutputExpression p) (e1 e2 : OutputVariable → ZMod p)
     (h : ∀ v ∈ e.vars, e1 v = e2 v) : e.eval e1 = e.eval e2 := by
   induction e with
   | const n => rfl
@@ -408,7 +408,7 @@ private theorem specExpr_eval_congr (e : OutputExpression p) (e1 e2 : Variable �
       rw [iha (fun v hv => h v (by simp [ExpressionG.vars, hv])),
           ihb (fun v hv => h v (by simp [ExpressionG.vars, hv]))]
 
-private theorem specCM_eval_congr (cm : ComputationMethod p) (e1 e2 : Variable → ZMod p)
+private theorem specCM_eval_congr (cm : ComputationMethod p) (e1 e2 : OutputVariable → ZMod p)
     (h : ∀ v ∈ cm.vars, e1 v = e2 v) : cm.eval e1 = cm.eval e2 := by
   induction cm with
   | const c => rfl
@@ -454,7 +454,7 @@ private theorem specDCM_eval_congr (cm : DenseComputationMethod p) (e1 e2 : VarI
           ihe (fun i hi => h i (by
             simp only [DenseComputationMethod.vars, List.mem_append]; exact Or.inr hi))]
 
-private theorem specMethodFor_append (a b : Derivations p) (v : Variable) :
+private theorem specMethodFor_append (a b : Derivations p) (v : OutputVariable) :
     Derivations.methodFor (a ++ b) v
       = (Derivations.methodFor b v).orElse (fun _ => Derivations.methodFor a v) := by
   induction a with
@@ -679,7 +679,7 @@ theorem DensePassCorrect.lift {reg : VarRegistry} {d out : DenseConstraintSystem
     obtain ⟨denv', hsat', hadm', hse, hc4, hrec⟩ := hComp _ hadmE hsatE
     set env' := reg.extendEnv denv' E with henv'
     -- powdr-ID columns are preserved by `env'`.
-    have hpw4 : ∀ w : Variable, w.powdrId?.isSome = true → env' w = E w := by
+    have hpw4 : ∀ w : OutputVariable, w.powdrId?.isSome = true → env' w = E w := by
       intro w hw
       cases hidof : reg.idOf? w with
       | none => rw [henv', reg.extendEnv_unregistered denv' E hidof]
@@ -849,9 +849,9 @@ def DenseVerifiedPassW.ofExtending
 
 /-! ### Sanity check: a trivial registry-minting stub composes through the builder -/
 
-/-- A trivial registry-minting stub (register one fresh `Variable`, keep the system) composing
+/-- A trivial registry-minting stub (register one fresh `OutputVariable`, keep the system) composing
     through `ofExtending`; an erased `example` witnessing the extending builder type-checks. -/
-private example (v : Variable) : DenseVerifiedPassW p :=
+private example (v : OutputVariable) : DenseVerifiedPassW p :=
   DenseVerifiedPassW.ofExtending
     (fun reg _ _ d => ((reg.register v).1, d, []))
     (fun reg _ _ _ _ => VarRegistry.register_extends reg v)

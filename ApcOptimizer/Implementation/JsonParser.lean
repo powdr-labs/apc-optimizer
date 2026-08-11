@@ -148,7 +148,7 @@ private def parseBusInteraction (j : Lean.Json) :
     payload := payload
   }
 
-/-! ### Variable interning
+/-! ### OutputVariable interning
 
 The parser mints a fresh `String`/`InputVariable` per occurrence; interning rebuilds the system with
 one shared variable per distinct value, so the runtime's pointer fast-path in `String` equality
