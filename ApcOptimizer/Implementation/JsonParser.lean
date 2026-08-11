@@ -94,7 +94,7 @@ partial def parseJsonExpr (j : Lean.Json) : Except String (InputExpression p) :=
     -- All constants in powdr exports are integers (exponent 0).
     let z := n.mantissa * (10 ^ n.exponent)
     .ok (.const (z : ZMod p))
-  | Lean.Json.str s => (PowdrVariable.ofPowdrName s).map .var
+  | Lean.Json.str s => (InputVariable.ofPowdrName s).map .var
   | Lean.Json.arr items =>
     if h3 : items.size = 3 then
       let lhs := items[0]
@@ -150,13 +150,13 @@ private def parseBusInteraction (j : Lean.Json) :
 
 /-! ### Variable interning
 
-The parser mints a fresh `String`/`PowdrVariable` per occurrence; interning rebuilds the system with
+The parser mints a fresh `String`/`InputVariable` per occurrence; interning rebuilds the system with
 one shared variable per distinct value, so the runtime's pointer fast-path in `String` equality
-short-circuits the many later equality tests (the names survive `CircuitG.toCircuit`). The
+short-circuits the many later equality tests (the names survive `InputCircuit.toCircuit`). The
 interned system is the same value (variables compare equal), so nothing downstream observes the
 difference except time. -/
 
-/-- Collect one canonical `PowdrVariable` object per distinct value. -/
+/-- Collect one canonical `InputVariable` object per distinct value. -/
 private def collectVars (m : Std.HashMap InputVariable InputVariable) :
     InputExpression p → Std.HashMap InputVariable InputVariable
   | .const _ => m
@@ -213,7 +213,7 @@ private def parseMachinePart (jsonStr : String) :
   }
   pure (json, system, nextFreeId?)
 
-/-- Parse a powdr export into the circuit it describes (`CircuitG PowdrVariable`, the optimizer's
+/-- Parse a powdr export into the circuit it describes (`InputCircuit`, the optimizer's
     input type), its OpenVM `BusMap`, and the `next_free_id` cursor. -/
 def parseJsonSystem (jsonStr : String) :
     Except String (InputCircuit p × BusMapList × Option Nat) := do

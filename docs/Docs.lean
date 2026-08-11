@@ -58,7 +58,7 @@ In the remainder of this document, we formalize the properties that an optimizer
 
 A {deftech}_variable_ is how the _runtime witness data_ is referenced in a circuit. Every variable of the circuit exported by powdr carries a _powdr ID_, so its type records the ID unconditionally:
 
-{docstring PowdrVariable}
+{docstring InputVariable}
 
 Variables of the circuits the optimizer works on may also have been introduced by the optimizer itself, in which case they have no powdr ID:
 
@@ -353,7 +353,7 @@ def optimizerRespectsDegreeBound (b : DegreeBound)
 
 # Optimizer
 
-Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit powdr exported to a new circuit and a list of derivations. Its input being a {lean}`CircuitG PowdrVariable` is what records that every variable it is given has a powdr ID: we do not assume this, we read it off the input type.
+Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit powdr exported to a new circuit and a list of derivations. Its input being a {lean}`CircuitG InputVariable` is what records that every variable it is given has a powdr ID: we do not assume this, we read it off the input type.
 
 ```anchor optimizer
 abbrev Optimizer (p : ℕ) := InputCircuit p → Circuit p × Derivations p
@@ -365,7 +365,7 @@ The circuit the output is compared against is the one the input denotes, with ea
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
 def CircuitG.toCircuit (circuit : InputCircuit p) : Circuit p :=
-  circuit.mapVar PowdrVariable.toVariable
+  circuit.mapVar InputVariable.toVariable
 ```
 
 An optimizer is correct if, for every input circuit, replacing it with the optimized circuit is both sound and complete, and the optimizer respects the degree bound.

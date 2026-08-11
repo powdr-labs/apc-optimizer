@@ -19,7 +19,7 @@ instance : Hashable InputVariable := ⟨fun a => mixHash (hash a.name) (hash a.i
 /-- Parse powdr's `<name>@<id>` variable notation. A name without a numeric id fails loudly: powdr
     exports every column with its id (and so does `JsonSerializer`, for the columns passes mint), so
     an id-less name means the input is not what the optimizer's input type describes. -/
-def PowdrVariable.ofPowdrName (raw : String) : Except String InputVariable :=
+def InputVariable.ofPowdrName (raw : String) : Except String InputVariable :=
   match raw.splitOn "@" with
   | [base, id] =>
       match id.toNat? with
