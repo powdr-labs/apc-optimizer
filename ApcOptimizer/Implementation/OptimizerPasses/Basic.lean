@@ -8,14 +8,14 @@ variable {p : ℕ}
 /-! # Optimizer scaffolding
 
 The reusable framework for building the optimizer out of small, individually-proven passes: the
-relation glue (`Circuit.implies`/`.reconstructs`), `PassCorrect`, and `VerifiedPass`
+relation glue (`OutputCircuit.implies`/`.reconstructs`), `PassCorrect`, and `VerifiedPass`
 bundling a pass with its own `PassCorrect` proof. -/
 
 /-! ## Net multiplicity over contribution lists
 
 `BusState` is a function (`ApcOptimizer/Spec.lean`), but the pass proofs reason by induction over
 the *list* of per-interaction contributions. `multiplicitySum` is that list view and
-`Circuit.sideEffects_eq` relates it to the spec's definition. -/
+`OutputCircuit.sideEffects_eq` relates it to the spec's definition. -/
 
 /-- The net multiplicity with which `message` is sent by a list of per-interaction contributions. -/
 def multiplicitySum (message : BusMessage p) (state : List (BusMessage p × ZMod p)) : ZMod p :=
@@ -25,7 +25,7 @@ def multiplicitySum (message : BusMessage p) (state : List (BusMessage p × ZMod
       (if msg = message then mult else 0) + multiplicitySum message tl
 
 /-- The contribution list of a circuit's stateful interactions under `env`. -/
-def Circuit.contributions (circuit : Circuit p) (bs : BusSemantics p)
+def OutputCircuit.contributions (circuit : OutputCircuit p) (bs : BusSemantics p)
     (env : Variable → ZMod p) : List (BusMessage p × ZMod p) :=
   (circuit.busInteractions.filter (fun bi => bs.isStateful bi.busId)).map
     (fun bi => let m := bi.eval env; ((m.busId, m.payload), m.multiplicity))
@@ -50,7 +50,7 @@ theorem multiplicitySum_map_filter (bs : BusSemantics p) (env : Variable → ZMo
       · simp [hb, hstate, ih]
 
 /-- The spec's `sideEffects` is the net multiplicity of the contribution list. -/
-theorem Circuit.sideEffects_eq (cs : Circuit p) (bs : BusSemantics p) (env : Variable → ZMod p)
+theorem OutputCircuit.sideEffects_eq (cs : OutputCircuit p) (bs : BusSemantics p) (env : Variable → ZMod p)
     (message : BusMessage p) :
     cs.sideEffects bs env message = multiplicitySum message (cs.contributions bs env) :=
   multiplicitySum_map_filter bs env message cs.busInteractions
@@ -58,7 +58,7 @@ theorem Circuit.sideEffects_eq (cs : Circuit p) (bs : BusSemantics p) (env : Var
 /-- Soundness half of a replacement: every satisfying assignment of `self` maps to one of `other`
     with the same stateful side effects. The spec's `isSoundReplacementOf` is this plus invariant
     preservation. -/
-def Circuit.implies (self other : Circuit p) (busSemantics : BusSemantics p) :
+def OutputCircuit.implies (self other : OutputCircuit p) (busSemantics : BusSemantics p) :
     Prop :=
   ∀ env, self.satisfies busSemantics env →
     ∃ env', other.satisfies busSemantics env' ∧
@@ -67,7 +67,7 @@ def Circuit.implies (self other : Circuit p) (busSemantics : BusSemantics p) :
 /-- Every no-powdr-ID variable of `cs` is computed by `ds`'s method for it, reading only powdr-ID
     variables from `inputVars`. Threaded through passes; the pipeline top uses it to match the
     spec's `witgen` output and `Derivations.cover`. -/
-def Circuit.reconstructs (inputVars : List Variable) (cs : Circuit p)
+def OutputCircuit.reconstructs (inputVars : List Variable) (cs : OutputCircuit p)
     (ds : Derivations p) (e : Variable → ZMod p) : Prop :=
   ∀ v ∈ cs.vars, v.powdrId? = none →
     ∃ cm, Derivations.methodFor ds v = some cm ∧
@@ -75,11 +75,11 @@ def Circuit.reconstructs (inputVars : List Variable) (cs : Circuit p)
       (∀ x ∈ cm.vars, x ∈ inputVars) ∧
       cm.eval e = e v
 
-theorem Circuit.implies_refl (cs : Circuit p) (busSemantics : BusSemantics p) :
+theorem OutputCircuit.implies_refl (cs : OutputCircuit p) (busSemantics : BusSemantics p) :
     cs.implies cs busSemantics :=
   fun env hsat => ⟨env, hsat, rfl⟩
 
-theorem Circuit.implies_trans {a b c : Circuit p} {busSemantics : BusSemantics p}
+theorem OutputCircuit.implies_trans {a b c : OutputCircuit p} {busSemantics : BusSemantics p}
     (h1 : a.implies b busSemantics) (h2 : b.implies c busSemantics) : a.implies c busSemantics :=
   fun env hsat =>
     let ⟨env', hb, hab⟩ := h1 env hsat
@@ -111,7 +111,7 @@ pass cannot be written without discharging its obligations. Passes compose with 
     `cs` extends to one of `out` with equal side effects, preserving input-column values and
     reconstructing `out`'s derived variables. `dsLocal` are the derivations this step introduces,
     concatenated onto any incoming `dsIn` so passes compose. -/
-def PassCorrect (cs out : Circuit p) (dsLocal : Derivations p) (bs : BusSemantics p) :
+def PassCorrect (cs out : OutputCircuit p) (dsLocal : Derivations p) (bs : BusSemantics p) :
     Prop :=
   out.implies cs bs ∧
   (cs.guaranteesInvariants bs → out.guaranteesInvariants bs) ∧
@@ -124,7 +124,7 @@ def PassCorrect (cs out : Circuit p) (dsLocal : Derivations p) (bs : BusSemantic
         ∀ dsIn, cs.reconstructs inputVars dsIn env →
           out.reconstructs inputVars (dsIn ++ dsLocal) env'))
 
-theorem PassCorrect.refl (cs : Circuit p) (bs : BusSemantics p) :
+theorem PassCorrect.refl (cs : OutputCircuit p) (bs : BusSemantics p) :
     PassCorrect cs cs [] bs :=
   ⟨cs.implies_refl bs, _root_.id, fun _ hv _ => hv,
    fun env hadm hsat =>
@@ -133,12 +133,12 @@ theorem PassCorrect.refl (cs : Circuit p) (bs : BusSemantics p) :
 
 /-- Sequential composition: derivations concatenate, soundness/invariants compose, reconstruction
     chains. -/
-theorem PassCorrect.andThen {cs mid out : Circuit p} {bs : BusSemantics p}
+theorem PassCorrect.andThen {cs mid out : OutputCircuit p} {bs : BusSemantics p}
     {df dg : Derivations p} (hf : PassCorrect cs mid df bs) (hg : PassCorrect mid out dg bs) :
     PassCorrect cs out (df ++ dg) bs := by
   obtain ⟨hf1, hf2, hf3, hf4⟩ := hf
   obtain ⟨hg1, hg2, hg3, hg4⟩ := hg
-  refine ⟨Circuit.implies_trans hg1 hf1, fun h => hg2 (hf2 h),
+  refine ⟨OutputCircuit.implies_trans hg1 hf1, fun h => hg2 (hf2 h),
     fun v hv hpw => hf3 v (hg3 v hv hpw) hpw, fun env hadm hsat => ?_⟩
   obtain ⟨env1, hs1, ha1, he1, hpw1, hr1⟩ := hf4 env hadm hsat
   obtain ⟨env2, hs2, ha2, he2, hpw2, hr2⟩ := hg4 env1 ha1 hs1
@@ -152,53 +152,53 @@ theorem PassCorrect.andThen {cs mid out : Circuit p} {bs : BusSemantics p}
 
 /-- A `PassCorrect` gives the audited `isSoundReplacementOf`. The completeness half is discharged
     at the pipeline top (`Implementation/Optimizer.lean`). -/
-theorem PassCorrect.toSound {cs out : Circuit p} {ds : Derivations p}
+theorem PassCorrect.toSound {cs out : OutputCircuit p} {ds : Derivations p}
     {bs : BusSemantics p} (h : PassCorrect cs out ds bs) : out.isSoundReplacementOf cs bs :=
   ⟨h.1, h.2.1⟩
 
 /-- The result of a verified pass: transformed system, introduced derivations, correctness proof. -/
-structure PassResult {p : ℕ} (cs : Circuit p) (bs : BusSemantics p) where
-  out : Circuit p
+structure PassResult {p : ℕ} (cs : OutputCircuit p) (bs : BusSemantics p) where
+  out : OutputCircuit p
   derivs : Derivations p
   correct : PassCorrect cs out derivs bs
 
 /-! ## Variable-set membership -/
 
 /-- A variable of `cs.vars` occurs in some constraint, multiplicity, or payload expression. -/
-theorem Circuit.mem_vars {cs : Circuit p} {x : Variable} :
+theorem OutputCircuit.mem_vars {cs : OutputCircuit p} {x : Variable} :
     x ∈ cs.vars ↔
       (∃ c ∈ cs.algebraicConstraints, x ∈ c.vars) ∨
       (∃ bi ∈ cs.busInteractions, x ∈ bi.multiplicity.vars ∨ ∃ e ∈ bi.payload, x ∈ e.vars) := by
   simp only [CircuitG.vars, List.mem_append, List.mem_flatMap]
 
-theorem Circuit.mem_vars_of_constraint {cs : Circuit p} {c : OutputExpression p}
+theorem OutputCircuit.mem_vars_of_constraint {cs : OutputCircuit p} {c : OutputExpression p}
     {x : Variable} (hc : c ∈ cs.algebraicConstraints) (hx : x ∈ c.vars) : x ∈ cs.vars :=
-  Circuit.mem_vars.2 (Or.inl ⟨c, hc, hx⟩)
+  OutputCircuit.mem_vars.2 (Or.inl ⟨c, hc, hx⟩)
 
-theorem Circuit.mem_vars_of_mult {cs : Circuit p}
+theorem OutputCircuit.mem_vars_of_mult {cs : OutputCircuit p}
     {bi : BusInteraction (OutputExpression p)} {x : Variable} (hbi : bi ∈ cs.busInteractions)
     (hx : x ∈ bi.multiplicity.vars) : x ∈ cs.vars :=
-  Circuit.mem_vars.2 (Or.inr ⟨bi, hbi, Or.inl hx⟩)
+  OutputCircuit.mem_vars.2 (Or.inr ⟨bi, hbi, Or.inl hx⟩)
 
-theorem Circuit.mem_vars_of_payload {cs : Circuit p}
+theorem OutputCircuit.mem_vars_of_payload {cs : OutputCircuit p}
     {bi : BusInteraction (OutputExpression p)} {e : OutputExpression p} {x : Variable}
     (hbi : bi ∈ cs.busInteractions) (he : e ∈ bi.payload) (hx : x ∈ e.vars) : x ∈ cs.vars :=
-  Circuit.mem_vars.2 (Or.inr ⟨bi, hbi, Or.inr ⟨e, he, hx⟩⟩)
+  OutputCircuit.mem_vars.2 (Or.inr ⟨bi, hbi, Or.inr ⟨e, he, hx⟩⟩)
 
 /-! ## Decidable degree-bound check
 
 A `Bool` twin of the spec's `CircuitG.withinDegree` for the degree guard to branch on. -/
 
 /-- Decidable twin of `CircuitG.withinDegree`. -/
-def Circuit.withinDegreeB (s : Circuit p) (b : DegreeBound) : Bool :=
+def OutputCircuit.withinDegreeB (s : OutputCircuit p) (b : DegreeBound) : Bool :=
   s.algebraicConstraints.all (fun c => c.degree ≤ b.identities) &&
   s.busInteractions.all (fun bi =>
     decide (bi.multiplicity.degree ≤ b.busInteractions) &&
       bi.payload.all (fun e => e.degree ≤ b.busInteractions))
 
-theorem Circuit.withinDegreeB_iff (s : Circuit p) (b : DegreeBound) :
+theorem OutputCircuit.withinDegreeB_iff (s : OutputCircuit p) (b : DegreeBound) :
     s.withinDegreeB b = true ↔ s.withinDegree b := by
-  unfold Circuit.withinDegreeB CircuitG.withinDegree
+  unfold OutputCircuit.withinDegreeB CircuitG.withinDegree
   rw [Bool.and_eq_true, List.all_eq_true, List.all_eq_true]
   constructor
   · rintro ⟨hc, hb⟩

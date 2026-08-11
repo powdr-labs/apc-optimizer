@@ -3392,7 +3392,7 @@ Full-corpus A/B of the two wasm-eth fixes (entries 87 + 88 together) against pre
 | bus interactions | 1.547× / 1.840× | **5.254× / 2.714×** | +3.707× | 5.666× / 2.868× |
 | constraints | 14.664× / 10.279× | **15.165× / 10.438×** | +0.501× | 9.671× / 11.949× |
 
-Circuit sizes changed on **100 of 100** cases. On the **top-priority variable** axis apc now
+OutputCircuit sizes changed on **100 of 100** cases. On the **top-priority variable** axis apc now
 **leads powdr** (7.228× vs 6.273×): total surviving variables **apc 17035 vs powdr 19628** — apc
 uses **13% fewer** than powdr corpus-wide. Per-case variables W/L/T vs powdr: **1/56/43 → 16/11/73**
 (main lost 56 cases to powdr; the stack loses 11, all by a handful of vars on tiny blocks). The

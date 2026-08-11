@@ -125,7 +125,7 @@ As we will see below, we will assume that all circuits _including the circuit to
 
 # Circuits
 
-A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions, over the same variable type as its expressions ({name}`Circuit` abbreviates {lean}`CircuitG Variable`):
+A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions, over the same variable type as its expressions ({name}`OutputCircuit` abbreviates {lean}`CircuitG Variable`):
 
 {docstring CircuitG}
 
@@ -135,7 +135,7 @@ A circuit is satisfied under an assignment when all algebraic constraints evalua
 /-- Whether a circuit is satisfied under a given assignment and bus semantics,
     i.e., whether it satisfies all algebraic constraints and every active bus
     interaction message is accepted. -/
-def Circuit.satisfies (circuit : Circuit p) (busSemantics : BusSemantics p)
+def OutputCircuit.satisfies (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
     (assignment : Variable → ZMod p) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.eval assignment = 0) ∧
   (∀ bi ∈ circuit.busInteractions,
@@ -164,7 +164,7 @@ First, we define the side effects of a circuit under an assignment as the net ef
 ```anchor sideEffects
 /-- The side effects of a circuit under a given assignment and bus semantics:
     the net multiplicity with which each tuple is sent to a *stateful* bus. -/
-def Circuit.sideEffects (circuit : Circuit p) (busSemantics : BusSemantics p)
+def OutputCircuit.sideEffects (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
     (assignment : Variable → ZMod p) : BusState p :=
   fun message =>
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
@@ -178,7 +178,7 @@ Second, we define that a circuit _guarantees invariants_ if, under any satisfyin
 ```anchor guaranteesInvariants
 /-- Whether a circuit guarantees that all invariants are maintained under a
     given bus semantics. -/
-def Circuit.guaranteesInvariants (circuit : Circuit p)
+def OutputCircuit.guaranteesInvariants (circuit : OutputCircuit p)
     (busSemantics : BusSemantics p) : Prop :=
   ∀ assignment, circuit.satisfies busSemantics assignment →
     ∀ bi ∈ circuit.busInteractions,
@@ -194,7 +194,7 @@ Finally, we formalize what it means for an optimized circuit to be a sound repla
     circuit, there exists a corresponding satisfying assignment of the original
     circuit *with equal side effects*. Also, the optimized circuit must
     maintain all invariants guaranteed by the original circuit. -/
-def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
+def OutputCircuit.isSoundReplacementOf (optimizedCircuit originalCircuit : OutputCircuit p)
     (busSemantics : BusSemantics p) : Prop :=
   (∀ assignment, optimizedCircuit.satisfies busSemantics assignment →
     ∃ assignment', originalCircuit.satisfies busSemantics assignment' ∧
@@ -214,7 +214,7 @@ First, we define what it means for an assignment to be _admissible_ under a bus 
 
 ```anchor admissible
 /-- Whether a given assignment is admissible under the bus semantics. -/
-def Circuit.admissible (circuit : Circuit p) (busSemantics : BusSemantics p)
+def OutputCircuit.admissible (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
     (assignment : Variable → ZMod p) : Prop :=
   busSemantics.admissible
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
@@ -290,8 +290,8 @@ Putting the pieces together, we define what it means for an optimized circuit to
     circuit. `Optimizer.isCorrect` demands this only of circuits exported by
     powdr, whose variables all carry a powdr ID — the ones witness generation
     reuses from the input assignment. -/
-def Circuit.isCompleteReplacementOf
-    (optimizedCircuit originalCircuit : Circuit p)
+def OutputCircuit.isCompleteReplacementOf
+    (optimizedCircuit originalCircuit : OutputCircuit p)
     (busSemantics : BusSemantics p) (ds : Derivations p) : Prop :=
 
   -- `ds` does not contain unused derivations.
@@ -356,7 +356,7 @@ def optimizerRespectsDegreeBound (b : DegreeBound)
 Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit powdr exported to a new circuit and a list of derivations. Its input being a {lean}`CircuitG InputVariable` is what records that every variable it is given has a powdr ID: we do not assume this, we read it off the input type.
 
 ```anchor optimizer
-abbrev Optimizer (p : ℕ) := InputCircuit p → Circuit p × Derivations p
+abbrev Optimizer (p : ℕ) := InputCircuit p → OutputCircuit p × Derivations p
 ```
 
 The circuit the output is compared against is the one the input denotes, with each variable turned into a {name}`Variable` carrying its ID:
@@ -364,7 +364,7 @@ The circuit the output is compared against is the one the input denotes, with ea
 ```anchor toVariableCircuit
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
-def InputCircuit.toCircuit (circuit : InputCircuit p) : Circuit p :=
+def InputCircuit.toCircuit (circuit : InputCircuit p) : OutputCircuit p :=
   circuit.mapVar InputVariable.toVariable
 ```
 

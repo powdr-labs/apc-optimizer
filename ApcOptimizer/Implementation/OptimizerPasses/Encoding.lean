@@ -323,7 +323,7 @@ def VarRegistry.decodeBI (r : VarRegistry) (bi : BusInteraction (DenseExpr p)) :
     multiplicity := r.decodeExpr bi.multiplicity,
     payload := bi.payload.map r.decodeExpr }
 
-def VarRegistry.decodeCS (r : VarRegistry) (d : DenseConstraintSystem p) : Circuit p :=
+def VarRegistry.decodeCS (r : VarRegistry) (d : DenseConstraintSystem p) : OutputCircuit p :=
   { algebraicConstraints := d.algebraicConstraints.map r.decodeExpr,
     busInteractions := d.busInteractions.map r.decodeBI }
 
@@ -419,7 +419,7 @@ def VarRegistry.encodeBIs (r : VarRegistry) :
       (r2, bi' :: rest')
 
 /-- Encode a spec constraint system; the registry it returns covers the dense system it returns. -/
-def VarRegistry.encodeCS (r : VarRegistry) (cs : Circuit p) :
+def VarRegistry.encodeCS (r : VarRegistry) (cs : OutputCircuit p) :
     VarRegistry × DenseConstraintSystem p :=
   let (r1, acs) := r.encodeExprs cs.algebraicConstraints
   let (r2, bis) := r1.encodeBIs cs.busInteractions
@@ -595,20 +595,20 @@ theorem VarRegistry.decodeBIs_encodeBIs (r : VarRegistry)
       · exact ih (r.encodeBI bi).1
 
 /-- Structural projections of `encodeCS` (each holds by `rfl` via `Prod` eta). -/
-theorem VarRegistry.encodeCS_fst (r : VarRegistry) (cs : Circuit p) :
+theorem VarRegistry.encodeCS_fst (r : VarRegistry) (cs : OutputCircuit p) :
     (r.encodeCS cs).1
       = ((r.encodeExprs cs.algebraicConstraints).1.encodeBIs cs.busInteractions).1 := rfl
 
-theorem VarRegistry.encodeCS_acs (r : VarRegistry) (cs : Circuit p) :
+theorem VarRegistry.encodeCS_acs (r : VarRegistry) (cs : OutputCircuit p) :
     (r.encodeCS cs).2.algebraicConstraints = (r.encodeExprs cs.algebraicConstraints).2 := rfl
 
-theorem VarRegistry.encodeCS_bis (r : VarRegistry) (cs : Circuit p) :
+theorem VarRegistry.encodeCS_bis (r : VarRegistry) (cs : OutputCircuit p) :
     (r.encodeCS cs).2.busInteractions
       = ((r.encodeExprs cs.algebraicConstraints).1.encodeBIs cs.busInteractions).2 := rfl
 
 /-- Round trip at the system level: decoding an encoded constraint system recovers the original —
     the identity the pipeline's edge encode/decode rides on. -/
-theorem VarRegistry.decodeCS_encodeCS (r : VarRegistry) (cs : Circuit p) :
+theorem VarRegistry.decodeCS_encodeCS (r : VarRegistry) (cs : OutputCircuit p) :
     (r.encodeCS cs).1.decodeCS (r.encodeCS cs).2 = cs := by
   obtain ⟨acs, bis⟩ := cs
   simp only [VarRegistry.decodeCS, encodeCS_fst, encodeCS_acs, encodeCS_bis]

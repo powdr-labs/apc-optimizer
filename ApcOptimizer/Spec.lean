@@ -179,7 +179,7 @@ abbrev BusMessage (p : ℕ) := Nat × List (ZMod p)
 abbrev BusState (p : ℕ) := BusMessage p → ZMod p
 -- ANCHOR_END: busState
 
---------- Circuit ---------
+--------- OutputCircuit ---------
 
 /-- A circuit representing a single zkVM chip. -/
 structure CircuitG (V : Type) (p : ℕ) where
@@ -199,7 +199,7 @@ def CircuitG.mapVar {V W : Type} (f : V → W) (circuit : CircuitG V p) : Circui
                    payload := bi.payload.map (·.mapVar f) }) }
 
 /-- A circuit over circuit variables. -/
-abbrev Circuit (p : ℕ) := CircuitG Variable p
+abbrev OutputCircuit (p : ℕ) := CircuitG Variable p
 
 /-- A circuit over powdr variables. -/
 abbrev InputCircuit (p : ℕ) := CircuitG InputVariable p
@@ -219,14 +219,14 @@ def InputVariable.toVariable (v : InputVariable) : Variable :=
 -- ANCHOR: toVariableCircuit
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
-def InputCircuit.toCircuit (circuit : InputCircuit p) : Circuit p :=
+def InputCircuit.toCircuit (circuit : InputCircuit p) : OutputCircuit p :=
   circuit.mapVar InputVariable.toVariable
 -- ANCHOR_END: toVariableCircuit
 
 -- ANCHOR: sideEffects
 /-- The side effects of a circuit under a given assignment and bus semantics:
     the net multiplicity with which each tuple is sent to a *stateful* bus. -/
-def Circuit.sideEffects (circuit : Circuit p) (busSemantics : BusSemantics p)
+def OutputCircuit.sideEffects (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
     (assignment : Variable → ZMod p) : BusState p :=
   fun message =>
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
@@ -286,11 +286,11 @@ def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variabl
   | none => ((ds.methodFor v).get (ds.methodFor_isSome h hv hp)).eval inputAssignment
 -- ANCHOR_END: witgen
 
---------- Circuit implications ---------
+--------- OutputCircuit implications ---------
 
 -- ANCHOR: admissible
 /-- Whether a given assignment is admissible under the bus semantics. -/
-def Circuit.admissible (circuit : Circuit p) (busSemantics : BusSemantics p)
+def OutputCircuit.admissible (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
     (assignment : Variable → ZMod p) : Prop :=
   busSemantics.admissible
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
@@ -301,7 +301,7 @@ def Circuit.admissible (circuit : Circuit p) (busSemantics : BusSemantics p)
 /-- Whether a circuit is satisfied under a given assignment and bus semantics,
     i.e., whether it satisfies all algebraic constraints and every active bus
     interaction message is accepted. -/
-def Circuit.satisfies (circuit : Circuit p) (busSemantics : BusSemantics p)
+def OutputCircuit.satisfies (circuit : OutputCircuit p) (busSemantics : BusSemantics p)
     (assignment : Variable → ZMod p) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.eval assignment = 0) ∧
   (∀ bi ∈ circuit.busInteractions,
@@ -312,7 +312,7 @@ def Circuit.satisfies (circuit : Circuit p) (busSemantics : BusSemantics p)
 -- ANCHOR: guaranteesInvariants
 /-- Whether a circuit guarantees that all invariants are maintained under a
     given bus semantics. -/
-def Circuit.guaranteesInvariants (circuit : Circuit p)
+def OutputCircuit.guaranteesInvariants (circuit : OutputCircuit p)
     (busSemantics : BusSemantics p) : Prop :=
   ∀ assignment, circuit.satisfies busSemantics assignment →
     ∀ bi ∈ circuit.busInteractions,
@@ -326,7 +326,7 @@ def Circuit.guaranteesInvariants (circuit : Circuit p)
     circuit, there exists a corresponding satisfying assignment of the original
     circuit *with equal side effects*. Also, the optimized circuit must
     maintain all invariants guaranteed by the original circuit. -/
-def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
+def OutputCircuit.isSoundReplacementOf (optimizedCircuit originalCircuit : OutputCircuit p)
     (busSemantics : BusSemantics p) : Prop :=
   (∀ assignment, optimizedCircuit.satisfies busSemantics assignment →
     ∃ assignment', originalCircuit.satisfies busSemantics assignment' ∧
@@ -339,8 +339,8 @@ def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
 -- ANCHOR: isCompleteReplacementOf
 /-- Whether an optimized circuit is a complete replacement for an original
     circuit. -/
-def Circuit.isCompleteReplacementOf
-    (optimizedCircuit originalCircuit : Circuit p)
+def OutputCircuit.isCompleteReplacementOf
+    (optimizedCircuit originalCircuit : OutputCircuit p)
     (busSemantics : BusSemantics p) (ds : Derivations p) : Prop :=
 
   -- `ds` does not contain unused derivations.
@@ -368,7 +368,7 @@ def Circuit.isCompleteReplacementOf
 --------- Optimizer ------------
 
 -- ANCHOR: optimizer
-abbrev Optimizer (p : ℕ) := InputCircuit p → Circuit p × Derivations p
+abbrev Optimizer (p : ℕ) := InputCircuit p → OutputCircuit p × Derivations p
 -- ANCHOR_END: optimizer
 
 --------- Degree bound ---------

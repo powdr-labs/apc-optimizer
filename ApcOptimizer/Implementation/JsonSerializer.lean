@@ -6,7 +6,7 @@ import ApcOptimizer.Implementation.Variable
 /-!
 # JSON serializer for powdr `SymbolicMachine` exports
 
-Inverse of `ApcOptimizer/Implementation/JsonParser.lean`: turns a `Circuit p` back into the
+Inverse of `ApcOptimizer/Implementation/JsonParser.lean`: turns a `OutputCircuit p` back into the
 JSON powdr's serde deserializes into `SymbolicMachine<T>`.
 
 Output schema:
@@ -32,7 +32,7 @@ namespace ApcOptimizer.Serialize
 
 /-- Distinct variables occurring anywhere in the system and (optionally) its derivations, so each
     gets a stable fresh id shared across its occurrences and derived-column entry. -/
-def distinctVars (cs : Circuit p) (ds : Derivations p := []) : List Variable :=
+def distinctVars (cs : OutputCircuit p) (ds : Derivations p := []) : List Variable :=
   let occ := cs.algebraicConstraints.flatMap ExpressionG.vars ++
     cs.busInteractions.flatMap BusInteraction.vars ++
     ds.flatMap (fun (v, cm) => v :: cm.vars)
@@ -40,7 +40,7 @@ def distinctVars (cs : Circuit p) (ds : Derivations p := []) : List Variable :=
 
 /-- Assign each fresh (id-less) variable a unique id starting at `base`, returning the map plus the
     advanced cursor. Variables that already carry an id are absent from the map. -/
-def freshRenaming (cs : Circuit p) (ds : Derivations p := []) (base : Nat) :
+def freshRenaming (cs : OutputCircuit p) (ds : Derivations p := []) (base : Nat) :
     Std.HashMap Variable Nat × Nat :=
   let fresh := (distinctVars cs ds).filter (fun x => x.powdrId?.isNone)
   fresh.foldl (init := ((∅ : Std.HashMap Variable Nat), base))
@@ -92,7 +92,7 @@ def serializeBus (m : Std.HashMap Variable Nat) (bi : BusInteraction (OutputExpr
 
 /-- The `SymbolicMachine` object `{constraints, bus_interactions, derived_columns}` under a
     variable→id renaming. -/
-def serializeMachine (m : Std.HashMap Variable Nat) (cs : Circuit p)
+def serializeMachine (m : Std.HashMap Variable Nat) (cs : OutputCircuit p)
     (ds : Derivations p) : Json :=
   Json.mkObj [
     ("constraints", Json.arr (cs.algebraicConstraints.map (serializeExpr m)).toArray),
@@ -102,7 +102,7 @@ def serializeMachine (m : Std.HashMap Variable Nat) (cs : Circuit p)
 
 /-- Serialize the system as a bare `SymbolicMachine` JSON string (fresh ids start above the largest
     id present). -/
-def serializeSystem (cs : Circuit p) (ds : Derivations p := []) : String :=
+def serializeSystem (cs : OutputCircuit p) (ds : Derivations p := []) : String :=
   let base := (distinctVars cs ds).foldl (fun m x => match x.powdrId? with
     | some i => Nat.max m (i + 1)
     | none => m) 0
@@ -110,7 +110,7 @@ def serializeSystem (cs : Circuit p) (ds : Derivations p := []) : String :=
 
 /-- Serialize the machine plus the advanced `next_free_id` as `{"machine": …, "next_free_id": N}`
     (the FFI reply; `base` is powdr's incoming cursor). -/
-def serializeResult (cs : Circuit p) (ds : Derivations p := []) (base : Nat := 0) :
+def serializeResult (cs : OutputCircuit p) (ds : Derivations p := []) (base : Nat := 0) :
     String :=
   let (m, nextFreeId) := freshRenaming cs ds base
   (Json.mkObj [

@@ -2,7 +2,7 @@ import ApcOptimizer.Spec
 import Mathlib.Data.Rat.Defs
 
 /-!
-# Circuit size and optimizer effectiveness
+# OutputCircuit size and optimizer effectiveness
 
 Utilities for *measuring* constraint systems (see `ApcOptimizer/Spec.lean`). Not tied to any
 particular zkVM.
@@ -37,53 +37,53 @@ def BusInteraction.vars (bi : BusInteraction (OutputExpression p)) : List Variab
   bi.multiplicity.vars ++ bi.payload.flatMap ExpressionG.vars
 
 /-- The distinct variables of a constraint system, across constraints and bus interactions. -/
-def Circuit.variables (cs : Circuit p) : List Variable :=
+def OutputCircuit.variables (cs : OutputCircuit p) : List Variable :=
   (cs.algebraicConstraints.flatMap ExpressionG.vars ++
     cs.busInteractions.flatMap BusInteraction.vars).dedup
 
 /-! ## Size and effectiveness -/
 
 /-- The circuit size: the number of distinct variables. -/
-def Circuit.size (cs : Circuit p) : Nat := cs.variables.length
+def OutputCircuit.size (cs : OutputCircuit p) : Nat := cs.variables.length
 
 /-- The number of algebraic constraints — a coarser size measure than `size`. -/
-def Circuit.constraintCount (cs : Circuit p) : Nat :=
+def OutputCircuit.constraintCount (cs : OutputCircuit p) : Nat :=
   cs.algebraicConstraints.length
 
 /-- The number of bus interactions. -/
-def Circuit.busInteractionCount (cs : Circuit p) : Nat :=
+def OutputCircuit.busInteractionCount (cs : OutputCircuit p) : Nat :=
   cs.busInteractions.length
 
 /-- Number of occurrences of `x` (with multiplicity) across the whole system. Used e.g. to pick
     substitution pivots that minimize expression duplication. -/
-def Circuit.occurrences (cs : Circuit p) (x : Variable) : Nat :=
+def OutputCircuit.occurrences (cs : OutputCircuit p) (x : Variable) : Nat :=
   (cs.algebraicConstraints.flatMap ExpressionG.vars
     ++ cs.busInteractions.flatMap BusInteraction.vars).count x
 
 /-- How much an optimizer shrinks a given circuit under a size `measure`, as the factor
     `measure original / measure optimized`. Equals `1` when the measure is unchanged; larger is
     better. Yields `0` if the optimized measure is `0` (Lean's convention `x / 0 = 0`). -/
-def effectivenessBy (measure : Circuit p → Nat)
-    (optimizer : Circuit p → BusSemantics p → Circuit p)
-    (cs : Circuit p) (bs : BusSemantics p) : ℚ :=
+def effectivenessBy (measure : OutputCircuit p → Nat)
+    (optimizer : OutputCircuit p → BusSemantics p → OutputCircuit p)
+    (cs : OutputCircuit p) (bs : BusSemantics p) : ℚ :=
   (measure cs : ℚ) / (measure (optimizer cs bs) : ℚ)
 
 /-- **Variable effectiveness** (primary): the factor by which the optimizer shrinks the distinct
     variable count. -/
-def effectiveness (optimizer : Circuit p → BusSemantics p → Circuit p)
-    (cs : Circuit p) (bs : BusSemantics p) : ℚ :=
-  effectivenessBy Circuit.size optimizer cs bs
+def effectiveness (optimizer : OutputCircuit p → BusSemantics p → OutputCircuit p)
+    (cs : OutputCircuit p) (bs : BusSemantics p) : ℚ :=
+  effectivenessBy OutputCircuit.size optimizer cs bs
 
 /-- **Bus-interaction effectiveness** (secondary): the factor by which the optimizer shrinks the
     number of bus interactions. -/
 def busInteractionEffectiveness
-    (optimizer : Circuit p → BusSemantics p → Circuit p)
-    (cs : Circuit p) (bs : BusSemantics p) : ℚ :=
-  effectivenessBy Circuit.busInteractionCount optimizer cs bs
+    (optimizer : OutputCircuit p → BusSemantics p → OutputCircuit p)
+    (cs : OutputCircuit p) (bs : BusSemantics p) : ℚ :=
+  effectivenessBy OutputCircuit.busInteractionCount optimizer cs bs
 
 /-- **Algebraic-constraint effectiveness** (tertiary): the factor by which the optimizer shrinks
     the number of algebraic constraints. -/
 def constraintEffectiveness
-    (optimizer : Circuit p → BusSemantics p → Circuit p)
-    (cs : Circuit p) (bs : BusSemantics p) : ℚ :=
-  effectivenessBy Circuit.constraintCount optimizer cs bs
+    (optimizer : OutputCircuit p → BusSemantics p → OutputCircuit p)
+    (cs : OutputCircuit p) (bs : BusSemantics p) : ℚ :=
+  effectivenessBy OutputCircuit.constraintCount optimizer cs bs

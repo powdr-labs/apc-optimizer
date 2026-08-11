@@ -3,7 +3,7 @@ import ApcOptimizer.Spec
 /-!
 # A small DSL and renderer for spec-level constraint systems
 
-Reusable helpers for *writing* and *pretty-printing* `OutputExpression` / `Circuit` values
+Reusable helpers for *writing* and *pretty-printing* `OutputExpression` / `OutputCircuit` values
 (see `ApcOptimizer/Spec.lean`). Not tied to any particular zkVM — used e.g. by the CLI's `render`
 command (`Main.lean`).
 
@@ -102,15 +102,15 @@ def renderBusInteractions (bis : List (BusInteraction (OutputExpression p))) : S
   String.intercalate "\n" ((groupBusInteractions bis).foldl step (none, [])).2
 
 /-- Render a whole constraint system in a canonical, powdr-like format. -/
-def render (cs : Circuit p) : String :=
+def render (cs : OutputCircuit p) : String :=
   let cons := String.intercalate "\n" (cs.algebraicConstraints.map (fun e => s!"{renderExpr e} = 0"))
   s!"{renderBusInteractions cs.busInteractions}\n\n// Algebraic constraints:\n{cons}"
 
 /-- Convenience predicate for snapshot `#guard`s: does `cs` render to `expected`? -/
-def matchesSnapshot (cs : Circuit p) (expected : String) : Bool :=
+def matchesSnapshot (cs : OutputCircuit p) (expected : String) : Bool :=
   render cs == expected
 
-private def busGroupingSnapshot : Circuit 7 :=
+private def busGroupingSnapshot : OutputCircuit 7 :=
   { algebraicConstraints := [],
     busInteractions := [
       { busId := 2, multiplicity := (1 : OutputExpression 7), payload := [V "two_a"] },

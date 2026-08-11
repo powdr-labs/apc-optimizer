@@ -195,7 +195,7 @@ def Derivations.forOutput (ds : Derivations p) (inputVars outputVars : List Vari
     `bs`), run the pipeline and return the output system with the `Derivations` for its new
     variables. -/
 def optimizerOnCircuit {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
-    (cs : Circuit p) : Circuit p × Derivations p :=
+    (cs : OutputCircuit p) : OutputCircuit p × Derivations p :=
   let r := pipeline b cs bs facts
   (r.out, r.derivs.forOutput cs.vars r.out.vars)
 
@@ -231,16 +231,16 @@ theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars 
 Two assignments agreeing on `cs.vars` are interchangeable for `satisfies`/`admissible`/`sideEffects`.
 The completeness proof below uses these to swap the abstract per-pass witness for `witgen`'s output. -/
 
-theorem Circuit.busEval_congr {cs : Circuit p} {f g : Variable → ZMod p}
+theorem OutputCircuit.busEval_congr {cs : OutputCircuit p} {f g : Variable → ZMod p}
     (h : ∀ x ∈ cs.vars, f x = g x) {bi : BusInteraction (OutputExpression p)}
     (hbi : bi ∈ cs.busInteractions) : bi.eval f = bi.eval g :=
   BusInteraction.eval_congr bi f g (fun x hx => by
     simp only [BusInteraction.vars, List.mem_append, List.mem_flatMap] at hx
     rcases hx with hx | ⟨e, he, hx⟩
-    · exact h x (Circuit.mem_vars_of_mult hbi hx)
-    · exact h x (Circuit.mem_vars_of_payload hbi he hx))
+    · exact h x (OutputCircuit.mem_vars_of_mult hbi hx)
+    · exact h x (OutputCircuit.mem_vars_of_payload hbi he hx))
 
-theorem Circuit.satisfies_congr {cs : Circuit p} {bs : BusSemantics p}
+theorem OutputCircuit.satisfies_congr {cs : OutputCircuit p} {bs : BusSemantics p}
     {f g : Variable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
     cs.satisfies bs f ↔ cs.satisfies bs g := by
   have imp : ∀ e1 e2 : Variable → ZMod p, (∀ x ∈ cs.vars, e1 x = e2 x) →
@@ -248,30 +248,30 @@ theorem Circuit.satisfies_congr {cs : Circuit p} {bs : BusSemantics p}
     intro e1 e2 hh hsat
     refine ⟨fun c hc => ?_, fun bi hbi => ?_⟩
     · rw [← OutputExpression.eval_congr c e1 e2
-        (fun x hx => hh x (Circuit.mem_vars_of_constraint hc hx))]
+        (fun x hx => hh x (OutputCircuit.mem_vars_of_constraint hc hx))]
       exact hsat.1 c hc
-    · have hbe : bi.eval e1 = bi.eval e2 := Circuit.busEval_congr hh hbi
+    · have hbe : bi.eval e1 = bi.eval e2 := OutputCircuit.busEval_congr hh hbi
       show (bi.eval e2).multiplicity ≠ 0 → bs.accepts (bi.eval e2)
       rw [← hbe]
       exact hsat.2 bi hbi
   exact ⟨imp f g h, imp g f (fun x hx => (h x hx).symm)⟩
 
-theorem Circuit.admissible_congr {cs : Circuit p} {bs : BusSemantics p}
+theorem OutputCircuit.admissible_congr {cs : OutputCircuit p} {bs : BusSemantics p}
     {f g : Variable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
     cs.admissible bs f ↔ cs.admissible bs g := by
   have hmap : (cs.busInteractions.map (fun bi => bi.eval f))
       = (cs.busInteractions.map (fun bi => bi.eval g)) :=
-    List.map_congr_left (fun bi hbi => Circuit.busEval_congr h hbi)
-  unfold Circuit.admissible
+    List.map_congr_left (fun bi hbi => OutputCircuit.busEval_congr h hbi)
+  unfold OutputCircuit.admissible
   rw [hmap]
 
-theorem Circuit.sideEffects_congr {cs : Circuit p} {bs : BusSemantics p}
+theorem OutputCircuit.sideEffects_congr {cs : OutputCircuit p} {bs : BusSemantics p}
     {f g : Variable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
     cs.sideEffects bs f = cs.sideEffects bs g := by
   have hmap : cs.busInteractions.map (fun bi => bi.eval f)
       = cs.busInteractions.map (fun bi => bi.eval g) :=
-    List.map_congr_left (fun bi hbi => Circuit.busEval_congr h hbi)
-  unfold Circuit.sideEffects
+    List.map_congr_left (fun bi hbi => OutputCircuit.busEval_congr h hbi)
+  unfold OutputCircuit.sideEffects
   rw [hmap]
 
 theorem Derivations.methodFor_map_same (vs : List Variable)
@@ -398,7 +398,7 @@ theorem CircuitG.withinDegree_mapVar {V W : Type} (f : V → W) (circuit : Circu
     reproduces a valid witness) — the clauses `Optimizer.isCorrect` demands, for an input whose
     variables all carry a powdr ID. -/
 theorem optimizerOnCircuit_correct {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
-    (cs : Circuit p) (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) :
+    (cs : OutputCircuit p) (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) :
     (optimizerOnCircuit b facts cs).1.isSoundReplacementOf cs bs ∧
       (optimizerOnCircuit b facts cs).1.isCompleteReplacementOf cs bs
         (optimizerOnCircuit b facts cs).2 := by
@@ -450,9 +450,9 @@ theorem optimizerOnCircuit_correct {bs : BusSemantics p} (b : DegreeBound) (fact
         rw [hsafe] at hm'
         rw [hf v hv, Derivations.witgen_methodFor hcover env hv hpw hm', ← heq]
         exact ComputationMethod.eval_congr cm env env' (fun x hx => (hA x (hxpow x hx)).symm)
-  exact ⟨(Circuit.satisfies_congr hagree).mpr hsat',
-    (Circuit.admissible_congr hagree).mpr hadm',
-    hse.trans (Circuit.sideEffects_congr hagree).symm⟩
+  exact ⟨(OutputCircuit.satisfies_congr hagree).mpr hsat',
+    (OutputCircuit.admissible_congr hagree).mpr hadm',
+    hse.trans (OutputCircuit.sideEffects_congr hagree).symm⟩
 
 /-- The fact-aware optimizer is correct on the circuits powdr exports: `optimizerOnCircuit_correct`
     for the converted circuit, whose variables all carry a powdr ID by construction. -/

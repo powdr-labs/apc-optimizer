@@ -262,7 +262,7 @@ def emit_compare_md(base, target):
     if not changed:
         lines.append("Per-case circuit sizes are **identical** between main and this branch.")
     else:
-        lines.append(f"Circuit sizes changed on {len(changed)} of {len(common)} cases.")
+        lines.append(f"OutputCircuit sizes changed on {len(changed)} of {len(common)} cases.")
         lines.append("")
         lines.append("<details><summary>Per-case changes (main → this branch)</summary>")
         lines.append("")
