@@ -191,12 +191,52 @@ def Derivations.forOutput (ds : Derivations p) (inputVars outputVars : List Vari
   (HashedDedup.hashedEraseDups hash (outputVars.filter (fun v => v.powdrId?.isNone))).map
     (fun v => (v, Derivations.safeMethodIdx methods inputs v))
 
-/-- The fact-aware circuit optimizer: given proven `BusFacts` (which fixes the implicit `bs`), run
-    the pipeline and return the output system with the `Derivations` for its new variables. -/
-def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
+/-! ## Cloning the input
+
+The pipeline traverses the input circuit many times, so its heap layout matters, and a circuit from
+`JsonParser` is laid out badly: it was allocated while the whole `Lean.Json` graph was still live, so
+its nodes sit scattered over an address range that is dead by the time the pipeline runs. Rebuilding
+it then repacks them. `Circuit.clone_eq`: the rebuild is the identity, so only the timing changes. -/
+
+/-- Rebuild an expression node by node, so the result is freshly allocated. -/
+def Expression.clone : Expression p → Expression p
+  | .const c => .const c
+  | .var v => .var v
+  | .add a b => .add a.clone b.clone
+  | .mul a b => .mul a.clone b.clone
+
+def Circuit.clone (cs : Circuit p) : Circuit p :=
+  { algebraicConstraints := cs.algebraicConstraints.map (fun e => e.clone),
+    busInteractions := cs.busInteractions.map (fun bi =>
+      { bi with multiplicity := bi.multiplicity.clone,
+                payload := bi.payload.map (fun e => e.clone) }) }
+
+theorem Expression.clone_eq (e : Expression p) : e.clone = e := by
+  induction e with
+  | const n => rfl
+  | var x => rfl
+  | add a b iha ihb => simp [Expression.clone, iha, ihb]
+  | mul a b iha ihb => simp [Expression.clone, iha, ihb]
+
+theorem Circuit.clone_eq (cs : Circuit p) : cs.clone = cs := by
+  simp [Circuit.clone, Expression.clone_eq]
+
+/-- The optimizer proper; `optimizerWithBusFacts` runs it on a clone. The split is what gives
+    `Circuit.clone_eq` a non-dependent boundary to rewrite at: `pipeline`'s result type mentions its
+    input, so it cannot be rewritten under it. -/
+def optimizerCore {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
     (cs : Circuit p) : Circuit p × Derivations p :=
   let r := pipeline b cs bs facts
   (r.out, r.derivs.forOutput cs.vars r.out.vars)
+
+/-- The fact-aware circuit optimizer: given proven `BusFacts` (which fixes the implicit `bs`), run
+    the pipeline and return the output system with the `Derivations` for its new variables.
+
+    `cs` stays live inside `optimizerCore` for `cs.vars`, which is what stops Lean reusing its nodes
+    in place instead of cloning them. -/
+def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
+    (cs : Circuit p) : Circuit p × Derivations p :=
+  optimizerCore b facts cs.clone
 
 /-! ## `witgen`'s two branches
 
@@ -351,16 +391,17 @@ theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List Variabl
 
 /-- The fact-aware optimizer is correct: its output soundly replaces the input and completely
     replaces the input's real-trace executions (`witgen` on any admissible input trace reproduces a
-    valid witness) — the clauses `Optimizer.isCorrect` demands. -/
-theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
+    valid witness) — the clauses `Optimizer.isCorrect` demands, for the circuit the pipeline is
+    handed (`optimizerWithBusFacts_correct` transports this across the clone). -/
+theorem optimizerCore_correct {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
     (cs : Circuit p) :
-    (optimizerWithBusFacts b facts cs).1.isSoundReplacementOf cs bs ∧
-      (optimizerWithBusFacts b facts cs).1.isCompleteReplacementOf cs bs (optimizerWithBusFacts b facts cs).2 := by
+    (optimizerCore b facts cs).1.isSoundReplacementOf cs bs ∧
+      (optimizerCore b facts cs).1.isCompleteReplacementOf cs bs (optimizerCore b facts cs).2 := by
   refine ⟨(pipeline b cs bs facts).correct.toSound, ?_⟩
   intro hpow
   -- Phrase the goal in `pipeline` terms up front: the coverage proof is one of its components, so
-  -- `refine` would otherwise have to bridge the `optimizerWithBusFacts` projections by `whnf`.
-  simp only [optimizerWithBusFacts]
+  -- `refine` would otherwise have to bridge the `optimizerCore` projections by `whnf`.
+  simp only [optimizerCore]
   -- `PassCorrect` components (`Basic.lean`): no new powdr-ID column, and real-trace completeness.
   have hS := (pipeline b cs bs facts).correct.2.2.1
   have hcomp := (pipeline b cs bs facts).correct.2.2.2
@@ -409,10 +450,30 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound) (f
     (Circuit.admissible_congr hagree).mpr hadm',
     hse.trans (Circuit.sideEffects_congr hagree).symm⟩
 
+/-- The optimizer never pushes a within-bound circuit past the zkVM's degree bound (every pass is
+    degree-guarded). -/
+theorem optimizerCore_respectsDegree {bs : BusSemantics p} (b : DegreeBound)
+    (facts : BusFacts p bs) (cs : Circuit p)
+    (h : cs.withinDegree b) :
+    (optimizerCore b facts cs).1.withinDegree b :=
+  pipeline_respectsDeg b cs bs facts h
+
+/-- The fact-aware optimizer is correct: its output soundly replaces the input and completely
+    replaces the input's real-trace executions (`witgen` on any admissible input trace reproduces a
+    valid witness) — the clauses `Optimizer.isCorrect` demands. -/
+theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound)
+    (facts : BusFacts p bs) (cs : Circuit p) :
+    (optimizerWithBusFacts b facts cs).1.isSoundReplacementOf cs bs ∧
+      (optimizerWithBusFacts b facts cs).1.isCompleteReplacementOf cs bs
+        (optimizerWithBusFacts b facts cs).2 := by
+  simp only [optimizerWithBusFacts, Circuit.clone_eq]
+  exact optimizerCore_correct b facts cs
+
 /-- The fact-aware optimizer never pushes a within-bound circuit past the zkVM's degree
     bound (every pass is degree-guarded). -/
 theorem optimizerWithBusFacts_respectsDegree {bs : BusSemantics p} (b : DegreeBound)
     (facts : BusFacts p bs) (cs : Circuit p)
     (h : cs.withinDegree b) :
-    (optimizerWithBusFacts b facts cs).1.withinDegree b :=
-  pipeline_respectsDeg b cs bs facts h
+    (optimizerWithBusFacts b facts cs).1.withinDegree b := by
+  simp only [optimizerWithBusFacts, Circuit.clone_eq]
+  exact optimizerCore_respectsDegree b facts cs h
