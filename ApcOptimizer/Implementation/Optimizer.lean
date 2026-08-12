@@ -242,12 +242,6 @@ def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFa
 
 So the completeness proof never unfolds the spec's `Derivations.witgen`. -/
 
-/-- Without a derivation method, `witgen` passes the input assignment through. -/
-theorem Derivations.witgen_none {ds : Derivations p} (inputAssignment : Variable → ZMod p)
-    {v : Variable} (hm : ds.methodFor v = none) :
-    ds.witgen inputAssignment v = inputAssignment v := by
-  simp [Derivations.witgen, hm]
-
 /-- With a derivation method, `witgen` evaluates it. -/
 theorem Derivations.witgen_methodFor {ds : Derivations p} (inputAssignment : Variable → ZMod p)
     {v : Variable} {cm : ComputationMethod p}
