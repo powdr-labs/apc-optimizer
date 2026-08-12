@@ -12,9 +12,9 @@ instance : Ord OutputVariable := ⟨fun a b =>
   | .eq => compare a.powdrId? b.powdrId?
   | o => o⟩
 
-instance : Hashable OutputVariable := ⟨fun a => mixHash (hash a.name) (hash a.powdrId?)⟩
+instance : Hashable InputVariable := ⟨fun a => mixHash (hash a.name) (hash a.powdrId)⟩
 
-instance : Hashable InputVariable := ⟨fun a => mixHash (hash a.name) (hash a.id)⟩
+instance : Hashable OutputVariable := ⟨fun a => mixHash (hash a.name) (hash a.powdrId?)⟩
 
 /-- Parse powdr's `<name>@<id>` variable notation. A name without a numeric id fails loudly: powdr
     exports every column with its id (and so does `JsonSerializer`, for the columns passes mint), so
@@ -23,13 +23,13 @@ def InputVariable.ofPowdrName (raw : String) : Except String InputVariable :=
   match raw.splitOn "@" with
   | [base, id] =>
       match id.toNat? with
-      | some n => .ok { name := base, id := n }
+      | some n => .ok { name := base, powdrId := n }
       | none => .error s!"variable without a numeric powdr id: {raw}"
   | _ => .error s!"variable without a powdr id: {raw}"
 
 /-- Interpret an `OutputVariable` with a powdr id as the corresponding input variable. -/
 def OutputVariable.toInput (v : OutputVariable) : InputVariable :=
-  { name := v.name, id := v.powdrId?.get! }
+  { name := v.name, powdrId := v.powdrId?.get! }
 
 theorem OutputVariable.toInput_toVariable {v : OutputVariable} (h : v.powdrId?.isSome) :
     v.toInput.toOutputVariable = v := by

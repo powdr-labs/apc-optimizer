@@ -85,5 +85,5 @@ jobs:
             Effectiveness bench of
             ${{ env.BASE_SHA && format('target `{0}` vs baseline `{1}`', env.BENCH_SHA, env.BASE_SHA)
                  || format('`{0}`', env.BENCH_SHA) }}.
-            OutputCircuit sizes are deterministic; any per-case change is real.
+            Circuit sizes are deterministic; any per-case change is real.
           token: ${{ github.token }}

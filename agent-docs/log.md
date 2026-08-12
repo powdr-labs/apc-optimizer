@@ -21,7 +21,7 @@ the foundation. The substitution correctness proof (the linchpin) is complete an
 **Impact: none yet (36 → 36 variables).** Worked: yes (builds, cores proven).
 
 ### 1. Constant folding / algebraic normalization (`ConstantFold.lean`) — enabler
-Idea: a bottom-up eval-preserving rewrite (`OutputExpression.fold`) that folds `const∘const`, drops
+Idea: a bottom-up eval-preserving rewrite (`Expression.fold`) that folds `const∘const`, drops
 `+0`, and handles `*0`/`*1`, applied to every expression via the proven `mapExpr_correct`. Ranked
 #1 by the idea workflow purely as an *enabler*: it removes no variable directly, but canonicalizes
 the DSL sugar (`x - c` = `x + (-1)*c`, `2013265920 * 1`, `0 + …`) into the normal forms the later
@@ -44,7 +44,7 @@ multiplicity became `0` (removed once zero-mult bus dropping lands).
 
 ### 3. Trivial-constraint removal (`TrivialConstraint.lean`) — cascade enabler
 Idea: drop algebraic constraints whose fold is the literal `0` (via `filterConstraints_correct`);
-`OutputExpression.isConstZero` is the decidable check, and the dropped-are-zero obligation is discharged
+`Expression.isConstZero` is the decidable check, and the dropped-are-zero obligation is discharged
 by `fold_eval` + `isConstZero_sound`. Added into the fixpoint loop (fix → fold → drop-trivial).
 Worked: yes — output algebraic constraints dropped from 32 to 21 (removed `1-1`, `0-0`, the five
 now-satisfied `x=const` defining constraints, and the `rs2_as_0 * (…)` constraints that folded to
@@ -85,7 +85,7 @@ in many multiplicities). **Impact: 28 → 24, effectiveness 36/24 = 3/2 = 1.5.**
 Idea: `linearize` only *concatenates* terms, so after affine inlines a flag, a selector sum like
 `add + sub + xor + or + and` carries cancelling terms (`x + (-1)·x`) that never collapse. Add a
 term-**merge** (`mergeTerms`, via an incremental `addCoeff` with a local eval lemma — sidestepping a
-"regroup-sum-by-key" proof) plus zero-dropping, giving `LinExpr.norm`. `OutputExpression.normalize` then
+"regroup-sum-by-key" proof) plus zero-dropping, giving `LinExpr.norm`. `Expression.normalize` then
 replaces each maximal affine subexpression by its merged form; correct for free via `mapExpr_correct`
 (only `normalize_eval`). Field-free.
 Worked: yes, with a compounding effect. (a) The selector sum collapses to the constant `1`, so a
@@ -354,8 +354,8 @@ top-100 openvm-eth APCs; measured effectiveness below is on those). Diagnosis: t
 eliminated ~2 variables per cleanup cycle (one `affineSubstPass` pivot + one `domainPropPass`
 substitution), each cycle costing a full-system rescan — case 1 (511 vars) needed 400 cycles
 / 197 s to reach its 314-var fixpoint, and the 5000-var cases are unreachable. Two additions:
-(a) **`SubstMap.lean`** — the batch substitution core: `OutputExpression.substF` substitutes a whole
-map `String → Option (OutputExpression p)` in one traversal, with `ConstraintSystem.substF_correct`
+(a) **`SubstMap.lean`** — the batch substitution core: `Expression.substF` substitutes a whole
+map `String → Option (Expression p)` in one traversal, with `ConstraintSystem.substF_correct`
 mirroring `subst_correct` (entailment hypothesis per mapped pair). (b) **`Gauss.lean`** —
 batch Gaussian elimination: two sweeps over the constraints, each constraint *reduced* by the
 solutions found so far (`substF` + `normalize`) and solved for a unit-coefficient pivot (the
@@ -552,7 +552,7 @@ index-free and decidable: survivors enumerated over `groupDoms` (constraint root
 patterns over `{0,1}` boxes, plus completeness ("every survivor is hit by some pattern"),
 image-soundness ("every pattern's image satisfies the dropped constraints"), freshness (no
 bit occurs in the system), and bit-only interpolation ranges. Prime `p` only (booleanity
-needs an integral domain). `OutputExpression.hasVar`/`varsIn` keep the per-cycle coverage scan
+needs an integral domain). `Expression.hasVar`/`varsIn` keep the per-cycle coverage scan
 allocation-free.
 Worked: yes. Case 3: 74 → 70 (the 8 load flags → 4 bits — **below powdr's 54-var output on
 that class**, powdr keeps all 8); case 5: 3786 → 3530 (−256: 512 flags → 256 bits, 54 s);
@@ -579,7 +579,7 @@ Worked: yes. Case 7: **timeout (>30 min) → 5464 → 2171 vars (2.52×) in 4.4 
 unchanged at 169 (9.9 s), case 2 at 42, case 5 at 1765 (50 s). Snapshot unchanged (36/11).
 
 ### 30. Spec extension (Georg-requested): degree bounds
-`Spec.lean` gains `DegreeBound` (`identities`, `busInteractions`), `OutputExpression.degree`
+`Spec.lean` gains `DegreeBound` (`identities`, `busInteractions`), `Expression.degree`
 (const 0 / var 1 / add max / mul sum), `ConstraintSystem.withinDegree` (+ decidable twin and
 equivalence lemma), and the new top-level property `optimizerRespectsDegree`: an optimizer
 never pushes a within-bound circuit past the zkVM's bound. `BusSemantics` carries the bound;
@@ -983,7 +983,7 @@ cycle strictly lex-decreases, and the first non-decreasing cycle *is* the struct
 two stops coincide, so zero effectiveness change (outputs reproduce exactly, e.g. apc_069 28/6/22,
 apc_001 42/18/38, apc_100 1003/601/1866). Also removed the `iters`/`--iters` CLI flag and updated
 `benchmark.py`, the READMEs, the architecture doc, and CLAUDE.md. The FFI entry point `ApcOptimizer/Ffi.lean`
-drops its now-stale `openVmOptimizer … 32 …` iters argument (the serializer's own `OutputVariable`-struct
+drops its now-stale `openVmOptimizer … 32 …` iters argument (the serializer's own `Variable`-struct
 reconciliation landed separately on `main`).
 
 ### 45. Optimizer runtime: profile-guided speedups (effectiveness unchanged)
@@ -1002,7 +1002,7 @@ Fixes, each preserving the exact output:
 
 1. **`coveredCs`/`coveredBis` allocation (`DomainBatch.lean`)** — the per-target covered-item scan used
    `c.vars.all (· ∈ xs)`, which *materializes* every constraint/interaction's variable list once per
-   target. Replaced with an allocation-free `OutputExpression.varsIn`/`BusInteraction.varsIn` (added to
+   target. Replaced with an allocation-free `Expression.varsIn`/`BusInteraction.varsIn` (added to
    `DomainProp.lean`, shared with `Reencode`, which dropped its private copy); same boolean, so the
    filtered list — hence the output — is identical.
 2. **`reencode` target dedup (`Reencode.lean`)** — the target variable-sets were deduped with the
@@ -1357,7 +1357,7 @@ Both were paying for *recomputation inside the per-candidate scan*:
    (all variables occurring in any bus interaction) to the pass level, built once per invocation;
    gate `occursOnlyInTarget` behind `!busVars.contains v` (a variable in any bus interaction can
    never pass it, so the gate never changes the filter's value — it only skips the scan); decide
-   `occursOnlyInTarget` with the allocation-free `OutputExpression.mentions` instead of `d ∉ ·.vars`;
+   `occursOnlyInTarget` with the allocation-free `Expression.mentions` instead of `d ∉ ·.vars`;
    and turn the certificate into one short-circuiting `&&` chain (`decide`d conjuncts) so nothing
    after `2 ≤ D.length` is evaluated on unsuitable constraints. The proof consumes the same
    certificates (`Bool.and_eq_true`/`decide_eq_true_eq` split them back into the six hypotheses).
@@ -1406,10 +1406,10 @@ degree guard rejects — every cleanup iteration again.
    bundled pointwise equality with `survivesAllM` is all the certificates consume).
 2. **`reencode` (`Reencode.lean`)** — bind the substituted expression, its per-pattern values,
    and the folded interpolation once (`interpOfV`/`candSelect`); evaluate the pattern/survivor
-   loops through `OutputExpression.evalFast` (field operations hoisted per call, `evalFast_eq`);
+   loops through `Expression.evalFast` (field operations hoisted per call, `evalFast_eq`);
    reuse the covered set for the survivor filter (`groupSurvivorsE`); `powdrId?`-first
    comparisons in `coveredBy`/`groupSubst`/`groupRewrite` and the freshness sweep
-   (`OutputExpression.mentionsF`).
+   (`Expression.mentionsF`).
 
 **Impact (solo runs, same machine, output identical; A/B against current `main`):** apc_006
 `profile` total **101.2 s → 32.1 s (3.2×)** — `domainBatch` **67.2 s → 5.5 s (12.2×)**,
@@ -1426,7 +1426,7 @@ stay `{propext, Classical.choice, Quot.sound}`; `lake build` green;
 
 Remaining bottlenecks (documented for future work): `busPairCancel` is now the top pass on
 apc_006 (18.5 s; entry 53's batching idea still applies); `domainFold` evaluates through the
-plain per-node-instance `OutputExpression.eval` (~1.7 s on apc_006 — the `evalFast` treatment applies
+plain per-node-instance `Expression.eval` (~1.7 s on apc_006 — the `evalFast` treatment applies
 almost verbatim); the degree-rejected `reencode` candidate groups still pay a (now much
 cheaper) full-system rewrite every iteration; and the entry-45 pinned-variable box reduction
 for `domainBatch` remains open.
@@ -1464,7 +1464,7 @@ surface changed; correctness axioms stay `{propext, Classical.choice, Quot.sound
 `lake build` green; `check-proof-integrity.sh` passes.
 
 Remaining bottlenecks (documented for future work): `domainFold` is now apc_036's top pass
-(3.4 s; plain per-node-instance `OutputExpression.eval` in `constOnSurvs` — the entry-54 `evalFast`
+(3.4 s; plain per-node-instance `Expression.eval` in `constOnSurvs` — the entry-54 `evalFast`
 treatment applies almost verbatim); `busPairCancel`'s residual ~3 s is spread across the
 fixpoint wrapper (`sizeKey`/`varCount` per invocation), the per-invocation `decide p.Prime`,
 and the per-accepted-drop `checkCancel`/split-decide — a batched multi-pair sweep (entry 53's
@@ -1676,7 +1676,7 @@ domain; re-checked at runtime as in `busPairCancelPass`).
 1. raw range-check slots via `findVarBound` (`DomainProp`) — covers the high limbs (13-bit);
 2. **scaled slots** (`scaledSlotBound`): the low limb's checked slot is `4⁻¹·(x − F)` with `F` a
    degree-2 flag polynomial, so `linearize` fails on it — a new constant-coefficient
-   decomposition `OutputExpression.splitAt` (`e = k·x + r`, `r` opaque and possibly nonlinear) handles
+   decomposition `Expression.splitAt` (`e = k·x + r`, `r` opaque and possibly nonlinear) handles
    it. The slot value is fact-bounded (`slotBound`), the offset part enumerates the flag
    variables' proven finite domains (`findDomainAlg` booleanity, ≤ 16 points), and
    `ZMod.val_add_of_lt`/`val_mul_of_lt` carry the no-wrap integer arithmetic:
@@ -1749,7 +1749,7 @@ Entry 58 left the unified decomposition's *scaled* low-limb check behind: its fl
 uses the eliminated access's own flag variables, so the copy is not syntactic — and it is not
 droppable either, since that check is exactly what pins those flags (the divisibility of the
 scaled slot). But the flags are provably *equal* to the survivor's: both checks decompose the
-**same** shared limb as `x = m·u + W` (`OutputExpression.splitAt`, slot value `u` fact-bounded, `W`
+**same** shared limb as `x = m·u + W` (`Expression.splitAt`, slot value `u` fact-bounded, `W`
 the flag-polynomial value), so `W_X.val = W_Y.val` — both are the residue of `x.val` under
 `m.val` (`residue_uniq`, `ZMod.val_add_of_lt`/`val_mul_of_lt` no-wrap arithmetic, per-point
 `W < m` over the joint flag box) — and on every joint flag point with equal offset values the
@@ -1809,7 +1809,7 @@ green; `check-proof-integrity.sh` passes; axioms unchanged.
 
 Remaining bottlenecks (documented for the next agent): `flagUnify` 5.3 s — the per-pair
 residual is `findDomainAlg` over the full constraint list (×4 vars) plus the plain
-`OutputExpression.eval` per enumeration point (the entry-54 `evalWith` treatment applies), and
+`Expression.eval` per enumeration point (the entry-54 `evalWith` treatment applies), and
 iterations 3–6 still pay 64 pair-datas each for zero adoptions; `rootPairUnify` 3.0 s — *not*
 the seen-scan (measured), so likely `rpCandidates`'s per-variable `splitAt`+`LinExpr.norm`
 over every constraint every iteration; `domainFold` 3.4 s — the pre-existing
@@ -1970,7 +1970,7 @@ The `ImprovingRuntime.md` pass over the entry-64/65 additions. Baseline: `flagFo
 66.9 s of apc_005's ~81 s run. Staged sub-pass timings (temporary `ffprof` command) plus layered
 scan decompositions localized four mechanisms, landed as three commits:
 
-1. **`findDomainAlg` gates its scan on `OutputExpression.mentions`** (`DomainProp.lean`). `rootsIn`
+1. **`findDomainAlg` gates its scan on `Expression.mentions`** (`DomainProp.lean`). `rootsIn`
    runs `linearize` — allocation-heavy normalization — per (variable, constraint) probe, so
    every domain lookup scanned all ~650 single-variable constraints at full price. A constraint
    that does not mention the variable can only yield a root list through the
@@ -2043,7 +2043,7 @@ only by eliminating the variable (C4) or deeper structural reasoning, outside C2
 `lake build` green; all three `maintainsCorrectness` theorems still `{propext, Classical.choice,
 Quot.sound}`-only; `check-proof-integrity.sh` passes.
 
-**Impact.** OutputVariable- and constraint-neutral by construction (a coda `filterBus`). Full 100-case
+**Impact.** Variable- and constraint-neutral by construction (a coda `filterBus`). Full 100-case
 sweep vs the C1 (entry-67) line, per-case: **bus dropped on 57 cases, 0 regressions**; totals
 variables 28645 (unchanged), constraints 11215 (unchanged), bus 18887 → 18341 (−546). Aggregate vs
 powdr:
@@ -2360,7 +2360,7 @@ cross-pass measurement noise; profiled total 383 → 356 s. As in #104 the `run`
 this machine, so the per-pass profile deltas are the reliable signal.
 
 **Remaining (see `agent-docs/ideas.md`).** `busUnify`'s other per-equality scan,
-`cs.algebraicConstraints.contains c`, needs a `Hashable (OutputExpression p)` instance to index; the next
+`cs.algebraicConstraints.contains c`, needs a `Hashable (Expression p)` instance to index; the next
 runtime tiers are `flagFold` (~51 s) and the finite-domain box enumeration inside
 `domainBatch` / `domainFold`.
 
@@ -2487,7 +2487,7 @@ one build; the two changes touch disjoint families).
   noisy on this machine, but the direction is not increase).
 
 **Impact — openvm-eth (full 100-case benchmark.py sweep; post-#105 baseline → C4b, same build).**
-OutputVariable-positive and per-case-neutral: variables 4.507× → **4.509×** agg (3.818× → 3.820× geo), bus
+Variable-positive and per-case-neutral: variables 4.507× → **4.509×** agg (3.818× → 3.820× geo), bus
 interactions 3.405× → 3.401× agg (2.707× → 2.705× geo), constraints 10.595× → 10.590× agg
 (11.585× → 11.578× geo); the per-case standings vs powdr are **unchanged at 25 W / 42 L / 33 T**. The
 variable gain lands on the register/shift blocks carrying `255`-complement (NOT) results (the
@@ -2552,12 +2552,12 @@ live benchmark renders:
    *separate* output list (`Spec.lean`), not subtracted from `.variables`. So registering a
    `ComputationMethod` for `z` does **not** drop `z` from the count — a derived column that still
    appears in the system is still counted. The only levers that remove a name are **substitution**
-   (`Subst`/`Gauss`, replace the name by an `OutputExpression` everywhere) and **re-encoding** a group into
+   (`Subst`/`Gauss`, replace the name by an `Expression` everywhere) and **re-encoding** a group into
    fewer fresh vars (`Reencode`). "Drop `z` from the free-variable set (interaction retained for
    byteness)" as written is a contradiction: if the interaction is retained, `z` is still counted.
 
 2. **XOR is not substitutable and not `ComputationMethod`-expressible.** `z = x ⊕ y` is not a
-   low-degree `ZMod p` polynomial, so there is no `OutputExpression` to substitute for `z`; and
+   low-degree `ZMod p` polynomial, so there is no `Expression` to substitute for `z`; and
    `ComputationMethod` offers only `const`/`quotientOrZero`/`ifEqZero`, none of which computes XOR
    (encoding it bit-wise would first require bit columns the byte-level circuits don't have, adding far
    more variables than it removes). `BusFacts.slotFun` provides only the *value-level* soundness
@@ -3202,7 +3202,7 @@ Needs `p ≠ 0` only (val/cast round-trip); no primality.
 **Measured (per-case JSON A/B vs main `2b1e5c1`, all 100 eth cases + keccak):**
 - openvm-eth: vars **27,768 → 27,762 (−6)**, bus 16,429 → 16,424 (−5), constraints unchanged;
   exactly two cases move — apc_034 −3 vars/−3 bus → **105/22/80 = exact powdr parity**, apc_066
-  −3 vars/−2 bus → **49/10/37 = exact powdr parity** — and nothing else changes. OutputVariable
+  −3 vars/−2 bus → **49/10/37 = exact powdr parity** — and nothing else changes. Variable
   W/L/T vs powdr **31/9/60 → 31/7/62**; agg vars 4.551× → 4.552× (geo 3.884× → 3.887×), bus
   3.542× → 3.543× (geo 2.800× → 2.803×).
 - keccak: bit-identical (2021 / 1752 / 186); runtime 369 s vs main 383 s **solo on the same
@@ -3219,16 +3219,16 @@ Build + `check-proof-integrity.sh` green ({propext, Classical.choice, Quot.sound
 
 Pure **performance** work in the entry-45/54 style — output-preserving, so effectiveness is
 untouched and only wall-clock cost drops. Closes entry 54's documented `domainFold` leftover
-("`domainFold` evaluates through the plain per-node-instance `OutputExpression.eval` — the `evalFast`
+("`domainFold` evaluates through the plain per-node-instance `Expression.eval` — the `evalFast`
 treatment applies almost verbatim"). Entry 54 had upgraded `domainFold`'s survivor *filter*
 (`groupSurvivorsE`) to `evalFast`, but the fold-decision core `constOnSurvs` was still on the slow
 path.
 
 **The two fixes (both extensionally equal to the old form, so the fold decision and the folded
 constant are unchanged):**
-1. Evaluate through `OutputExpression.evalFast` (field operations derived once per call instead of
+1. Evaluate through `Expression.evalFast` (field operations derived once per call instead of
    re-projecting the `ZMod p` `CommRing` instance chain at every expression node — the entry-54
-   tax), via the existing `OutputExpression.evalFast_eq`.
+   tax), via the existing `Expression.evalFast_eq`.
 2. Compute the reference value `e.evalFast (envOf s₀)` **once** with a `let` rather than
    re-evaluating it against every survivor inside the `.all` (the old
    `fun s => e.eval (envOf s) = e.eval (envOf s₀)` recomputed the `s₀` value once per survivor).
@@ -3309,7 +3309,7 @@ have a variable-bearing difference that `addrAffineNeq` correctly declines).
 | apc_005              | — | 184 | 200 | **0.92×** | — |
 | apc_022              | — | 21 | 21 | 1.00× | — |
 
-OutputVariable effectiveness reaches **powdr parity or better on every case measured** (apc_006 and
+Variable effectiveness reaches **powdr parity or better on every case measured** (apc_006 and
 apc_005 beat powdr outright); constraints likewise at/near parity (apc_006 88 vs powdr 548;
 apc_012 1034 = 1034; apc_004 118 = 118). The residual is entirely **bus interactions** (apc_037
 2317 vs 1430, apc_006 1934 vs 1479, apc_022 19 vs 15): the byte-identical AS-5 fp-cell pairs and
@@ -3392,7 +3392,7 @@ Full-corpus A/B of the two wasm-eth fixes (entries 87 + 88 together) against pre
 | bus interactions | 1.547× / 1.840× | **5.254× / 2.714×** | +3.707× | 5.666× / 2.868× |
 | constraints | 14.664× / 10.279× | **15.165× / 10.438×** | +0.501× | 9.671× / 11.949× |
 
-OutputCircuit sizes changed on **100 of 100** cases. On the **top-priority variable** axis apc now
+Circuit sizes changed on **100 of 100** cases. On the **top-priority variable** axis apc now
 **leads powdr** (7.228× vs 6.273×): total surviving variables **apc 17035 vs powdr 19628** — apc
 uses **13% fewer** than powdr corpus-wide. Per-case variables W/L/T vs powdr: **1/56/43 → 16/11/73**
 (main lost 56 cases to powdr; the stack loses 11, all by a handful of vars on tiny blocks). The
@@ -3464,7 +3464,7 @@ rescans and per-accept O(system) rebuilds inside passes that already had one lay
   (O(n) deep comparison) — `candidateSplits`/`findConsumer` now carry the split by construction
   (subtype invariants threaded through the accumulating recursion). The already-present filter
   (`cs.algebraicConstraints.contains c` per candidate equality) compares within structural-hash
-  buckets (`OutputExpression.structHash` moved to BusUnify for sharing).
+  buckets (`Expression.structHash` moved to BusUnify for sharing).
 - **domainFold (keccak 156 s → ~100 s, apc_005 ~8 s → ~5 s)**: the covered set is computed once
   per target and reused for the survivor filter — `groupSurvivors` re-ran the full `coveredCsOf`
   filter per target even on the indexed path (`groupSurvivorsE es` + a `hes`-transport in
@@ -3923,7 +3923,7 @@ output. The O(n²) whole-tail membership tests become one-bucket scans.
 
 - **dedup**: the constraint side was still plain `List.dedup` = O(C²·E) deep comparisons —
   the single clearest quadratic at SHA scale (230k constraints). Now `hashedDedup
-  OutputExpression.bHash`. keccak: 6.6 s → below the profiler's noise floor.
+  Expression.bHash`. keccak: 6.6 s → below the profiler's noise floor.
 - **intervalForce** (keccak **20.7 s → 1.1 s**, apc_030 231 → 99 ms): `allSeeds`'s O(seeds²·E)
   `eraseDups` → `hashedEraseDups`; the per-seed `cs.vars.contains` scan over the ~10⁵-entry
   occurrence list → one `Std.HashSet` (`contains_ofList` transports the load-bearing "no new
@@ -3992,15 +3992,15 @@ stale-bucket refresh apply there too — recorded in `agent-docs/ideas.md` R3. *
 
 Third runtime batch. Two changes, both output byte-identical (11-case export set):
 
-- **OutputVariable interning (`JsonParser.lean`)**: the parser minted a fresh `String` per variable
+- **Variable interning (`JsonParser.lean`)**: the parser minted a fresh `String` per variable
   *occurrence* (~10⁵ heap-distinct copies of a few thousand names). `internSystem` rebuilds the
-  parsed system with one shared `OutputVariable` object per distinct value — the same *value*, so
+  parsed system with one shared `Variable` object per distinct value — the same *value*, so
   nothing downstream can observe it except time: the Lean runtime's string equality
   (`lean_string_eq`) starts with a pointer test, so every equal-name comparison across the whole
   optimizer (hash-map probes, dedups, substitution lookups) now short-circuits.
 - **identitySubst was rebuilding its map per variable occurrence.** Profiling showed the pass at
   2.8 s on apc_030 with… 4 pairs and 607 interactions, and bisection pinned all of it on the one
-  `substF`. Cause: `identityF`'s shape `def identityF facts cs : OutputVariable → Option _ :=
+  `substF`. Cause: `identityF`'s shape `def identityF facts cs : Variable → Option _ :=
   let m := …; fun y => …` — the compiler arity-expands the def, so the `let` (pair extraction +
   map build over every interaction) re-ran **per queried occurrence**. (The pre-104 pair-list
   version had the same bug; entry 104's HashMap swap kept the shape, so it didn't help.) The fix
@@ -4012,7 +4012,7 @@ Third runtime batch. Two changes, both output byte-identical (11-case export set
 
 **Working rule (added to ideas):** a `def … : X → Y := let heavy := …; fun y => …` re-evaluates
 `heavy` per call by arity expansion — bind heavy values in the fully-applied pass body and pass
-them as parameters. Audited the other `OutputVariable → Option (OutputExpression p)` closures (`Solved.fn`,
+them as parameters. Audited the other `Variable → Option (Expression p)` closures (`Solved.fn`,
 `ptFun`, `groupSubst`) — none carries a heavy `let`.
 
 Build warning-free; proof integrity green; byte-identical exports. **Worked: yes.**
@@ -4158,7 +4158,7 @@ Follow-ups from the gdb-sampled attribution (200 whole-run stack samples, functi
   `collectAllBuses`), so the occurrence-list HashSet is gone entirely — with the filter provably
   unchanged — and the bucket map is built only when `eqs` is nonempty.
 - **domainFold's remaining direct-path cost was the slow spec-side `varsIn`** — a `List.elem`
-  running the full `OutputVariable` `DecidableEq` (name-`String` compare first) per AST node inside
+  running the full `Variable` `DecidableEq` (name-`String` compare first) per AST node inside
   `foldRewriteGo`'s gates and `hasFoldable` — 26 % of all whole-run samples. Swapped for the
   `containsFast`-backed `varsInF` (`powdrId?` compared first; `varsInF_eq` proves the value
   unchanged, so the output is provably identical). Both fold paths share the fix.
@@ -4233,7 +4233,7 @@ Two R4/R5-slice items from the round-2 sample attribution:
 - **`normalizePass` computes through `normalizeFused`**: one bottom-up walk returning the
   normalized expression *and* the node's linear form, instead of re-running `linearize` (a full
   subtree walk) at every `add`/`mul` node along non-affine paths. `normalizeFused_eq` pins both
-  components to (`OutputExpression.normalize`, `linearize`), so the pass output is provably unchanged.
+  components to (`Expression.normalize`, `linearize`), so the pass output is provably unchanged.
   Gauss's `substF |> normalize` sites are deliberately untouched — open PR #156 rewrites gauss
   and should not be conflicted with.
 
@@ -4241,7 +4241,7 @@ Two R4/R5-slice items from the round-2 sample attribution:
 profile steady at **111.0 s** (both items are a few-percent class on this container; they also
 shrink every future cycle-heavy case). **Worked: yes.**
 
-### 116. Runtime: `Hashable OutputVariable` powdrId?-first — tried, leaks, reverted (no code change)
+### 116. Runtime: `Hashable Variable` powdrId?-first — tried, leaks, reverted (no code change)
 
 The R4 idea (hash the O(1) `powdrId?` discriminator instead of walking the name string on every
 hash-map probe) was implemented and export-checked: **openvm-eth apc_100 byte-identical, sp1
@@ -4305,7 +4305,7 @@ sp1/rsp (100 ranked) sets plus both keccak stress sets against the pre-refactor 
 - **Dead code**: the sparse `VerifiedPass` combinators (`Basic.lean`) and the dead half of
   `BridgeSteps.lean` (`foldList`, toy pass, projection glue, `denseBIMapExpr`) removed;
   `Adapter.lean` folded into `Measure.lean`, dropping a duplicate coverage-monotonicity lemma;
-  `OutputVariable`/`VarId` hash-key lawfulness reduced to a single `LawfulBEq` instance (rest inferred).
+  `Variable`/`VarId` hash-key lawfulness reduced to a single `LawfulBEq` instance (rest inferred).
 - **Consolidation**: `subsumedRange` + `subsumedCheck` now instantiate one generic
   `denseSubsumedDropF` skeleton with per-recognizer `SubsumedRecognizerSound` obligations
   (`SubsumedCheck.lean` + its proof file); `SubsumedRange.lean` deleted. A new subsumption shape

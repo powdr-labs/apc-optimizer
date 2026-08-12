@@ -359,7 +359,7 @@ abbrev Optimizer (p : ℕ) := InputCircuit p → OutputCircuit p × Derivations 
 
 The circuit the output is compared against is the one the input denotes, with each variable turned into a {name}`OutputVariable` carrying its ID:
 
-```anchor toVariableCircuit
+```anchor toOutputCircuit
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
 def InputCircuit.toOutputCircuit (circuit : InputCircuit p) : OutputCircuit p :=
@@ -369,7 +369,7 @@ def InputCircuit.toOutputCircuit (circuit : InputCircuit p) : OutputCircuit p :=
 An optimizer is correct if, for every input circuit, replacing it with the optimized circuit is both sound and complete, and the optimizer respects the degree bound.
 
 ```anchor isCorrect
-/-- An optimizer is correct if, for every input circuit exported by powdr,
+/-- An optimizer is correct if, for every input circuit,
     replacing it with the optimized circuit is both sound and complete, and the
     optimizer respects the degree bound `b`. -/
 def Optimizer.isCorrect (optimizer : Optimizer p)

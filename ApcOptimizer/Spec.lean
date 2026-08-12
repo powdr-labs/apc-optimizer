@@ -7,26 +7,25 @@ variable {p : ℕ} [Fact p.Prime]
 
 --------- Expressions ---------
 
-/-- A circuit variable. -/
-structure OutputVariable where
-  /-- The display name of the variable. -/
-  name : String
-  /-- The optional powdr variable ID. All variables mentioned in the input
-      circuit are expected to have a powdr ID. The output circuit may contain
-      newly introduced variables whose values can be derived from a valid
-      assignment of the input circuit. -/
-  powdrId? : Option Nat := none
-  deriving DecidableEq, Repr
-
-/-- A variable of a circuit as exported by powdr. Unlike a `OutputVariable`, it always
+/-- A variable in the input circuit. Unlike a `OutputVariable`, it always
     carries a powdr ID: the input circuit has no derived variables. -/
 structure InputVariable where
   /-- The display name of the variable. -/
   name : String
   /-- The powdr variable ID. -/
-  id : Nat
+  powdrId : Nat
   deriving DecidableEq, Repr
 
+/-- A variable in the output circuit. -/
+structure OutputVariable where
+  /-- The display name of the variable. -/
+  name : String
+  /-- The optional powdr variable ID. On top of variables present in the
+      input circuit and which have a powdr ID, the output circuit may contain
+      newly introduced variables whose values can be derived from a valid
+      assignment of the input circuit. -/
+  powdrId? : Option Nat := none
+  deriving DecidableEq, Repr
 
 /-- An arithmetic expression over variables of type `V` and field constants. -/
 inductive Expression (V : Type) (p : ℕ) where
@@ -47,10 +46,10 @@ def Expression.mapVar {V W : Type} (f : V → W) : Expression V p → Expression
   | .mul e1 e2 => .mul (e1.mapVar f) (e2.mapVar f)
 
 /-- An arithmetic expression over circuit variables and field constants. -/
-abbrev OutputExpression (p : ℕ) := Expression OutputVariable p
+abbrev InputExpression (p : ℕ) := Expression InputVariable p
 
 /-- An arithmetic expression over circuit variables and field constants. -/
-abbrev InputExpression (p : ℕ) := Expression InputVariable p
+abbrev OutputExpression (p : ℕ) := Expression OutputVariable p
 
 /-- Evaluate an expression under an `assignment` of variables to field
     elements. -/
@@ -199,11 +198,11 @@ def Circuit.mapVar {V W : Type} (f : V → W) (circuit : Circuit V p) : Circuit 
                    multiplicity := bi.multiplicity.mapVar f,
                    payload := bi.payload.map (·.mapVar f) }) }
 
-/-- A circuit over circuit variables. -/
-abbrev OutputCircuit (p : ℕ) := Circuit OutputVariable p
-
 /-- A circuit over powdr variables. -/
 abbrev InputCircuit (p : ℕ) := Circuit InputVariable p
+
+/-- A circuit over circuit variables. -/
+abbrev OutputCircuit (p : ℕ) := Circuit OutputVariable p
 
 /-- The variables occurring anywhere in a circuit. -/
 def Circuit.vars {V : Type} (circuit : Circuit V p) : List V :=
@@ -215,14 +214,14 @@ def Circuit.vars {V : Type} (circuit : Circuit V p) : List V :=
 
 /-- The `OutputVariable` a powdr variable denotes: its powdr ID is present. -/
 def InputVariable.toOutputVariable (v : InputVariable) : OutputVariable :=
-  { name := v.name, powdrId? := some v.id }
+  { name := v.name, powdrId? := some v.powdrId }
 
--- ANCHOR: toVariableCircuit
+-- ANCHOR: toOutputCircuit
 /-- The circuit denoted by a circuit exported by powdr: every variable of the
     result carries its powdr ID. -/
 def InputCircuit.toOutputCircuit (circuit : InputCircuit p) : OutputCircuit p :=
   circuit.mapVar InputVariable.toOutputVariable
--- ANCHOR_END: toVariableCircuit
+-- ANCHOR_END: toOutputCircuit
 
 -- ANCHOR: sideEffects
 /-- The side effects of a circuit under a given assignment and bus semantics:
@@ -287,7 +286,7 @@ def Derivations.witgen (ds : Derivations p) {inputVars: List InputVariable } { o
   | none => ((ds.methodFor v).get (ds.methodFor_isSome h hv hp)).eval inputAssignment
 -- ANCHOR_END: witgen
 
---------- OutputCircuit implications ---------
+--------- Circuit implications ---------
 
 -- ANCHOR: admissible
 /-- Whether a given assignment is admissible under the bus semantics. -/
@@ -394,7 +393,7 @@ def optimizerRespectsDegreeBound (b : DegreeBound)
 --------- Optimizer correctness ---------
 
 -- ANCHOR: isCorrect
-/-- An optimizer is correct if, for every input circuit exported by powdr,
+/-- An optimizer is correct if, for every input circuit,
     replacing it with the optimized circuit is both sound and complete, and the
     optimizer respects the degree bound `b`. -/
 def Optimizer.isCorrect (optimizer : Optimizer p)

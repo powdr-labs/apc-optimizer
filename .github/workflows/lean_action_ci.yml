@@ -105,7 +105,7 @@ jobs:
   # sha256 stress sets. One cell per benchmark group, and each cell benches **both sides itself** --
   # this PR's binary then the `baseline` job's main build, back to back on the same runner.
   #
-  # OutputCircuit sizes are deterministic, so for effectiveness the sides needn't share a runner. But
+  # Circuit sizes are deterministic, so for effectiveness the sides needn't share a runner. But
   # benchmark.py also reports each side's wall time, and the report assembles those into the runtime
   # row: measured on two different instances of the same spec that comparison is meaningless, and it
   # has already misled us -- a change that a same-runner bench put at 0.86x on sha256 showed up here
