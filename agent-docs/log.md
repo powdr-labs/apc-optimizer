@@ -7252,3 +7252,71 @@ the walk's own `_self` lemma mid-recursion — no threaded proof, no framework t
 rebased on the same main): sha256 0.940 vs 0.948–0.956, apc_036 0.933 vs 0.959, keccak 0.931 vs
 0.954, apc_012 0.962 vs 0.922 (#281's one consistent edge — unexplained, noted in its close-out).
 #281 closed in favour of this branch with credit for both walk ideas.
+
+### 182. busForward — value forwarding through value-preserving memory accesses (keccak −184 vars/−56 bus, sha256 −197/−63, wins on all six suites, 0 regressions)
+
+**Idea.** `busUnify` drops a send→receive window whenever an intervening access sits at an
+address whose aliasing with the window is undecidable (a symbolic pointer). Per *slot*, more is
+entailed: if every undecided intervening access is a complete same-address receive→send pair that
+carries the *same expression* in a slot (a load's value slots — its receive and send both carry
+`v`), that slot survives the window whichever way the aliasing goes. Per assignment, a
+non-aliasing pair is excluded like any provably-different-address message; an aliasing one has
+the value routed through it by the memory discipline, and slot preservation carries it across.
+So for `mstore a, v; mload b (aliasing unknown); mload a -> u` the pass emits `u − v = 0` —
+the value slots only; the timestamp slot is genuinely undetermined (it depends on the aliasing)
+and drops out automatically because no real access carries syntactically equal ts expressions on
+its receive and send. Interactions are left alone; only `gauss` benefits, by merging the value
+variables — the top-priority metric.
+
+**Runtime** (`OptimizerPasses/BusForward.lean`): `busUnify`'s untrusted-proposer /
+trusted-verifier split over the same prepared records (`denseBUPrep`) and exclusion arms
+(`denseBUMidOk`). A proposal is `(i, [(k₁,l₁),…,(kₘ,lₘ)], j)` on one bus's interaction array:
+send at `i`, receive at `j`, `denseBUConstsEq` addresses, `m ≥ 1` pairs (the `m = 0` case is
+`busUnify`'s), each pair an internally-`ConstsEq` receive→send, every other index in `(i, j)`
+passing `denseBUMidOk` against `i` — with the strict ordering `i < k₁ < l₁ < … < lₘ < j`
+verified positionally (`denseBFCheckPairs`). The sweep keeps one window per send with at most one
+pending receive; a pair closes on the first `ConstsEq` send, intersecting the window's preserved
+slot mask (syntactic/constant slot equality, `denseBFSlotEq`); an empty mask, a second undecided
+message, or an undecided non-receive drops the window. Emission is the masked
+`denseMemEqConstraints` twin (`denseBFEmit`), filtered by `denseBUFilterNew`.
+
+**Proof** (`Proofs/BusForward.lean`): the chain lemma `memFwdChain` against `main`'s positional
+`admissibleMemoryBus`, by induction on the pair list with a per-assignment case split on
+`eval(addr(r₁)) = α` — *no*: the pair joins the excluded set (`MemFwdMid.prepend_excl`) and the
+induction proceeds with the same list; *yes*: `admissibleMemoryBus.consecutive` forces
+`S.payload = r₁.payload`, preservation gives slot equality to `s₁`, and the induction continues
+with `s₁` as the send. **The strict ordering is load-bearing**: interleaved pairs
+(`r_A r_B s_A s_B`) leave `r_B` unconstrained in the both-alias case, so a verifier accepting
+them would emit a non-entailed constraint and break completeness. Wired with
+`DenseVerifiedPassW.of` + `DensePassCorrect.denseAddConstraints` (not `ofAddConstraints`:
+`denseBUMidOk`'s nonzero-witness arm needs the registry/coverage, exactly as in `busUnify`).
+Scheduled immediately after `busUnify`; the mask is syntactic, so the pass mostly fires after
+`gauss` has merged value variables of earlier-derived equalities — the cleanup fixpoint re-runs
+it each cycle, which is exactly what it needs.
+
+MEASURED (A/B against this branch minus the pass entry, all 303 cases across the six suites;
+sizes deterministic, so the diff is exact): **13 cases improve, 0 regress on any axis**.
+
+| suite | cases changed | Δvars | Δbus | aggregate vars (after) |
+|---|---:|---:|---:|---|
+| OpenVM keccak | 1/1 | **−184** (2021→1837) | **−56** (1748→1692) | 14.981× vs powdr 13.618×; bus now **ahead** 7.838× vs 7.648× |
+| OpenVM sha256 | 1/1 | **−197** (11903→11706) | **−63** (9567→9504) | 14.430× vs 14.036× |
+| openvm-eth | 3/100 | −24 | 0 | 4.557× vs 4.092× |
+| wasm-eth | 2/100 | −12 | 0 | 7.260× vs 6.273× |
+| sp1/rsp | 5/100 | −20 | 0 | 3.930× vs 3.980× (W/L 17/41) |
+| sp1/keccak | 1/1 | −8 | 0 | 5.178× vs 4.809× |
+
+The keccak/sha256 bus-interaction drops are downstream: the forwarded equalities let
+`busPairCancel`/`gauss` retire pairs that were previously blocked. OpenVM keccak's bus axis flips
+from behind powdr (7.587× vs 7.648× in the ideas-file table) to ahead.
+
+Runtime (4-core box, median of 3, end-to-end): sha256 41.6 → 36.7 s (the shrink pays for the
+pass), keccak 3.93 → 4.23 s, wasm-eth apc_012 4.68 → 5.02 s, apc_036 4.47 → 4.30 s. Per-pass
+profile: busForward 254–291 ms per run — parity with busUnify (223–277 ms), as expected from the
+shared engine shape.
+
+Relation to PR #288 (order-free multiset rely): built on `main`'s positional rely, deliberately.
+If #288 lands, the runtime transform survives unchanged; `memFwdChain` must be restated against
+`admissibleMemoryBusM` via that branch's counting lemmas (same case-split argument).
+
+**Worked: yes.**

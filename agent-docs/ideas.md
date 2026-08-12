@@ -26,7 +26,25 @@ this session (`intervalForce`, `basisJustified`, the OR-identity byte-check arms
 442 → 55 and bus gap 765 → 319 with 0 per-case regressions; the mechanisms are general (each also
 improved wasm-eth and/or OpenVM keccak).
 
+**Update (entry 182, `busForward`)**: value forwarding through value-preserving memory accesses
+moved several rows — OpenVM keccak vars 14.981× vs powdr 13.618× and bus **flipped to ahead**
+(7.838× vs 7.648×), sha256 14.430×/8.793× both ahead, wasm-eth vars 7.260×, openvm-eth 4.557×,
+sp1/rsp 3.930× (W/L 17/41), sp1/keccak 5.178×. 13/303 cases improved, 0 regressions.
+
 ## Open ideas, priority order
+
+### 0b. busForward v2: constraint-entailed slot preservation  ·  *vars*  ·  unknown value — census first
+
+`busForward` (entry 182) accepts a forwarding pair's slot only when the receive/send entries are
+*syntactically* equal (or equal constants). A store pair preserves nothing syntactically, but its
+value slots may still be forced equal by an existing algebraic constraint (`u − v = 0` present,
+e.g. a load-and-store of the same register between the window's endpoints), and more windows may
+die on blockers a hash lookup would clear. Before building: instrument the sweep and report the
+census — how many windows die on (a) empty mask (store pairs / value vars not yet merged — the
+fixpoint re-run after `gauss` already recovers the "not yet merged" half), (b) undecided non-pair
+blockers, (c) unmatched pending receives. Only if (a) dominates, extend `denseBFSlotEq` with a
+`denseBUFilterNew`-style hash lookup of `r[t] − s[t]` among `d.algebraicConstraints`. Do not
+build speculatively.
 
 ### 1. Quadratic root domains as bounds (`x·(x − c) = 0 → x ∈ {0, c}`)  ·  *bus + vars, sp1*  ·  high value / medium effort
 
