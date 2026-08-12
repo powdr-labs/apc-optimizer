@@ -105,68 +105,158 @@ def denseBFCheckCert (ops : DenseZModOps p) (nw : DenseNonzeroWits p)
 
 /-! ## The proposer sweep (untrusted) -/
 
-/-- An open forwarding window: the send's prepared record and position, the pending unmatched
-    receive of a forwarding pair (if any), the closed pairs (in reverse), and the slots every
-    closed pair has preserved so far. -/
+/-- The slot-only arms of `denseBUMidOk` (the zero-multiplicity arm is tested at the call site).
+    Depends only on the two address-slot lists, so the sweep memoizes it per class pair. -/
+def denseBFAddrExcl (nw : DenseNonzeroWits p) (a b : DenseBUPre p) : Bool :=
+  denseBUConstsNeq a b || denseBUAffineNeq a b || denseBUTwoRootNeq a b || denseBUNonzeroNeq nw a b
+
+/-- Positions whose address slots are syntactically identical (hash-gated). -/
+def denseBFSlotsIdent : List (Option (DenseBUSlot p)) → List (Option (DenseBUSlot p)) → Bool
+  | [], [] => true
+  | some a :: as, some b :: bs =>
+    a.eHash == b.eHash && decide (a.expr = b.expr) && denseBFSlotsIdent as bs
+  | none :: as, none :: bs => denseBFSlotsIdent as bs
+  | _, _ => false
+
+/-- Intern each position's address-slot list into a class id: syntactically identical slot lists
+    share a class, so their prepared records — and every `denseBFAddrExcl` verdict — coincide. -/
+def denseBFClasses (arr : Array (DenseBUPre p)) : Array Nat × Nat :=
+  let step := fun (acc : Array Nat × Std.HashMap UInt64 (List (Nat × List (Option (DenseBUSlot p)))) × Nat)
+      (a : DenseBUPre p) =>
+    let (ids, tbl, n) := acc
+    let h := a.slots.foldl (fun acc so =>
+      mixHash acc (match so with | some s => s.eHash | none => 13)) 7
+    let bucket := tbl.getD h []
+    match bucket.find? (fun e => denseBFSlotsIdent e.2 a.slots) with
+    | some e => (ids.push e.1, tbl, n)
+    | none => (ids.push n, tbl.insert h ((n, a.slots) :: bucket), n + 1)
+  let (ids, _, n) := arr.foldl step (#[], ∅, 0)
+  (ids, n)
+
+/-- An open forwarding window: the send's prepared record, position and address class, the pending
+    unmatched receive of a forwarding pair (if any), the closed pairs (in reverse), and the slots
+    every closed pair has preserved so far. -/
 structure DenseBFWin (p : ℕ) where
   pre : DenseBUPre p
   i : Nat
+  cls : Nat
   pending : Option (DenseBUPre p × Nat)
   pairs : List (Nat × Nat)
   mask : List Nat
 
-/-- One message against one window: keep (possibly updated), drop, or emit a proposal. -/
+/-- One message against one window: keep unchanged (excluded), keep updated (pending formed or
+    pair closed), drop, or emit a proposal. `keepSame` lets the sweep skip the map re-insert. -/
 inductive DenseBFStep (p : ℕ) where
+  | keepSame
   | keep (w : DenseBFWin p)
   | drop
   | propose (prop : Nat × List (Nat × Nat) × Nat)
 
+/-- `nCls`/`mcls` and `memo` memoize the `denseBUMidOk` slot arms per (window, message) class
+    pair; the verdict equals the unmemoized test, so the proposals are unchanged. -/
 def denseBFStep (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (setMult prevMult : ZMod p)
     (bis : Array (BusInteraction (DenseExpr p))) (mb : BusInteraction (DenseExpr p))
-    (mp : DenseBUPre p) (j : Nat) (w : DenseBFWin p) : DenseBFStep p :=
+    (mp : DenseBUPre p) (j nCls mcls : Nat) (w : DenseBFWin p)
+    (memo : Std.HashMap Nat Bool) : DenseBFStep p × Std.HashMap Nat Bool :=
+  let excl : Unit → Bool × Std.HashMap Nat Bool := fun _ =>
+    if decide (mp.mult = some ops.zero) then (true, memo)
+    else
+      let key := w.cls * nCls + mcls
+      match memo[key]? with
+      | some v => (v, memo)
+      | none => let v := denseBFAddrExcl nw w.pre mp; (v, memo.insert key v)
   match w.pending with
   | none =>
     if decide (mp.mult = some prevMult) && denseBUConstsEq w.pre mp then
       -- a receive back at the window's own address: `pairs = []` is `busUnify`'s case.
-      if w.pairs.isEmpty then .drop else .propose (w.i, w.pairs.reverse, j)
-    else if denseBUMidOk ops nw w.pre mp then .keep w
-    else if decide (mp.mult = some prevMult) then
-      .keep { w with pending := some (mp, j) }
-    else .drop
+      (if w.pairs.isEmpty then .drop else .propose (w.i, w.pairs.reverse, j), memo)
+    else
+      let (e, memo) := excl ()
+      if e then (.keepSame, memo)
+      else if decide (mp.mult = some prevMult) then
+        (.keep { w with pending := some (mp, j) }, memo)
+      else (.drop, memo)
   | some (ak, k) =>
     if decide (mp.mult = some setMult) && denseBUConstsEq ak mp then
       let mask := match bis[k]? with
         | some rb => w.mask.filter (fun t => denseBFSlotEq rb mb t)
         | none => []
-      if mask.isEmpty then .drop
-      else .keep { w with pending := none, pairs := (k, j) :: w.pairs, mask := mask }
-    else if denseBUMidOk ops nw w.pre mp then .keep w
-    else .drop
+      (if mask.isEmpty then .drop
+       else .keep { w with pending := none, pairs := (k, j) :: w.pairs, mask := mask }, memo)
+    else
+      let (e, memo) := excl ()
+      if e then (.keepSame, memo) else (.drop, memo)
 
-/-- The sweep: a send opens a window; each later message updates or drops every open window per
+/-- The sweep: a send opens a window; each later message updates or drops open windows per
     `denseBFStep`; a receive back at the window's own address with at least one closed pair yields
-    a proposal. One window per send, first-match. -/
+    a proposal. Windows split as in `denseBUSweep`: constant-address windows live in a map and an
+    all-constant message steps only the window at its own key — against any other constant window
+    it is excluded by `denseBUConstsNeq`, and it can never close a symbolic pending (syntactic
+    equality would const-fold both sides), so those windows step to `.keep` unchanged. Symbolic
+    windows, and every window on a symbolic message, are stepped one by one. -/
 def denseBFSweep (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (setMult prevMult : ZMod p)
     (shape : MemoryBusShape) (bis : Array (BusInteraction (DenseExpr p)))
-    (arr : Array (DenseBUPre p)) :
-    (fuel j : Nat) → (wins : List (DenseBFWin p)) →
+    (arr : Array (DenseBUPre p)) (cls : Array Nat) (nCls : Nat) :
+    (fuel j : Nat) →
+    (constOpen : Std.HashMap (DenseAddrKey p) (DenseBFWin p)) →
+    (symOpen : List (DenseBFWin p)) →
+    (memo : Std.HashMap Nat Bool) →
     (out : List (Nat × List (Nat × Nat) × Nat)) → List (Nat × List (Nat × Nat) × Nat)
-  | 0, _, _, out => out
-  | fuel + 1, j, wins, out =>
+  | 0, _, _, _, _, out => out
+  | fuel + 1, j, constOpen, symOpen, memo, out =>
     match arr[j]?, bis[j]? with
     | some mp, some mb =>
-      let (wins, out) := wins.foldr (init := (([] : List (DenseBFWin p)), out)) fun w acc =>
-        match denseBFStep ops nw setMult prevMult bis mb mp j w with
-        | .keep w' => (w' :: acc.1, acc.2)
-        | .drop => acc
-        | .propose pr => (acc.1, pr :: acc.2)
-      let wins :=
+      let mcls := cls[j]?.getD 0
+      let step := denseBFStep ops nw setMult prevMult bis mb mp j nCls mcls
+      let (constOpen, memo, out) :=
+        if mp.allConst then
+          match mp.key with
+          | some k =>
+            match constOpen[k]? with
+            | some w =>
+              match step w memo with
+              | (.keepSame, memo) => (constOpen, memo, out)
+              | (.keep w', memo) => (constOpen.insert k w', memo, out)
+              | (.drop, memo) => (constOpen.erase k, memo, out)
+              | (.propose pr, memo) => (constOpen.erase k, memo, pr :: out)
+            | none => (constOpen, memo, out)
+          | none => (constOpen, memo, out)
+        else
+          -- updates and drops are applied after the fold, once `toList`'s borrow is released,
+          -- so the map is mutated in place rather than copied per touched window.
+          let (upds, drops, memo, out) :=
+            constOpen.toList.foldl (init := (([] : List (DenseAddrKey p × DenseBFWin p)),
+                ([] : List (DenseAddrKey p)), memo, out)) fun acc kw =>
+              match step kw.2 acc.2.2.1 with
+              | (.keepSame, memo) => (acc.1, acc.2.1, memo, acc.2.2.2)
+              | (.keep w', memo) => ((kw.1, w') :: acc.1, acc.2.1, memo, acc.2.2.2)
+              | (.drop, memo) => (acc.1, kw.1 :: acc.2.1, memo, acc.2.2.2)
+              | (.propose pr, memo) => (acc.1, kw.1 :: acc.2.1, memo, pr :: acc.2.2.2)
+          let constOpen := drops.foldl (·.erase ·) constOpen
+          (upds.foldl (fun m kw => m.insert kw.1 kw.2) constOpen, memo, out)
+      let (symOpen, memo, out) :=
+        if symOpen.isEmpty then (symOpen, memo, out) else
+        symOpen.foldr (init := (([] : List (DenseBFWin p)), memo, out)) fun w acc =>
+          match step w acc.2.1 with
+          | (.keepSame, memo) => (w :: acc.1, memo, acc.2.2)
+          | (.keep w', memo) => (w' :: acc.1, memo, acc.2.2)
+          | (.drop, memo) => (acc.1, memo, acc.2.2)
+          | (.propose pr, memo) => (acc.1, memo, pr :: acc.2.2)
+      -- a same-key send steps the old window to `.drop` above, so the slot is already free.
+      let (constOpen, symOpen) :=
         if decide (mp.mult = some setMult) then
-          { pre := mp, i := j, pending := none, pairs := [],
-            mask := (List.range mb.payload.length).filter
-              (fun t => decide (t ∉ shape.addressFields)) } :: wins
-        else wins
-      denseBFSweep ops nw setMult prevMult shape bis arr fuel (j + 1) wins out
+          match mp.key with
+          | some k =>
+            let w : DenseBFWin p :=
+              { pre := mp, i := j, cls := mcls, pending := none, pairs := [],
+                mask := (List.range mb.payload.length).filter
+                  (fun t => decide (t ∉ shape.addressFields)) }
+            if k.allConst then (constOpen.insert k w, symOpen)
+            else (constOpen, w :: symOpen)
+          | none => (constOpen, symOpen)
+        else (constOpen, symOpen)
+      denseBFSweep ops nw setMult prevMult shape bis arr cls nCls fuel (j + 1) constOpen symOpen
+        memo out
     | _, _ => out
 
 /-! ## Verify and emit -/
@@ -190,7 +280,8 @@ def denseBFForBus (ops : DenseZModOps p) (T : DenseTwoRootMap p) (nw : DenseNonz
   let prevMult := denseGetPreviousMult ops shape
   let bis := bisL.toArray
   let arr := bis.map (denseBUPrep shape T)
-  let props := denseBFSweep ops nw setMult prevMult shape bis arr arr.size 0 [] []
+  let (cls, nCls) := denseBFClasses arr
+  let props := denseBFSweep ops nw setMult prevMult shape bis arr cls nCls arr.size 0 ∅ [] ∅ []
   denseBFCollect ops nw setMult prevMult shape bis arr props
 
 def denseBFEqsOf (busLists : List (Nat × MemoryBusShape × List (BusInteraction (DenseExpr p))))

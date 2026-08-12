@@ -7320,3 +7320,30 @@ If #288 lands, the runtime transform survives unchanged; `memFwdChain` must be r
 `admissibleMemoryBusM` via that branch's counting lemmas (same case-split argument).
 
 **Worked: yes.**
+
+### 183. busForward sweep: address-class memoized exclusion + const-keyed windows (pass 0.5× on SP1, rsp case total −15%)
+
+Runtime-only follow-up to entry 182 after review feedback that rsp's end-to-end +17 % was too
+high. Two changes, both confined to the untrusted sweep (`denseBFSweep`/`denseBFStep`); the
+trusted verifier, the emitted constraints and every proof are untouched, and all six suites
+reproduce entry 182's effectiveness numbers exactly.
+
+1. **Const-keyed windows** (`busUnify`'s `constOpen` map): an all-constant message steps only the
+   window at its own address key. Valid for busForward because against any other constant window
+   it is excluded by `denseBUConstsNeq`, and it can never `constsEq`-close a symbolic pending —
+   syntactic equality would const-fold both sides. Helps OpenVM shapes; SP1's three symbolic
+   address fields (`[2,3,4]`) never take this path.
+2. **Address-class memo**: intern each position's address-slot list by syntactic equality
+   (`denseBFClasses`), then memoize the slot-only exclusion arms (`denseBFAddrExcl` =
+   `denseBUMidOk` minus the zero-mult arm) per class pair. SP1 basic blocks touch the same few
+   dozen addresses over and over, so the quadratic window×message sweep collapses to a few
+   hundred distinct verdicts. A `keepSame` step variant plus busUnify's collect-then-apply
+   map-update pattern avoids the RC-2 full-map copies a naive fold-with-insert incurs.
+
+Measured (profile CLI, per pass): rsp apc_060 busForward 42 → 21 ms (case 146 → 125 ms),
+sp1/keccak 197 → 110 ms (now cheaper than busUnify's 189), wasm-eth apc_012 at parity
+(184 vs busUnify 199), OpenVM keccak/eth within noise. busForward now costs ~busUnify
+everywhere, which is the floor for the shared engine shape without cross-pass prep sharing
+(`denseBUTable`/`denseBUWits` are rebuilt per pass — a separate, pass-independent idea).
+
+**Worked: yes.**
