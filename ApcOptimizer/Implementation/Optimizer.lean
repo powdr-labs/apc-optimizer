@@ -391,22 +391,9 @@ theorem Expression.degree_mapVar {V W : Type} (f : V → W) (e : Expression V p)
   | add e1 e2 ih1 ih2 => simp [mapVar, degree, ih1, ih2]
   | mul e1 e2 ih1 ih2 => simp [mapVar, degree, ih1, ih2]
 
-theorem Expression.mapVar_map {V W X : Type} (f : V → W) (g : W → X) (e : Expression V p) :
-    (e.mapVar f).mapVar g = e.mapVar (g ∘ f) := by
-  induction e with
-  | const n => rfl
-  | var x => rfl
-  | add e1 e2 ih1 ih2 => simp [Expression.mapVar, ih1, ih2]
-  | mul e1 e2 ih1 ih2 => simp [Expression.mapVar, ih1, ih2]
-
 theorem Circuit.withinDegree_mapVar {V W : Type} (f : V → W) (circuit : Circuit V p)
     (b : DegreeBound) : (circuit.mapVar f).withinDegree b ↔ circuit.withinDegree b := by
   simp [Circuit.withinDegree, Circuit.mapVar, Expression.degree_mapVar]
-
-theorem Circuit.mapVar_map {V W X : Type} (f : V → W) (g : W → X) (circuit : Circuit V p) :
-    (circuit.mapVar f).mapVar g = circuit.mapVar (g ∘ f) := by
-  cases circuit
-  simp [Circuit.mapVar, Expression.mapVar_map, List.map_map, Function.comp]
 
 private theorem inputExpr_roundtrip (e : InputExpression p) :
     (e.mapVar InputVariable.toOutputVariable).mapVar OutputVariable.toInput = e := by
