@@ -237,6 +237,17 @@ def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variabl
   | none => ((ds.methodFor v).get (ds.methodFor_isSome h hv hp)).eval inputAssignment
 -- ANCHOR_END: witgen
 
+/-- The canonical total witness for the optimized circuit: on output variables,
+    it agrees with `witgen`; elsewhere, it reuses the input assignment. -/
+def Derivations.outputWitness (ds : Derivations p) {inputVars outputVars : List Variable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) :
+    Variable → ZMod p :=
+  fun v =>
+    if hv : v ∈ outputVars then
+      ds.witgen h inputAssignment v hv
+    else
+      inputAssignment v
+
 --------- Circuit implications ---------
 
 -- ANCHOR: admissible
@@ -309,9 +320,7 @@ def Circuit.isCompleteReplacementOf
   ∀ assignment,
     originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
-    ∀ assignment' : Variable → ZMod p,
-    (∀ v (hv : v ∈ optimizedCircuit.vars),
-      assignment' v = ds.witgen hcover assignment v hv) →
+    let assignment' := ds.outputWitness hcover assignment
     optimizedCircuit.satisfies busSemantics assignment' ∧
       optimizedCircuit.admissible busSemantics assignment' ∧
       originalCircuit.sideEffects busSemantics assignment =

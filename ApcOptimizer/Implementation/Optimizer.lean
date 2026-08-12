@@ -259,6 +259,13 @@ theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars 
     fun hs => Option.get_of_mem hs (Option.mem_def.mpr hm)
   unfold Derivations.witgen; split <;> simp_all
 
+/-- On output variables, `outputWitness` is exactly `witgen`. -/
+theorem Derivations.outputWitness_eq_witgen {ds : Derivations p} {inputVars outputVars : List Variable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
+    (hv : v ∈ outputVars) :
+    ds.outputWitness h inputAssignment v = ds.witgen h inputAssignment v hv := by
+  simp [Derivations.outputWitness, hv]
+
 /-! ## Evaluation depends only on a system's variables
 
 Two assignments agreeing on `cs.vars` are interchangeable for `satisfies`/`admissible`/`sideEffects`.
@@ -395,13 +402,12 @@ theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List Variabl
     handed (`optimizerWithBusFacts_correct` transports this across the clone). -/
 theorem optimizerCore_correct {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
     (cs : Circuit p) :
-    (optimizerCore b facts cs).1.isSoundReplacementOf cs bs ∧
-      (optimizerCore b facts cs).1.isCompleteReplacementOf cs bs (optimizerCore b facts cs).2 := by
+    let r := pipeline b cs bs facts
+    let ds := r.derivs.forOutput cs.vars r.out.vars
+    r.out.isSoundReplacementOf cs bs ∧ r.out.isCompleteReplacementOf cs bs ds := by
+  dsimp
   refine ⟨(pipeline b cs bs facts).correct.toSound, ?_⟩
   intro hpow
-  -- Phrase the goal in `pipeline` terms up front: the coverage proof is one of its components, so
-  -- `refine` would otherwise have to bridge the `optimizerCore` projections by `whnf`.
-  simp only [optimizerCore]
   -- `PassCorrect` components (`Basic.lean`): no new powdr-ID column, and real-trace completeness.
   have hS := (pipeline b cs bs facts).correct.2.2.1
   have hcomp := (pipeline b cs bs facts).correct.2.2.2
@@ -421,20 +427,25 @@ theorem optimizerCore_correct {bs : BusSemantics p} (b : DegreeBound) (facts : B
     rw [Derivations.forOutput_eq, List.mem_map] at hd
     obtain ⟨v, hv, rfl⟩ := hd
     exact List.mem_of_mem_filter (List.mem_eraseDups.mp hv)
-  intro env hadm hsat f hf
+  intro env hadm hsat
   obtain ⟨env', hsat', hadm', hse, hA, hR⟩ := hcomp env hadm hsat
   have hrec : (pipeline b cs bs facts).out.reconstructs cs.vars
       (pipeline b cs bs facts).derivs env' := by
     have hrec0 : cs.reconstructs cs.vars [] env :=
       fun u hu hunone => absurd (hpow u hu) (by simp [hunone])
     simpa using hR cs.vars (fun v hv _ => hv) [] hrec0
+  let f : Variable → ZMod p :=
+    ((pipeline b cs bs facts).derivs.forOutput cs.vars
+      (pipeline b cs bs facts).out.vars).outputWitness hcover env
   have hagree : ∀ v ∈ (pipeline b cs bs facts).out.vars, f v = env' v := by
     intro v hv
+    dsimp [f]
     -- Case first, rewrite second: `witgen`'s implicit `outputVars` is the pipeline output, so a
     -- goal mentioning the application makes `cases` reduce it — i.e. run the optimizer in `whnf`.
     cases hpw : v.powdrId? with
     | some w =>
-        rw [hf v hv, Derivations.witgen_powdrId hcover env hv hpw]
+        rw [Derivations.outputWitness_eq_witgen hcover env hv,
+          Derivations.witgen_powdrId hcover env hv hpw]
         exact (hA v (by simp [hpw])).symm
     | none =>
         obtain ⟨cm, hm, hxpow, hxinput, heq⟩ := hrec v hv hpw
@@ -444,7 +455,8 @@ theorem optimizerCore_correct {bs : BusSemantics p} (b : DegreeBound) (facts : B
           (ds := (pipeline b cs bs facts).derivs) (inputVars := cs.vars)
           (outputVars := (pipeline b cs bs facts).out.vars) hv hpw
         rw [hsafe] at hm'
-        rw [hf v hv, Derivations.witgen_methodFor hcover env hv hpw hm', ← heq]
+        rw [Derivations.outputWitness_eq_witgen hcover env hv,
+          Derivations.witgen_methodFor hcover env hv hpw hm', ← heq]
         exact ComputationMethod.eval_congr cm env env' (fun x hx => (hA x (hxpow x hx)).symm)
   exact ⟨(Circuit.satisfies_congr hagree).mpr hsat',
     (Circuit.admissible_congr hagree).mpr hadm',
@@ -466,8 +478,8 @@ theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound)
     (optimizerWithBusFacts b facts cs).1.isSoundReplacementOf cs bs ∧
       (optimizerWithBusFacts b facts cs).1.isCompleteReplacementOf cs bs
         (optimizerWithBusFacts b facts cs).2 := by
-  simp only [optimizerWithBusFacts, Circuit.clone_eq]
-  exact optimizerCore_correct b facts cs
+  simpa [optimizerWithBusFacts, optimizerCore, Circuit.clone_eq] using
+    (optimizerCore_correct b facts cs.clone)
 
 /-- The fact-aware optimizer never pushes a within-bound circuit past the zkVM's degree
     bound (every pass is degree-guarded). -/
