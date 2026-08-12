@@ -202,51 +202,28 @@ def Derivations.methodFor :
       | none => if u = v then some cm else none
 
 /-- Whether `ds` lets witness generation produce every element of `outputVars`
-    from `inputVars`: each output variable is either an input variable (reused)
-    or a derived variable with a method that reads only input variables. -/
+    from `inputVars`: if an output variable has no derivation method, it is a
+    reused input variable; if it has one, that method reads only input
+    variables. -/
 def Derivations.cover (ds : Derivations p)
     (inputVars outputVars : List Variable) : Prop :=
   ∀ v ∈ outputVars,
-    match v.powdrId? with
-    | some _ => v ∈ inputVars
-    | none => ∃ cm, ds.methodFor v = some cm ∧ ∀ x ∈ cm.vars, x ∈ inputVars
+    match ds.methodFor v with
+    | none => v ∈ inputVars
+    | some cm => ∀ x ∈ cm.vars, x ∈ inputVars
 -- ANCHOR_END: methodForCover
 
-omit [Fact p.Prime] in
-/- Support lemma, does not require audit. -/
-theorem Derivations.methodFor_isSome (ds : Derivations p)
-    {inputVars outputVars : List Variable} (h : ds.cover inputVars outputVars)
-    {v : Variable} (hv : v ∈ outputVars) (hp : v.powdrId? = none) :
-    (ds.methodFor v).isSome := by
-  have hc := h v hv
-  simp only [hp] at hc
-  obtain ⟨cm, hcm, -⟩ := hc
-  simp [hcm]
-
 -- ANCHOR: witgen
-/-- Witness generation on a variable `ds` covers. Every powdr-ID (input)
-    variable passes through unchanged; every other variable is computed by the
-    method `ds` records for it. -/
-def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
-    (v : Variable) (hv : v ∈ outputVars) : ZMod p :=
-  match hp : v.powdrId? with
-  -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
-  -- variable of the output circuit also exists in the input circuit.
-  | some _ => inputAssignment v
-  | none => ((ds.methodFor v).get (ds.methodFor_isSome h hv hp)).eval inputAssignment
--- ANCHOR_END: witgen
-
-/-- The canonical total witness for the optimized circuit: on output variables,
-    it agrees with `witgen`; elsewhere, it reuses the input assignment. -/
-def Derivations.outputWitness (ds : Derivations p) {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) :
+/-- The canonical total witness for the optimized circuit: any variable with a
+    derivation method is computed by that method; all others reuse the input
+    assignment. -/
+def Derivations.witgen (ds : Derivations p) (inputAssignment : Variable → ZMod p) :
     Variable → ZMod p :=
   fun v =>
-    if hv : v ∈ outputVars then
-      ds.witgen h inputAssignment v hv
-    else
-      inputAssignment v
+    match ds.methodFor v with
+    | some cm => cm.eval inputAssignment
+    | none => inputAssignment v
+-- ANCHOR_END: witgen
 
 --------- Circuit implications ---------
 
@@ -312,7 +289,7 @@ def Circuit.isCompleteReplacementOf
 
   -- The optimized circuit variables can be derived from the original circuit
   -- variables, and the return derivations.
-  ∃ hcover : ds.cover originalCircuit.vars optimizedCircuit.vars,
+  ds.cover originalCircuit.vars optimizedCircuit.vars ∧
 
   -- For any admissible satisfying assignment of the original circuit, the
   -- optimized circuit is also satisfied and admissible, with equal side
@@ -320,7 +297,7 @@ def Circuit.isCompleteReplacementOf
   ∀ assignment,
     originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
-    let assignment' := ds.outputWitness hcover assignment
+    let assignment' := ds.witgen assignment
     optimizedCircuit.satisfies busSemantics assignment' ∧
       optimizedCircuit.admissible busSemantics assignment' ∧
       originalCircuit.sideEffects busSemantics assignment =

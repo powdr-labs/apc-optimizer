@@ -242,29 +242,18 @@ def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFa
 
 So the completeness proof never unfolds the spec's `Derivations.witgen`. -/
 
-/-- On an input variable, `witgen` passes the input assignment through. -/
-theorem Derivations.witgen_powdrId {ds : Derivations p} {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
-    {w : Nat} (hv : v ∈ outputVars) (hp : v.powdrId? = some w) :
-    ds.witgen h inputAssignment v hv = inputAssignment v := by
-  unfold Derivations.witgen; split <;> simp_all
+/-- Without a derivation method, `witgen` passes the input assignment through. -/
+theorem Derivations.witgen_none {ds : Derivations p} (inputAssignment : Variable → ZMod p)
+    {v : Variable} (hm : ds.methodFor v = none) :
+    ds.witgen inputAssignment v = inputAssignment v := by
+  simp [Derivations.witgen, hm]
 
-/-- On a derived variable, `witgen` evaluates the method `ds` records for it. -/
-theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
-    {cm : ComputationMethod p} (hv : v ∈ outputVars) (hp : v.powdrId? = none)
+/-- With a derivation method, `witgen` evaluates it. -/
+theorem Derivations.witgen_methodFor {ds : Derivations p} (inputAssignment : Variable → ZMod p)
+    {v : Variable} {cm : ComputationMethod p}
     (hm : ds.methodFor v = some cm) :
-    ds.witgen h inputAssignment v hv = cm.eval inputAssignment := by
-  have hg : ∀ hs : (ds.methodFor v).isSome, (ds.methodFor v).get hs = cm :=
-    fun hs => Option.get_of_mem hs (Option.mem_def.mpr hm)
-  unfold Derivations.witgen; split <;> simp_all
-
-/-- On output variables, `outputWitness` is exactly `witgen`. -/
-theorem Derivations.outputWitness_eq_witgen {ds : Derivations p} {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
-    (hv : v ∈ outputVars) :
-    ds.outputWitness h inputAssignment v = ds.witgen h inputAssignment v hv := by
-  simp [Derivations.outputWitness, hv]
+    ds.witgen inputAssignment v = cm.eval inputAssignment := by
+  simp [Derivations.witgen, hm]
 
 /-! ## Evaluation depends only on a system's variables
 
@@ -375,6 +364,21 @@ theorem Derivations.forOutput_methodFor {ds : Derivations p} {inputVars outputVa
   rw [Derivations.methodFor_map_same, if_pos]
   simp [hv, hpw]
 
+theorem Derivations.forOutput_methodFor_powdrId {ds : Derivations p}
+    {inputVars outputVars : List Variable} {v : Variable}
+    (hpw : v.powdrId?.isSome) :
+    (ds.forOutput inputVars outputVars).methodFor v = none := by
+  cases hpid : v.powdrId? with
+  | none =>
+      simp [hpid] at hpw
+  | some w =>
+      rw [Derivations.forOutput_eq, Derivations.methodFor_map_same]
+      apply if_neg
+      intro hv
+      have hv' := List.mem_eraseDups.mp hv
+      have hv'' := (List.mem_filter.mp hv').2
+      simp [hpid] at hv''
+
 theorem Derivations.safeMethod_vars (ds : Derivations p) (inputVars : List Variable) (v : Variable) :
     ∀ x ∈ (ds.safeMethod inputVars v).vars, x ∈ inputVars := by
   cases hm : ds.methodFor v with
@@ -411,16 +415,18 @@ theorem optimizerCore_correct {bs : BusSemantics p} (b : DegreeBound) (facts : B
   -- `PassCorrect` components (`Basic.lean`): no new powdr-ID column, and real-trace completeness.
   have hS := (pipeline b cs bs facts).correct.2.2.1
   have hcomp := (pipeline b cs bs facts).correct.2.2.2
-  -- Every output variable is either reused from the input or has a safe method.
+  -- Every output variable either has no derivation method and is reused from the input, or it has
+  -- one whose variables all come from the input.
   have hcover : ((pipeline b cs bs facts).derivs.forOutput cs.vars
       (pipeline b cs bs facts).out.vars).cover cs.vars (pipeline b cs bs facts).out.vars := by
     intro v hv
     cases hpw : v.powdrId? with
-    | some w => exact hS v hv (by simp [hpw])
+    | some w =>
+        rw [Derivations.forOutput_methodFor_powdrId (by simp [hpw])]
+        exact hS v hv (by simp [hpw])
     | none =>
-        exact ⟨(pipeline b cs bs facts).derivs.safeMethod cs.vars v,
-          Derivations.forOutput_methodFor hv hpw,
-          Derivations.safeMethod_vars _ _ _⟩
+        rw [Derivations.forOutput_methodFor hv hpw]
+        exact Derivations.safeMethod_vars _ _ _
   refine ⟨?_, hcover, ?_⟩
   · -- `forOutput` records only no-ID variables occurring in the output.
     intro d hd
@@ -436,17 +442,16 @@ theorem optimizerCore_correct {bs : BusSemantics p} (b : DegreeBound) (facts : B
     simpa using hR cs.vars (fun v hv _ => hv) [] hrec0
   let f : Variable → ZMod p :=
     ((pipeline b cs bs facts).derivs.forOutput cs.vars
-      (pipeline b cs bs facts).out.vars).outputWitness hcover env
+      (pipeline b cs bs facts).out.vars).witgen env
   have hagree : ∀ v ∈ (pipeline b cs bs facts).out.vars, f v = env' v := by
     intro v hv
     dsimp [f]
-    -- Case first, rewrite second: `witgen`'s implicit `outputVars` is the pipeline output, so a
-    -- goal mentioning the application makes `cases` reduce it — i.e. run the optimizer in `whnf`.
     cases hpw : v.powdrId? with
     | some w =>
-        rw [Derivations.outputWitness_eq_witgen hcover env hv,
-          Derivations.witgen_powdrId hcover env hv hpw]
-        exact (hA v (by simp [hpw])).symm
+        have hmnone := Derivations.forOutput_methodFor_powdrId
+          (ds := (pipeline b cs bs facts).derivs) (inputVars := cs.vars)
+          (outputVars := (pipeline b cs bs facts).out.vars) (v := v) (by simp [hpw])
+        simpa [Derivations.witgen, hmnone] using (hA v (by simp [hpw])).symm
     | none =>
         obtain ⟨cm, hm, hxpow, hxinput, heq⟩ := hrec v hv hpw
         have hsafe : (pipeline b cs bs facts).derivs.safeMethod cs.vars v = cm :=
@@ -455,8 +460,7 @@ theorem optimizerCore_correct {bs : BusSemantics p} (b : DegreeBound) (facts : B
           (ds := (pipeline b cs bs facts).derivs) (inputVars := cs.vars)
           (outputVars := (pipeline b cs bs facts).out.vars) hv hpw
         rw [hsafe] at hm'
-        rw [Derivations.outputWitness_eq_witgen hcover env hv,
-          Derivations.witgen_methodFor hcover env hv hpw hm', ← heq]
+        rw [Derivations.witgen_methodFor env hm', ← heq]
         exact ComputationMethod.eval_congr cm env env' (fun x hx => (hA x (hxpow x hx)).symm)
   exact ⟨(Circuit.satisfies_congr hagree).mpr hsat',
     (Circuit.admissible_congr hagree).mpr hadm',
