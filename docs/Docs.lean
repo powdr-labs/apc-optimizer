@@ -64,7 +64,7 @@ Variables of the circuits the optimizer works on may also have been introduced b
 
 {docstring OutputVariable}
 
-An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions. It is generic in the variable type, so the same definition serves both kinds of circuit; {name}`OutputExpression` abbreviates the optimizer's instance {lean}`Expression OutputVariable`.
+An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions. It is generic in the variable type, so the same definition serves both kinds of circuit. {name}`InputExpression` abbreviates the optimizer's instance {lean}`Expression InputVariable`; {name}`OutputExpression` abbreviates the optimizer's instance {lean}`Expression OutputVariable`.
 
 {docstring Expression}
 
@@ -125,7 +125,7 @@ As we will see below, we will assume that all circuits _including the circuit to
 
 # Circuits
 
-A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions, over the same variable type as its expressions ({name}`OutputCircuit` abbreviates {lean}`Circuit OutputVariable`):
+A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions, over the same variable type as its expressions ({name}`InputCircuit` abbreviates {lean}`Circuit InputVariable`, {name}`OutputCircuit` abbreviates {lean}`Circuit OutputVariable`):
 
 {docstring Circuit}
 
@@ -351,19 +351,10 @@ def optimizerRespectsDegreeBound (b : DegreeBound)
 
 # Optimizer
 
-Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit powdr exported to a new circuit and a list of derivations. Its input being a {lean}`Circuit InputVariable` is what records that every variable it is given has a powdr ID: we do not assume this, we read it off the input type.
+Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps an input circuit to an output circuit and a list of derivations:
 
 ```anchor optimizer
 abbrev Optimizer (p : ℕ) := InputCircuit p → OutputCircuit p × Derivations p
-```
-
-The circuit the output is compared against is the one the input denotes, with each variable turned into a {name}`OutputVariable` carrying its ID:
-
-```anchor toOutputCircuit
-/-- The circuit denoted by a circuit exported by powdr: every variable of the
-    result carries its powdr ID. -/
-def InputCircuit.toOutputCircuit (circuit : InputCircuit p) : OutputCircuit p :=
-  circuit.mapVar InputVariable.toOutputVariable
 ```
 
 An optimizer is correct if, for every input circuit, replacing it with the optimized circuit is both sound and complete, and the optimizer respects the degree bound.
