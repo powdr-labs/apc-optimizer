@@ -35,9 +35,10 @@ strengthened accordingly: the reproduced witness must **`derivesWitness`** — e
 output that carries a powdr ID is an input column present in the input with an unchanged value, and
 every no-ID (derived) variable is computed by the method `Derivations` lists for it (`methodFor`,
 its last entry — duplicates are allowed, the later one wins) reading only input columns. This is
-exactly what lets witness generation extend an input trace to an output trace. (The requirement is
-only demanded when the input's columns all carry powdr IDs — the intended shape of an exported
-circuit; a variable with no powdr ID cannot be read from the input trace.)
+exactly what lets witness generation extend an input trace to an output trace. (The input is a
+circuit powdr exported — an `Optimizer` takes a `InputCircuit`, compared against the
+`OutputCircuit` it denotes (`InputCircuit.toOutputCircuit`) — so all its columns carry powdr IDs by
+construction; a variable with no powdr ID cannot be read from the input trace.)
 The structural half — every returned derivation names an output variable, and `cover` reconstructs
 all output variables from input columns — holds even when the input has no admissible satisfying
 assignment. Only the value-agreement, satisfaction, admissibility, and side-effect clauses are

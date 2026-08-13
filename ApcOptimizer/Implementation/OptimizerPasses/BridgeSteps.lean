@@ -7,7 +7,7 @@ set_option autoImplicit false
 `DenseNativeStep` carries a certified step's invariants with its value; `trans`/`drain` compose
 per-step certificates into one, closed into a pass by `DenseVerifiedPassW.ofDenseStep`.
 
-The `isInput`-composition fact baked in: registering a `powdrId? = none` `Variable` leaves
+The `isInput`-composition fact baked in: registering a `powdrId? = none` `OutputVariable` leaves
 `VarRegistry.isInput` pointwise unchanged, so a pass minting only derived variables preserves
 `isInput` exactly and certificates compose at literally the same function. -/
 

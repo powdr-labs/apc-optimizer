@@ -56,19 +56,23 @@ In the remainder of this document, we formalize the properties that an optimizer
 
 # Variables, expressions and assignments
 
-A {deftech}_variable_ is how the _runtime witness data_ is referenced in a circuit. Variables in the input circuit carry a _powdr ID_, while newly introduced variables do not.
+A {deftech}_variable_ is how the _runtime witness data_ is referenced in a circuit. Every variable of the circuit exported by powdr carries a _powdr ID_:
 
-{docstring Variable}
+{docstring InputVariable}
 
-An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions.
+Variables of the circuits the optimizer works on may also have been introduced by the optimizer itself, in which case they have no powdr ID:
+
+{docstring OutputVariable}
+
+An {deftech}_expression_ is defined inductively as a constant, a variable, or the sum or product of two expressions. It is generic in the variable type, so the same definition serves both kinds of circuit; {name}`OutputExpression` abbreviates the optimizer's instance {lean}`Expression OutputVariable`.
 
 {docstring Expression}
 
 An {deftech}_assignment_ maps every variable to a concrete field value. An expression is _evaluated_ under an assignment by folding its constants, variables, sums, and products into a single field element.
 
 ```anchor exprEval
-def Expression.eval (e : Expression p)
-    (assignment : Variable → ZMod p) : ZMod p :=
+def Expression.eval {V : Type} (e : Expression V p)
+    (assignment : V → ZMod p) : ZMod p :=
   match e with
   | .const n => n
   | .var x => assignment x
@@ -82,7 +86,7 @@ A {deftech}_bus interaction_ sends a _payload_ tuple to a bus, weighted by a _mu
 
 {docstring BusInteraction}
 
-A circuit (defined below) contains a list of _symbolic bus interactions_ (i.e., elements of type `BusInteraction Expression`). For a concrete run of the zkVM, the circuit might be instantiated several times with different variable assignments. Evaluating the symbolic bus interactions under an assignment yields a list of _bus messages_ (i.e., elements of type `BusInteraction (ZMod p)`).
+A circuit (defined below) contains a list of _symbolic bus interactions_ (i.e., elements of type `BusInteraction OutputExpression`). For a concrete run of the zkVM, the circuit might be instantiated several times with different variable assignments. Evaluating the symbolic bus interactions under an assignment yields a list of _bus messages_ (i.e., elements of type `BusInteraction (ZMod p)`).
 
 ## Bus state
 
@@ -121,7 +125,7 @@ As we will see below, we will assume that all circuits _including the circuit to
 
 # Circuits
 
-A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions:
+A {deftech}_circuit_ is simply a collection of algebraic constraints and symbolic bus interactions, over the same variable type as its expressions ({name}`OutputCircuit` abbreviates {lean}`Circuit OutputVariable`):
 
 {docstring Circuit}
 
@@ -131,8 +135,8 @@ A circuit is satisfied under an assignment when all algebraic constraints evalua
 /-- Whether a circuit is satisfied under a given assignment and bus semantics,
     i.e., whether it satisfies all algebraic constraints and every active bus
     interaction message is accepted. -/
-def Circuit.satisfies (circuit : Circuit p) (busSemantics : BusSemantics p)
-    (assignment : Variable → ZMod p) : Prop :=
+def Circuit.satisfies { V: Type } (circuit : Circuit V p) (busSemantics : BusSemantics p)
+    (assignment : V → ZMod p) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.eval assignment = 0) ∧
   (∀ bi ∈ circuit.busInteractions,
     let message := bi.eval assignment
@@ -160,8 +164,8 @@ First, we define the side effects of a circuit under an assignment as the net ef
 ```anchor sideEffects
 /-- The side effects of a circuit under a given assignment and bus semantics:
     the net multiplicity with which each tuple is sent to a *stateful* bus. -/
-def Circuit.sideEffects (circuit : Circuit p) (busSemantics : BusSemantics p)
-    (assignment : Variable → ZMod p) : BusState p :=
+def Circuit.sideEffects { V: Type } (circuit : Circuit V p) (busSemantics : BusSemantics p)
+    (assignment : V → ZMod p) : BusState p :=
   fun message =>
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
       (fun m => busSemantics.isStateful m.busId &&
@@ -174,7 +178,7 @@ Second, we define that a circuit _guarantees invariants_ if, under any satisfyin
 ```anchor guaranteesInvariants
 /-- Whether a circuit guarantees that all invariants are maintained under a
     given bus semantics. -/
-def Circuit.guaranteesInvariants (circuit : Circuit p)
+def Circuit.guaranteesInvariants { V: Type } (circuit : Circuit V p)
     (busSemantics : BusSemantics p) : Prop :=
   ∀ assignment, circuit.satisfies busSemantics assignment →
     ∀ bi ∈ circuit.busInteractions,
@@ -190,7 +194,7 @@ Finally, we formalize what it means for an optimized circuit to be a sound repla
     circuit, there exists a corresponding satisfying assignment of the original
     circuit *with equal side effects*. Also, the optimized circuit must
     maintain all invariants guaranteed by the original circuit. -/
-def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
+def OutputCircuit.isSoundReplacementOf (optimizedCircuit : OutputCircuit p) (originalCircuit : InputCircuit p)
     (busSemantics : BusSemantics p) : Prop :=
   (∀ assignment, optimizedCircuit.satisfies busSemantics assignment →
     ∃ assignment', originalCircuit.satisfies busSemantics assignment' ∧
@@ -210,8 +214,8 @@ First, we define what it means for an assignment to be _admissible_ under a bus 
 
 ```anchor admissible
 /-- Whether a given assignment is admissible under the bus semantics. -/
-def Circuit.admissible (circuit : Circuit p) (busSemantics : BusSemantics p)
-    (assignment : Variable → ZMod p) : Prop :=
+def Circuit.admissible { V: Type } (circuit : Circuit V p) (busSemantics : BusSemantics p)
+    (assignment : V → ZMod p) : Prop :=
   busSemantics.admissible
     ((circuit.busInteractions.map (fun bi => bi.eval assignment)).filter
       (fun m => decide (m.multiplicity ≠ 0) && busSemantics.isStateful m.busId))
@@ -228,7 +232,7 @@ Second, we need to guarantee that the prover can also compute a satisfying assig
 ```anchor derivations
 /-- A list of derived variables paired with how to compute each, consumed by
     witness generation. -/
-abbrev Derivations (p : ℕ) := List (Variable × ComputationMethod p)
+abbrev Derivations (p : ℕ) := List (OutputVariable × ComputationMethod p)
 ```
 
 With the data structures in place, we can define a prescribed witness generation algorithm that we expect the prover to implement. The algorithm derives a valid assignment for the optimized circuit from a valid assignment for the input circuit. In essence, for each variable in the output circuit:
@@ -242,7 +246,7 @@ For this to be well-defined, the derivations must _cover_ the output variables:
     multiple times, the last derivation is returned; `none` if `v` has no
     derivation. -/
 def Derivations.methodFor :
-    Derivations p → Variable → Option (ComputationMethod p)
+    Derivations p → OutputVariable → Option (ComputationMethod p)
   | [], _ => none
   | (u, cm) :: rest, v =>
       match Derivations.methodFor rest v with
@@ -254,10 +258,10 @@ def Derivations.methodFor :
     from `inputVars`: each output variable is either an input variable (reused)
     or a derived variable with a method that reads only input variables. -/
 def Derivations.cover (ds : Derivations p)
-    (inputVars outputVars : List Variable) : Prop :=
+    (inputVars: List InputVariable) (outputVars : List OutputVariable) : Prop :=
   ∀ v ∈ outputVars,
     match v.powdrId? with
-    | some _ => v ∈ inputVars
+    | some id => ⟨v.name, id⟩ ∈ inputVars
     | none => ∃ cm, ds.methodFor v = some cm ∧ ∀ x ∈ cm.vars, x ∈ inputVars
 ```
 
@@ -267,13 +271,13 @@ Witness generation generates an assignment as described above. It is only define
 /-- Witness generation on a variable `ds` covers. Every powdr-ID (input)
     variable passes through unchanged; every other variable is computed by the
     method `ds` records for it. -/
-def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p)
-    (v : Variable) (hv : v ∈ outputVars) : ZMod p :=
+def Derivations.witgen (ds : Derivations p) {inputVars: List InputVariable } { outputVars : List OutputVariable}
+    (h : ds.cover inputVars outputVars) (inputAssignment : InputVariable → ZMod p)
+    (v : OutputVariable) (hv : v ∈ outputVars) : ZMod p :=
   match hp : v.powdrId? with
   -- Well-defined: by the `some` branch of `Derivations.cover`, a powdr-ID
   -- variable of the output circuit also exists in the input circuit.
-  | some _ => inputAssignment v
+  | some id => inputAssignment ⟨v.name, id⟩
   | none => ((ds.methodFor v).get (ds.methodFor_isSome h hv hp)).eval inputAssignment
 ```
 
@@ -282,13 +286,11 @@ def Derivations.witgen (ds : Derivations p) {inputVars outputVars : List Variabl
 Putting the pieces together, we define what it means for an optimized circuit to be a _complete_ replacement for an original circuit. Structurally, the returned derivations must contain no unused entries and must cover every output variable from the input variables. Semantically, every admissible satisfying input assignment must produce a satisfying and admissible output assignment with equal side effects.
 
 ```anchor isCompleteReplacementOf
-/-- Whether an optimized circuit is a complete replacement for an original circuit. -/
-def Circuit.isCompleteReplacementOf
-    (optimizedCircuit originalCircuit : Circuit p)
+/-- Whether an optimized circuit is a complete replacement for an original
+    circuit. -/
+def OutputCircuit.isCompleteReplacementOf
+    (optimizedCircuit: OutputCircuit p) (originalCircuit : InputCircuit p)
     (busSemantics : BusSemantics p) (ds : Derivations p) : Prop :=
-
-  -- ASSUMPTION: every variable in the original circuit has a powdr ID.
-  (∀ v ∈ originalCircuit.vars, v.powdrId?.isSome) →
 
   -- `ds` does not contain unused derivations.
   (∀ derivation ∈ ds, derivation.1 ∈ optimizedCircuit.vars) ∧
@@ -303,7 +305,7 @@ def Circuit.isCompleteReplacementOf
   ∀ assignment,
     originalCircuit.admissible busSemantics assignment →
     originalCircuit.satisfies busSemantics assignment →
-    ∀ assignment' : Variable → ZMod p,
+    ∀ assignment' : OutputVariable → ZMod p,
     (∀ v (hv : v ∈ optimizedCircuit.vars),
       assignment' v = ds.witgen hcover assignment v hv) →
     optimizedCircuit.satisfies busSemantics assignment' ∧
@@ -317,7 +319,7 @@ def Circuit.isCompleteReplacementOf
 The {deftech}_multiplicative degree_ of an expression is defined structurally: constants have degree 0, variables have degree 1, addition takes the maximum, and multiplication adds the degrees.
 ```anchor degree
 /-- The multiplicative degree of an expression. -/
-def Expression.degree : Expression p → Nat
+def Expression.degree {V : Type} : Expression V p → Nat
   | .const _ => 0
   | .var _ => 1
   | .add e1 e2 => max e1.degree e2.degree
@@ -332,7 +334,7 @@ Given a zkVM-specific degree bound and an optimizer, we state what it means for 
 
 ```anchor degreeBound
 /-- Whether a circuit stays within a degree bound. -/
-def Circuit.withinDegree (circuit : Circuit p) (b : DegreeBound) : Prop :=
+def Circuit.withinDegree {V : Type} (circuit : Circuit V p) (b : DegreeBound) : Prop :=
   (∀ c ∈ circuit.algebraicConstraints, c.degree ≤ b.identities) ∧
   (∀ bi ∈ circuit.busInteractions,
     bi.multiplicity.degree ≤ b.busInteractions ∧
@@ -342,31 +344,40 @@ def Circuit.withinDegree (circuit : Circuit p) (b : DegreeBound) : Prop :=
     yields a within-bound output. -/
 def optimizerRespectsDegreeBound (b : DegreeBound)
     (optimizer : Optimizer p) : Prop :=
-  ∀ circuit : Circuit p,
+  ∀ circuit : InputCircuit p,
     circuit.withinDegree b →
     (optimizer circuit).1.withinDegree b
 ```
 
 # Optimizer
 
-Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit to a new circuit and a list of derivations.
+Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit powdr exported to a new circuit and a list of derivations. Its input being a {lean}`Circuit InputVariable` is what records that every variable it is given has a powdr ID: we do not assume this, we read it off the input type.
 
 ```anchor optimizer
-abbrev Optimizer (p : ℕ) := Circuit p → Circuit p × Derivations p
+abbrev Optimizer (p : ℕ) := InputCircuit p → OutputCircuit p × Derivations p
+```
+
+The circuit the output is compared against is the one the input denotes, with each variable turned into a {name}`OutputVariable` carrying its ID:
+
+```anchor toOutputCircuit
+/-- The circuit denoted by a circuit exported by powdr: every variable of the
+    result carries its powdr ID. -/
+def InputCircuit.toOutputCircuit (circuit : InputCircuit p) : OutputCircuit p :=
+  circuit.mapVar InputVariable.toOutputVariable
 ```
 
 An optimizer is correct if, for every input circuit, replacing it with the optimized circuit is both sound and complete, and the optimizer respects the degree bound.
 
 ```anchor isCorrect
-/-- An optimizer is correct if, for every input circuit, replacing it with the
-    optimized circuit is both sound and complete, and the optimizer respects
-    the degree bound `b`. -/
+/-- An optimizer is correct if, for every input circuit,
+    replacing it with the optimized circuit is both sound and complete, and the
+    optimizer respects the degree bound `b`. -/
 def Optimizer.isCorrect (optimizer : Optimizer p)
     (busSemantics : BusSemantics p) (b : DegreeBound) : Prop :=
-  (∀ originalCircuit : Circuit p,
-    let (optimizedCircuit, derivations) := optimizer originalCircuit
-    (optimizedCircuit.isSoundReplacementOf originalCircuit busSemantics) ∧
-    (optimizedCircuit.isCompleteReplacementOf originalCircuit busSemantics
-      derivations))
+  (∀ inputCircuit : InputCircuit p,
+    let (optimizedCircuit, derivations) := optimizer inputCircuit
+    (optimizedCircuit.isSoundReplacementOf inputCircuit busSemantics) ∧
+    (optimizedCircuit.isCompleteReplacementOf inputCircuit
+      busSemantics derivations))
   ∧ optimizerRespectsDegreeBound b optimizer
 ```

@@ -152,7 +152,7 @@ theorem denseEnvF_eq_varSubst (σ : VarId → Option (DenseExpr p)) (denv : VarI
     = ((match σ y with | some t => t | none => .var y) : DenseExpr p).eval denv
   cases σ y <;> rfl
 
-/-- Expression-level agreement from pointwise environment agreement. -/
+/-- OutputExpression-level agreement from pointwise environment agreement. -/
 theorem denseSubstF_eval_agree (σ : VarId → Option (DenseExpr p)) (denv₀ denv₁ : VarId → ZMod p)
     (e : DenseExpr p) (h : ∀ y ∈ e.vars, denseEnvF σ denv₀ y = denv₁ y) :
     (e.substF σ).eval denv₀ = e.eval denv₁ := by
@@ -1072,7 +1072,7 @@ Each step is `DensePassCorrect` at its own output registry (reject branches by
 composes them via `DensePassCorrect.andThen`, threading pointwise `isInput`-preservation to a
 uniform final registry. `denseReencodePass` packages `denseReencodeF` through `ofExtending`. -/
 
-theorem register_isInput_eq (reg : VarRegistry) (v : Variable) (hv : v.powdrId? = none)
+theorem register_isInput_eq (reg : VarRegistry) (v : OutputVariable) (hv : v.powdrId? = none)
     (i : VarId) : (reg.register v).1.isInput i = reg.isInput i := by
   by_cases hvalid : reg.Valid i
   · rw [VarRegistry.isInput, VarRegistry.isInput,
@@ -1096,13 +1096,13 @@ theorem register_isInput_eq (reg : VarRegistry) (v : Variable) (hv : v.powdrId? 
 private def rbStep (fb : String) (acc : VarRegistry × List VarId) (j : Nat) :
     VarRegistry × List VarId :=
   let (r, bs) := acc
-  let (r', i) := r.register ({ name := fb ++ "_" ++ toString j } : Variable)
+  let (r', i) := r.register ({ name := fb ++ "_" ++ toString j } : OutputVariable)
   (r', bs ++ [i])
 
 private theorem rbStep_eq (fb : String) (racc : VarRegistry) (bacc : List VarId) (j : Nat) :
     rbStep fb (racc, bacc) j
-      = ((racc.register ({ name := fb ++ "_" ++ toString j } : Variable)).1,
-         bacc ++ [(racc.register ({ name := fb ++ "_" ++ toString j } : Variable)).2]) := rfl
+      = ((racc.register ({ name := fb ++ "_" ++ toString j } : OutputVariable)).1,
+         bacc ++ [(racc.register ({ name := fb ++ "_" ++ toString j } : OutputVariable)).2]) := rfl
 
 theorem registerBits_fold_inv (fb : String) (r0 : VarRegistry) :
     ∀ (l : List Nat) (racc : VarRegistry) (bacc : List VarId),
@@ -1331,7 +1331,7 @@ soundness. Two facts carry the correctness: the gathered covered set *is* the fi
 `denseReencodeOut` of the old view with trivially-true constraints dropped (`denseRncWrite_view`) —
 the same two facts the list engine established with `denseWorkView_check` and `denseWorkOut_view`. -/
 
-/-! ### Expression predicate characterisations -/
+/-! ### OutputExpression predicate characterisations -/
 
 theorem denseHasVar_iff (e : DenseExpr p) : e.hasVar = true ↔ e.vars ≠ [] := by
   induction e with

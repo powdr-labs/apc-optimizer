@@ -3,11 +3,11 @@ import ApcOptimizer.Spec
 /-!
 # A small DSL and renderer for spec-level constraint systems
 
-Reusable helpers for *writing* and *pretty-printing* `Expression` / `Circuit` values
+Reusable helpers for *writing* and *pretty-printing* `OutputExpression` / `OutputCircuit` values
 (see `ApcOptimizer/Spec.lean`). Not tied to any particular zkVM — used e.g. by the CLI's `render`
 command (`Main.lean`).
 
-`Expression` only has `const/var/add/mul`; subtraction and negation are provided here as sugar
+`OutputExpression` only has `const/var/add/mul`; subtraction and negation are provided here as sugar
 that lowers to multiplication by `-1`.
 -/
 
@@ -19,16 +19,16 @@ variable {p : ℕ}
 
 /-! ## Building expressions -/
 
-instance : Add (Expression p) := ⟨Expression.add⟩
-instance : Mul (Expression p) := ⟨Expression.mul⟩
-instance : Neg (Expression p) := ⟨fun e => Expression.mul (Expression.const (-1)) e⟩
-instance : Sub (Expression p) := ⟨fun a b => a + (-b)⟩
+instance : Add (OutputExpression p) := ⟨Expression.add⟩
+instance : Mul (OutputExpression p) := ⟨Expression.mul⟩
+instance : Neg (OutputExpression p) := ⟨fun e => Expression.mul (Expression.const (-1)) e⟩
+instance : Sub (OutputExpression p) := ⟨fun a b => a + (-b)⟩
 
-/-- Numeric literals: `(5 : Expression p)` is the constant `5` in the field. -/
-instance {n : ℕ} : OfNat (Expression p) n := ⟨Expression.const (OfNat.ofNat n)⟩
+/-- Numeric literals: `(5 : OutputExpression p)` is the constant `5` in the field. -/
+instance {n : ℕ} : OfNat (OutputExpression p) n := ⟨Expression.const (OfNat.ofNat n)⟩
 
 /-- A variable, referenced by name. -/
-def V (x : String) : Expression p := .var { name := x }
+def V (x : String) : OutputExpression p := .var { name := x }
 
 /-! ## Rendering
 
@@ -38,7 +38,7 @@ upper half of `[0, p)` as negatives — so `x + (p-1) * y` prints as `x - y` and
 Parentheses are emitted only around sum factors of a product, where precedence requires them.
 
 Variables render using only their display name; any parsed powdr witness-column ID is kept
-in the structured `Variable` value but hidden in rendered output. -/
+in the structured `OutputVariable` value but hidden in rendered output. -/
 
 /-- Split a field constant into a sign and magnitude: constants in the upper half of `[0, p)`
     are shown as negatives (e.g. `p - 1` renders as `-1`, `p - 2` as `-2`). -/
@@ -49,7 +49,7 @@ mutual
   /-- Fold a product tree into a single field coefficient and the list of already-rendered
       non-constant factors. Numeric factors are multiplied together (so `(p-1) * 2` collapses to
       the coefficient `-2`); an additive factor is rendered and parenthesized. -/
-  private partial def prodFold : Expression p → ZMod p × List String
+  private partial def prodFold : OutputExpression p → ZMod p × List String
     | .mul a b => let (ca, fa) := prodFold a; let (cb, fb) := prodFold b; (ca * cb, fa ++ fb)
     | .const n => (n, [])
     | .var x => (1, [x.name])
@@ -60,7 +60,7 @@ mutual
 
   /-- Flatten an addition tree into summands, dropping zero terms and pulling each term's sign out
       so it can be joined with `+`/`-`. Returns `(isNegative, body)` per surviving summand. -/
-  private partial def collectSummands : Expression p → List (Bool × String)
+  private partial def collectSummands : OutputExpression p → List (Bool × String)
     | .add a b => collectSummands a ++ collectSummands b
     | e =>
       let (c, facs) := prodFold e
@@ -80,20 +80,20 @@ mutual
       rest.foldl (fun acc (s, b) => acc ++ (if s then " - " else " + ") ++ b) head
 
   /-- Render an expression with the simplifications described above. -/
-  partial def renderExpr : Expression p → String
+  partial def renderExpr : OutputExpression p → String
     | e => joinSummands (collectSummands e)
 end
 
 /-- Group bus interactions by bus id for rendering, preserving the original interaction order
     within each bus group. -/
-private def groupBusInteractions (bis : List (BusInteraction (Expression p))) :
-    List (BusInteraction (Expression p)) :=
+private def groupBusInteractions (bis : List (BusInteraction (OutputExpression p))) :
+    List (BusInteraction (OutputExpression p)) :=
   let busIds := (bis.map (fun bi => bi.busId)).mergeSort (· ≤ ·) |>.eraseDups
   busIds.flatMap fun busId => bis.filter (fun bi => bi.busId = busId)
 
 /-- Render a list of bus interactions, emitting one `// Bus N:` header per bus id. -/
-def renderBusInteractions (bis : List (BusInteraction (Expression p))) : String :=
-  let step : (Option Nat × List String) → BusInteraction (Expression p) → (Option Nat × List String) :=
+def renderBusInteractions (bis : List (BusInteraction (OutputExpression p))) : String :=
+  let step : (Option Nat × List String) → BusInteraction (OutputExpression p) → (Option Nat × List String) :=
     fun (prev, acc) bi =>
       let header := if prev = some bi.busId then [] else [s!"// Bus {bi.busId}:"]
       let args := String.intercalate ", " (bi.payload.map renderExpr)
@@ -102,21 +102,21 @@ def renderBusInteractions (bis : List (BusInteraction (Expression p))) : String 
   String.intercalate "\n" ((groupBusInteractions bis).foldl step (none, [])).2
 
 /-- Render a whole constraint system in a canonical, powdr-like format. -/
-def render (cs : Circuit p) : String :=
+def render (cs : OutputCircuit p) : String :=
   let cons := String.intercalate "\n" (cs.algebraicConstraints.map (fun e => s!"{renderExpr e} = 0"))
   s!"{renderBusInteractions cs.busInteractions}\n\n// Algebraic constraints:\n{cons}"
 
 /-- Convenience predicate for snapshot `#guard`s: does `cs` render to `expected`? -/
-def matchesSnapshot (cs : Circuit p) (expected : String) : Bool :=
+def matchesSnapshot (cs : OutputCircuit p) (expected : String) : Bool :=
   render cs == expected
 
-private def busGroupingSnapshot : Circuit 7 :=
+private def busGroupingSnapshot : OutputCircuit 7 :=
   { algebraicConstraints := [],
     busInteractions := [
-      { busId := 2, multiplicity := (1 : Expression 7), payload := [V "two_a"] },
-      { busId := 1, multiplicity := (1 : Expression 7), payload := [V "one_a"] },
-      { busId := 2, multiplicity := (1 : Expression 7), payload := [V "two_b"] },
-      { busId := 1, multiplicity := (1 : Expression 7), payload := [V "one_b"] }
+      { busId := 2, multiplicity := (1 : OutputExpression 7), payload := [V "two_a"] },
+      { busId := 1, multiplicity := (1 : OutputExpression 7), payload := [V "one_a"] },
+      { busId := 2, multiplicity := (1 : OutputExpression 7), payload := [V "two_b"] },
+      { busId := 1, multiplicity := (1 : OutputExpression 7), payload := [V "one_b"] }
     ] }
 
 #guard renderBusInteractions busGroupingSnapshot.busInteractions ==

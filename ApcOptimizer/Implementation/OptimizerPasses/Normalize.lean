@@ -398,7 +398,7 @@ theorem DenseExpr.normalize_eval (e : DenseExpr p) (denv : VarId → ZMod p) :
       | none =>
           simp only [DenseExpr.eval, iha, ihb]
 
-/-! ## Variable bounds (`normalize` introduces no new variable) -/
+/-! ## OutputVariable bounds (`normalize` introduces no new variable) -/
 
 theorem denseAddCoeff_fst (v : VarId) (c : ZMod p) (ts : List (VarId × ZMod p)) (x : VarId)
     (h : x ∈ (denseAddCoeff v c ts).map Prod.fst) : x = v ∨ x ∈ ts.map Prod.fst := by

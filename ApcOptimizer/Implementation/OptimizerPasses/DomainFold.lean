@@ -5,7 +5,7 @@ set_option autoImplicit false
 
 /-! # Dense domain-constant subexpression folding — shared foundation
 
-Variable-free domain/assignment enumeration, the covered-set predicate/filter, the ordered inverted
+OutputVariable-free domain/assignment enumeration, the covered-set predicate/filter, the ordered inverted
 covered-index and its completeness lemmas, the fold index (`DenseFoldIdx`), and the containment
 soundness lemmas shared by the domain-fold pass (`DomainFoldRuntime.lean` / `Proofs/DomainFold.lean`)
 and several other passes. -/

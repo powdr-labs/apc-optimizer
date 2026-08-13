@@ -759,7 +759,7 @@ def denseRegisterBits (reg : VarRegistry) (freshBase : String) (k : Nat) :
   (List.range k).foldl
     (fun (acc : VarRegistry × List VarId) (j : Nat) =>
       let (r, bs) := acc
-      let (r', i) := r.register ({ name := freshBase ++ "_" ++ toString j } : Variable)
+      let (r', i) := r.register ({ name := freshBase ++ "_" ++ toString j } : OutputVariable)
       (r', bs ++ [i]))
     (reg, [])
 
@@ -1518,7 +1518,7 @@ def denseRncView (st : DenseRncState p) : DenseConstraintSystem p :=
     still contain. Forcing `varSeen` here is the only reason a no-accept invocation ever builds it. -/
 def denseRncNameTaken (reg : VarRegistry) (st : DenseRncState p) (freshBase : String) :
     Bool × DenseRncState p :=
-  match reg.idOf? ({ name := freshBase ++ "_0" } : Variable) with
+  match reg.idOf? ({ name := freshBase ++ "_0" } : OutputVariable) with
   | some i => let st' := denseRncEnsureSeen st; (denseRncSeen st' i, st')
   | none => (false, st)
 
@@ -1590,7 +1590,7 @@ def denseRncSvSet (nVar : Nat) (cvs : Array (Array VarId)) : Array Bool :=
     (Array.replicate nVar false)
 
 /-- The candidate groups: the variable sets of size 2–8 all of whose members carry a
-    single-variable constraint, sorted by the resolved `Variable` (the accept sequence is greedy and
+    single-variable constraint, sorted by the resolved `OutputVariable` (the accept sequence is greedy and
     order-sensitive, so the group order is part of the result) and deduped. -/
 def denseRncTargets (reg : VarRegistry) (sv : Array Bool) (cvs : Array (Array VarId)) :
     List (List VarId) :=

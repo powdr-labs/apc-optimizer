@@ -292,9 +292,9 @@ structure GSt (p : ℕ) where
   status : Array UInt8
   /-- The solution map, kept fully back-substituted. -/
   sol : Array (Option (DenseLinExpr p))
-  /-- Variable → solved variables whose row mentions it (stale-tolerant, re-checked at use). -/
+  /-- OutputVariable → solved variables whose row mentions it (stale-tolerant, re-checked at use). -/
   solRev : Array (Array VarId)
-  /-- Variable → blocked constraints to re-walk when it is solved. -/
+  /-- OutputVariable → blocked constraints to re-walk when it is solved. -/
   watch : Array (Array Nat)
   woken : Array Bool
   /-- Adoption order; the domain of the solution map. -/

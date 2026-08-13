@@ -289,11 +289,11 @@ theorem DenseVerifiedPassW.guardDegree_respectsDeg {b : DegreeBound} (f : DenseV
   intro reg d hcov bs facts hin
   have hdIn : d.withinDegreeB b = true := by
     rw [← reg.decodeCS_withinDegreeB]
-    exact (Circuit.withinDegreeB_iff _ _).2 hin
+    exact (OutputCircuit.withinDegreeB_iff _ _).2 hin
   simp only [DenseVerifiedPassW.guardDegree]
   by_cases hok : denseWithinDegreeLK d (f reg d hcov bs facts).out b = true
   · rw [if_pos hok]
-    refine (Circuit.withinDegreeB_iff _ _).1 ?_
+    refine (OutputCircuit.withinDegreeB_iff _ _).1 ?_
     rw [(f reg d hcov bs facts).reg'.decodeCS_withinDegreeB]
     exact denseWithinDegreeLK_sound d _ b hdIn hok
   · rw [if_neg hok]

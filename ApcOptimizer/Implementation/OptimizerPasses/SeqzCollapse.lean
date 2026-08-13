@@ -12,7 +12,7 @@ namespace ApcOptimizer.Dense
 
 variable {p : ℕ}
 
-/-! ## Expression templates for the recognised gadget -/
+/-! ## OutputExpression templates for the recognised gadget -/
 
 def denseSeqzEM1 : DenseExpr p := .const (-1)
 def denseSeqzE0 : DenseExpr p := .const 0
@@ -135,7 +135,7 @@ structure DenseSeqzRoles (p : ℕ) where
 def DenseSeqzRoles.witnesses (r : DenseSeqzRoles p) : List VarId := [r.m3, r.m2, r.m1, r.m0, r.dv]
 
 /-- The fresh `inv` variable candidate: `"seqzinv#"` prepended to `dv`'s registered display name. -/
-def denseSeqzInvVar (reg : VarRegistry) (r : DenseSeqzRoles p) : Variable :=
+def denseSeqzInvVar (reg : VarRegistry) (r : DenseSeqzRoles p) : OutputVariable :=
   ⟨"seqzinv#" ++ (reg.resolve r.dv).name, none⟩
 
 /-- Does `w` occur only inside the recognised cluster (the 14 constraints + the bus)? -/

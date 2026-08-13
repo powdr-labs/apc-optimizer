@@ -4,30 +4,53 @@ set_option autoImplicit false
 
 /-! # Implementation support for structured variables
 
-Typeclass laws and helpers for using spec-level `Variable` values in parsers and hash maps; kept
+Typeclass laws and helpers for using spec-level `OutputVariable` values in parsers and hash maps; kept
 out of `Spec.lean` to minimize the audited surface. -/
 
-instance : Ord Variable := ⟨fun a b =>
+instance : Ord OutputVariable := ⟨fun a b =>
   match compare a.name b.name with
   | .eq => compare a.powdrId? b.powdrId?
   | o => o⟩
 
-instance : Hashable Variable := ⟨fun a => mixHash (hash a.name) (hash a.powdrId?)⟩
+instance : Hashable InputVariable := ⟨fun a => mixHash (hash a.name) (hash a.powdrId)⟩
 
-/-- Parse powdr's legacy `<name>@<id>` variable notation into a structured variable. -/
-def Variable.ofPowdrName (raw : String) : Variable :=
+instance : Hashable OutputVariable := ⟨fun a => mixHash (hash a.name) (hash a.powdrId?)⟩
+
+/-- Parse powdr's `<name>@<id>` variable notation. A name without a numeric id fails loudly: powdr
+    exports every column with its id (and so does `JsonSerializer`, for the columns passes mint), so
+    an id-less name means the input is not what the optimizer's input type describes. -/
+def InputVariable.ofPowdrName (raw : String) : Except String InputVariable :=
   match raw.splitOn "@" with
   | [base, id] =>
       match id.toNat? with
-      | some n => { name := base, powdrId? := some n }
-      | none => { name := raw }
-  | _ => { name := raw }
+      | some n => .ok { name := base, powdrId := n }
+      | none => .error s!"variable without a numeric powdr id: {raw}"
+  | _ => .error s!"variable without a powdr id: {raw}"
 
-/-- Pinned to `Variable`'s `DecidableEq`, so `LawfulBEq` below holds by `decide`. -/
-instance : BEq Variable := ⟨fun a b => decide (a = b)⟩
+/-- Interpret an `OutputVariable` with a powdr id as the corresponding input variable. -/
+def OutputVariable.toInput (v : OutputVariable) : InputVariable :=
+  { name := v.name, powdrId := v.powdrId?.get! }
+
+theorem OutputVariable.toInput_toVariable {v : OutputVariable} (h : v.powdrId?.isSome) :
+    v.toInput.toOutputVariable = v := by
+  cases v with
+  | mk name powdrId =>
+      cases powdrId with
+      | none => simp at h
+      | some id => simp [OutputVariable.toInput, InputVariable.toOutputVariable]
+
+theorem InputVariable.toVariable_toInput (v : InputVariable) :
+    v.toOutputVariable.toInput = v := by
+  cases v
+  simp [InputVariable.toOutputVariable, OutputVariable.toInput]
+
+/-- Pinned to `OutputVariable`'s `DecidableEq`, so `LawfulBEq` below holds by `decide`. -/
+instance : BEq OutputVariable := ⟨fun a b => decide (a = b)⟩
 
 /-- Lawfulness of the `BEq` above, from which `EquivBEq`/`LawfulHashable` (the hash-map key
     obligations) are inferred. -/
-instance : LawfulBEq Variable where
+instance : LawfulBEq OutputVariable where
   rfl := by simp [BEq.beq]
   eq_of_beq h := by simpa [BEq.beq] using h
+
+instance : BEq InputVariable := ⟨fun a b => decide (a = b)⟩

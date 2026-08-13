@@ -36,7 +36,7 @@ theorem denseBICovered_mono {r r' : VarRegistry} (h : r.Extends r')
   ⟨hc.1.mono h, fun e he => (hc.2 e he).mono h⟩
 
 theorem VarRegistry.encodeBIs_covered (r : VarRegistry)
-    (bis : List (BusInteraction (Expression p))) :
+    (bis : List (BusInteraction (OutputExpression p))) :
     ∀ bi ∈ (r.encodeBIs bis).2, denseBICovered (r.encodeBIs bis).1 bi := by
   induction bis generalizing r with
   | nil => intro bi hbi; simp [VarRegistry.encodeBIs] at hbi
@@ -49,7 +49,7 @@ theorem VarRegistry.encodeBIs_covered (r : VarRegistry)
       · exact ih (r.encodeBI b).1 bi hmem
 
 /-- The encode of a spec system is covered by the registry it produces (the pipeline entry). -/
-theorem VarRegistry.encodeCS_covered (r : VarRegistry) (cs : Circuit p) :
+theorem VarRegistry.encodeCS_covered (r : VarRegistry) (cs : OutputCircuit p) :
     (r.encodeCS cs).2.CoveredBy (r.encodeCS cs).1 := by
   rw [VarRegistry.encodeCS_fst]
   refine ⟨fun e he => ?_, fun bi hbi => ?_⟩
@@ -95,7 +95,7 @@ theorem VarRegistry.decodeDerivs_append (r : VarRegistry) (a b : DenseDerivation
 
 /-! ## Degree correspondence -/
 
-/-- Degree bound check on the dense system, mirroring `Circuit.withinDegreeB`. -/
+/-- Degree bound check on the dense system, mirroring `OutputCircuit.withinDegreeB`. -/
 def DenseConstraintSystem.withinDegreeB (d : DenseConstraintSystem p) (b : DegreeBound) : Bool :=
   d.algebraicConstraints.all (fun c => c.degree ≤ b.identities) &&
   d.busInteractions.all (fun bi =>
@@ -105,26 +105,26 @@ def DenseConstraintSystem.withinDegreeB (d : DenseConstraintSystem p) (b : Degre
 /-- The dense degree check equals the spec degree check on the decoded system. -/
 theorem VarRegistry.decodeCS_withinDegreeB (r : VarRegistry) (d : DenseConstraintSystem p)
     (b : DegreeBound) : (r.decodeCS d).withinDegreeB b = d.withinDegreeB b := by
-  simp only [Circuit.withinDegreeB, DenseConstraintSystem.withinDegreeB,
+  simp only [OutputCircuit.withinDegreeB, DenseConstraintSystem.withinDegreeB,
     VarRegistry.decodeCS, VarRegistry.decodeBI, List.all_map, Function.comp_def,
     r.decodeExpr_degree]
 
 /-! ## Distinct-variable count correspondence -/
 
 /-- The variable-occurrence list of a dense system (constraints then interactions), matching the
-    order `Circuit.varCount` folds over. -/
+    order `OutputCircuit.varCount` folds over. -/
 def DenseConstraintSystem.occ (d : DenseConstraintSystem p) : List VarId :=
   d.algebraicConstraints.flatMap DenseExpr.vars ++ d.busInteractions.flatMap denseBIVars
 
 /-- Distinct variables of a dense system, via a `HashSet VarId` (linear; mirrors
-    `Circuit.varCount`). -/
+    `OutputCircuit.varCount`). -/
 def DenseConstraintSystem.varCount (d : DenseConstraintSystem p) : Nat :=
   (d.occ.foldl (·.insert ·) (∅ : Std.HashSet VarId)).size
 
 /-- HashSet distinct-count is invariant under the injective `resolve` relabeling: folding valid IDs
     and their resolutions into hash sets yields equal sizes. -/
 private theorem size_fold_map_resolve (r : VarRegistry) :
-    ∀ (l : List VarId) (sI : Std.HashSet VarId) (sV : Std.HashSet Variable),
+    ∀ (l : List VarId) (sI : Std.HashSet VarId) (sV : Std.HashSet OutputVariable),
       (∀ j, r.Valid j → (j ∈ sI ↔ r.resolve j ∈ sV)) → sI.size = sV.size →
       (∀ i ∈ l, r.Valid i) →
       ((l.map r.resolve).foldl (·.insert ·) sV).size = (l.foldl (·.insert ·) sI).size

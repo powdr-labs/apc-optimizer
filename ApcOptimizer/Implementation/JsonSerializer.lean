@@ -6,7 +6,7 @@ import ApcOptimizer.Implementation.Variable
 /-!
 # JSON serializer for powdr `SymbolicMachine` exports
 
-Inverse of `ApcOptimizer/Implementation/JsonParser.lean`: turns a `Circuit p` back into the
+Inverse of `ApcOptimizer/Implementation/JsonParser.lean`: turns a `OutputCircuit p` back into the
 JSON powdr's serde deserializes into `SymbolicMachine<T>`.
 
 Output schema:
@@ -32,22 +32,22 @@ namespace ApcOptimizer.Serialize
 
 /-- Distinct variables occurring anywhere in the system and (optionally) its derivations, so each
     gets a stable fresh id shared across its occurrences and derived-column entry. -/
-def distinctVars (cs : Circuit p) (ds : Derivations p := []) : List Variable :=
+def distinctVars (cs : OutputCircuit p) (ds : Derivations p := []) : List OutputVariable :=
   let occ := cs.algebraicConstraints.flatMap Expression.vars ++
     cs.busInteractions.flatMap BusInteraction.vars ++
-    ds.flatMap (fun (v, cm) => v :: cm.vars)
-  (occ.foldl (init := (∅ : Std.HashSet Variable)) (·.insert ·)).toList
+    ds.flatMap (fun (v, cm) => v :: cm.vars.map InputVariable.toOutputVariable)
+  (occ.foldl (init := (∅ : Std.HashSet OutputVariable)) (·.insert ·)).toList
 
 /-- Assign each fresh (id-less) variable a unique id starting at `base`, returning the map plus the
     advanced cursor. Variables that already carry an id are absent from the map. -/
-def freshRenaming (cs : Circuit p) (ds : Derivations p := []) (base : Nat) :
-    Std.HashMap Variable Nat × Nat :=
+def freshRenaming (cs : OutputCircuit p) (ds : Derivations p := []) (base : Nat) :
+    Std.HashMap OutputVariable Nat × Nat :=
   let fresh := (distinctVars cs ds).filter (fun x => x.powdrId?.isNone)
-  fresh.foldl (init := ((∅ : Std.HashMap Variable Nat), base))
+  fresh.foldl (init := ((∅ : Std.HashMap OutputVariable Nat), base))
     (fun (acc, i) x => (acc.insert x i, i + 1))
 
 /-- The reference string `name@id` for a variable (id from `powdrId?` or the fresh renaming). -/
-def refString (m : Std.HashMap Variable Nat) (x : Variable) : String :=
+def refString (m : Std.HashMap OutputVariable Nat) (x : OutputVariable) : String :=
   let id := x.powdrId?.getD (m.getD x 0)
   x.name ++ "@" ++ toString id
 
@@ -55,35 +55,41 @@ def refString (m : Std.HashMap Variable Nat) (x : Variable) : String :=
 def constJson (n : ZMod p) : Json :=
   Json.num (JsonNumber.fromNat n.val)
 
-def serializeExpr (m : Std.HashMap Variable Nat) : Expression p → Json
+def serializeExpr (m : Std.HashMap OutputVariable Nat) : OutputExpression p → Json
   | .const n => constJson n
   | .var x => Json.str (refString m x)
   | .add a b => Json.arr #[serializeExpr m a, Json.str "+", serializeExpr m b]
   | .mul a b => Json.arr #[serializeExpr m a, Json.str "*", serializeExpr m b]
 
+def serializeInputExpr (m : Std.HashMap OutputVariable Nat) : InputExpression p → Json
+  | .const n => constJson n
+  | .var x => Json.str (refString m x.toOutputVariable)
+  | .add a b => Json.arr #[serializeInputExpr m a, Json.str "+", serializeInputExpr m b]
+  | .mul a b => Json.arr #[serializeInputExpr m a, Json.str "*", serializeInputExpr m b]
+
 /-- Serialize a computation method to powdr's externally-tagged `ComputationMethod` JSON:
     `const c → {"Constant": c}`, `quotientOrZero → {"QuotientOrZero": [num, den]}`,
     `ifEqZero → {"IfEqZero": [cond, thenM, elseM]}`. -/
-def serializeComputationMethod (m : Std.HashMap Variable Nat) :
+def serializeComputationMethod (m : Std.HashMap OutputVariable Nat) :
     ComputationMethod p → Json
   | .const c => Json.mkObj [("Constant", constJson c)]
   | .quotientOrZero num den =>
-      Json.mkObj [("QuotientOrZero", Json.arr #[serializeExpr m num, serializeExpr m den])]
+      Json.mkObj [("QuotientOrZero", Json.arr #[serializeInputExpr m num, serializeInputExpr m den])]
   | .ifEqZero cond thenM elseM =>
       Json.mkObj [("IfEqZero", Json.arr #[
-        serializeExpr m cond,
+        serializeInputExpr m cond,
         serializeComputationMethod m thenM,
         serializeComputationMethod m elseM])]
 
 /-- Serialize derivations to powdr's `derived_columns` JSON: `DerivedVariable` 3-tuples
     `[is_new, variable, computation_method]`. Every entry is optimizer-introduced, so `is_new` is
     always `true`. -/
-def serializeDerivations (m : Std.HashMap Variable Nat) (ds : Derivations p) : Json :=
+def serializeDerivations (m : Std.HashMap OutputVariable Nat) (ds : Derivations p) : Json :=
   Json.arr (ds.map (fun (v, cm) =>
     Json.arr #[Json.bool true, Json.str (refString m v), serializeComputationMethod m cm])).toArray
 
 /-- Serialize a bus interaction to a `{id, mult, args}` object. -/
-def serializeBus (m : Std.HashMap Variable Nat) (bi : BusInteraction (Expression p)) : Json :=
+def serializeBus (m : Std.HashMap OutputVariable Nat) (bi : BusInteraction (OutputExpression p)) : Json :=
   Json.mkObj [
     ("id", Json.num (JsonNumber.fromNat bi.busId)),
     ("mult", serializeExpr m bi.multiplicity),
@@ -92,7 +98,7 @@ def serializeBus (m : Std.HashMap Variable Nat) (bi : BusInteraction (Expression
 
 /-- The `SymbolicMachine` object `{constraints, bus_interactions, derived_columns}` under a
     variable→id renaming. -/
-def serializeMachine (m : Std.HashMap Variable Nat) (cs : Circuit p)
+def serializeMachine (m : Std.HashMap OutputVariable Nat) (cs : OutputCircuit p)
     (ds : Derivations p) : Json :=
   Json.mkObj [
     ("constraints", Json.arr (cs.algebraicConstraints.map (serializeExpr m)).toArray),
@@ -102,7 +108,7 @@ def serializeMachine (m : Std.HashMap Variable Nat) (cs : Circuit p)
 
 /-- Serialize the system as a bare `SymbolicMachine` JSON string (fresh ids start above the largest
     id present). -/
-def serializeSystem (cs : Circuit p) (ds : Derivations p := []) : String :=
+def serializeSystem (cs : OutputCircuit p) (ds : Derivations p := []) : String :=
   let base := (distinctVars cs ds).foldl (fun m x => match x.powdrId? with
     | some i => Nat.max m (i + 1)
     | none => m) 0
@@ -110,7 +116,7 @@ def serializeSystem (cs : Circuit p) (ds : Derivations p := []) : String :=
 
 /-- Serialize the machine plus the advanced `next_free_id` as `{"machine": …, "next_free_id": N}`
     (the FFI reply; `base` is powdr's incoming cursor). -/
-def serializeResult (cs : Circuit p) (ds : Derivations p := []) (base : Nat := 0) :
+def serializeResult (cs : OutputCircuit p) (ds : Derivations p := []) (base : Nat := 0) :
     String :=
   let (m, nextFreeId) := freshRenaming cs ds base
   (Json.mkObj [

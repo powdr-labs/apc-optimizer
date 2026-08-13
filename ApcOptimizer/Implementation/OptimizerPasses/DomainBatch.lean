@@ -909,7 +909,7 @@ structure DbCtx (p : ℕ) where
   csItems : Array (DbItem p)
   csActive : Array Bool
   csBucket : Array (Array Nat)
-  /-- Variable-free constraints' target-independent contribution: their count (active or not) and
+  /-- OutputVariable-free constraints' target-independent contribution: their count (active or not) and
       the active ones' items (`denseConstraintCovIndexV`). -/
   csVarlessCount : Nat
   csVarlessItems : Array (DbItem p)

@@ -167,18 +167,18 @@ theorem pipeline_respectsDeg (b : DegreeBound) : RespectsDeg b (pipeline (p := p
     (by rw [VarRegistry.empty.decodeCS_encodeCS cs]; exact hin)
 
 /-- Use `ds`'s method for `v` when it reads only `inputVars`; otherwise use a constant fallback. -/
-def Derivations.safeMethod (ds : Derivations p) (inputVars : List Variable) (v : Variable) :
+def Derivations.safeMethod (ds : Derivations p) (inputVars : List OutputVariable) (v : OutputVariable) :
     ComputationMethod p :=
   match ds.methodFor v with
-  | some cm => if ∀ x ∈ cm.vars, x ∈ inputVars then cm else .const (zmodZeroP _)
+  | some cm => if ∀ x ∈ cm.vars, x.toOutputVariable ∈ inputVars then cm else .const (zmodZeroP _)
   | none => .const (zmodZeroP _)
 
 /-- `Derivations.safeMethod` with both of its scans served from indexes: `methods` is `ds` keyed by
     derived variable, `inputs` holds the input variables (`safeMethodIdx_eq`). -/
-def Derivations.safeMethodIdx (methods : Std.HashMap Variable (ComputationMethod p))
-    (inputs : Std.HashSet Variable) (v : Variable) : ComputationMethod p :=
+def Derivations.safeMethodIdx (methods : Std.HashMap OutputVariable (ComputationMethod p))
+    (inputs : Std.HashSet OutputVariable) (v : OutputVariable) : ComputationMethod p :=
   match methods[v]? with
-  | some cm => if cm.vars.all (fun x => inputs.contains x) then cm else .const (zmodZeroP _)
+  | some cm => if cm.vars.all (fun x => inputs.contains x.toOutputVariable) then cm else .const (zmodZeroP _)
   | none => .const (zmodZeroP _)
 
 /-- Keep one structurally safe derivation for each no-ID output variable.
@@ -186,74 +186,43 @@ def Derivations.safeMethodIdx (methods : Std.HashMap Variable (ComputationMethod
     Both `Circuit.vars` lists count variable *occurrences*, so every scan here is indexed:
     `methodFor` walks all of `ds` on each lookup, and the input-variable test would rescan
     `inputVars` per referenced variable. `forOutput_eq` is the index-free reading. -/
-def Derivations.forOutput (ds : Derivations p) (inputVars outputVars : List Variable) :
+def Derivations.forOutput (ds : Derivations p) (inputVars outputVars : List OutputVariable) :
     Derivations p :=
   let methods := Std.HashMap.ofList ds
   let inputs := Std.HashSet.ofList inputVars
   (HashedDedup.hashedEraseDups hash (outputVars.filter (fun v => v.powdrId?.isNone))).map
     (fun v => (v, Derivations.safeMethodIdx methods inputs v))
 
-/-! ## Cloning the input
-
-The pipeline traverses the input circuit many times, so its heap layout matters, and a circuit from
-`JsonParser` is laid out badly: it was allocated while the whole `Lean.Json` graph was still live, so
-its nodes sit scattered over an address range that is dead by the time the pipeline runs. Rebuilding
-it then repacks them. `Circuit.clone_eq`: the rebuild is the identity, so only the timing changes. -/
-
-/-- Rebuild an expression node by node, so the result is freshly allocated. -/
-def Expression.clone : Expression p → Expression p
-  | .const c => .const c
-  | .var v => .var v
-  | .add a b => .add a.clone b.clone
-  | .mul a b => .mul a.clone b.clone
-
-def Circuit.clone (cs : Circuit p) : Circuit p :=
-  { algebraicConstraints := cs.algebraicConstraints.map (fun e => e.clone),
-    busInteractions := cs.busInteractions.map (fun bi =>
-      { bi with multiplicity := bi.multiplicity.clone,
-                payload := bi.payload.map (fun e => e.clone) }) }
-
-theorem Expression.clone_eq (e : Expression p) : e.clone = e := by
-  induction e with
-  | const n => rfl
-  | var x => rfl
-  | add a b iha ihb => simp [Expression.clone, iha, ihb]
-  | mul a b iha ihb => simp [Expression.clone, iha, ihb]
-
-theorem Circuit.clone_eq (cs : Circuit p) : cs.clone = cs := by
-  simp [Circuit.clone, Expression.clone_eq]
-
-/-- The optimizer proper; `optimizerWithBusFacts` runs it on a clone. The split is what gives
-    `Circuit.clone_eq` a non-dependent boundary to rewrite at: `pipeline`'s result type mentions its
-    input, so it cannot be rewritten under it. -/
-def optimizerCore {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
-    (cs : Circuit p) : Circuit p × Derivations p :=
+/-- The optimizer on an already-converted circuit: given proven `BusFacts` (which fixes the implicit
+    `bs`), run the pipeline and return the output system with the `Derivations` for its new
+    variables. -/
+def optimizerOnCircuit {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
+    (cs : OutputCircuit p) : OutputCircuit p × Derivations p :=
   let r := pipeline b cs bs facts
   (r.out, r.derivs.forOutput cs.vars r.out.vars)
 
-/-- The fact-aware circuit optimizer: given proven `BusFacts` (which fixes the implicit `bs`), run
-    the pipeline and return the output system with the `Derivations` for its new variables.
-
-    `cs` stays live inside `optimizerCore` for `cs.vars`, which is what stops Lean reusing its nodes
-    in place instead of cloning them. -/
-def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
-    (cs : Circuit p) : Circuit p × Derivations p :=
-  optimizerCore b facts cs.clone
+/-- The fact-aware circuit optimizer: convert the powdr circuit to one over `OutputVariable`
+    (`InputCircuit.toOutputCircuit`) and optimize it. -/
+def optimizerWithBusFacts {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs) :
+    Optimizer p :=
+  fun inputCircuit => optimizerOnCircuit b facts inputCircuit.toOutputCircuit
 
 /-! ## `witgen`'s two branches
 
 So the completeness proof never unfolds the spec's `Derivations.witgen`. -/
 
 /-- On an input variable, `witgen` passes the input assignment through. -/
-theorem Derivations.witgen_powdrId {ds : Derivations p} {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
+theorem Derivations.witgen_powdrId {ds : Derivations p} {inputVars : List InputVariable}
+    {outputVars : List OutputVariable} (h : ds.cover inputVars outputVars)
+    (inputAssignment : InputVariable → ZMod p) {v : OutputVariable}
     {w : Nat} (hv : v ∈ outputVars) (hp : v.powdrId? = some w) :
-    ds.witgen h inputAssignment v hv = inputAssignment v := by
+    ds.witgen h inputAssignment v hv = inputAssignment ⟨v.name, w⟩ := by
   unfold Derivations.witgen; split <;> simp_all
 
 /-- On a derived variable, `witgen` evaluates the method `ds` records for it. -/
-theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
-    (h : ds.cover inputVars outputVars) (inputAssignment : Variable → ZMod p) {v : Variable}
+theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars : List InputVariable}
+    {outputVars : List OutputVariable} (h : ds.cover inputVars outputVars)
+    (inputAssignment : InputVariable → ZMod p) {v : OutputVariable}
     {cm : ComputationMethod p} (hv : v ∈ outputVars) (hp : v.powdrId? = none)
     (hm : ds.methodFor v = some cm) :
     ds.witgen h inputAssignment v hv = cm.eval inputAssignment := by
@@ -266,51 +235,51 @@ theorem Derivations.witgen_methodFor {ds : Derivations p} {inputVars outputVars 
 Two assignments agreeing on `cs.vars` are interchangeable for `satisfies`/`admissible`/`sideEffects`.
 The completeness proof below uses these to swap the abstract per-pass witness for `witgen`'s output. -/
 
-theorem Circuit.busEval_congr {cs : Circuit p} {f g : Variable → ZMod p}
-    (h : ∀ x ∈ cs.vars, f x = g x) {bi : BusInteraction (Expression p)}
+theorem OutputCircuit.busEval_congr {cs : OutputCircuit p} {f g : OutputVariable → ZMod p}
+    (h : ∀ x ∈ cs.vars, f x = g x) {bi : BusInteraction (OutputExpression p)}
     (hbi : bi ∈ cs.busInteractions) : bi.eval f = bi.eval g :=
   BusInteraction.eval_congr bi f g (fun x hx => by
     simp only [BusInteraction.vars, List.mem_append, List.mem_flatMap] at hx
     rcases hx with hx | ⟨e, he, hx⟩
-    · exact h x (Circuit.mem_vars_of_mult hbi hx)
-    · exact h x (Circuit.mem_vars_of_payload hbi he hx))
+    · exact h x (OutputCircuit.mem_vars_of_mult hbi hx)
+    · exact h x (OutputCircuit.mem_vars_of_payload hbi he hx))
 
-theorem Circuit.satisfies_congr {cs : Circuit p} {bs : BusSemantics p}
-    {f g : Variable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
+theorem OutputCircuit.satisfies_congr {cs : OutputCircuit p} {bs : BusSemantics p}
+    {f g : OutputVariable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
     cs.satisfies bs f ↔ cs.satisfies bs g := by
-  have imp : ∀ e1 e2 : Variable → ZMod p, (∀ x ∈ cs.vars, e1 x = e2 x) →
+  have imp : ∀ e1 e2 : OutputVariable → ZMod p, (∀ x ∈ cs.vars, e1 x = e2 x) →
       cs.satisfies bs e1 → cs.satisfies bs e2 := by
     intro e1 e2 hh hsat
     refine ⟨fun c hc => ?_, fun bi hbi => ?_⟩
-    · rw [← Expression.eval_congr c e1 e2
-        (fun x hx => hh x (Circuit.mem_vars_of_constraint hc hx))]
+    · rw [← OutputExpression.eval_congr c e1 e2
+        (fun x hx => hh x (OutputCircuit.mem_vars_of_constraint hc hx))]
       exact hsat.1 c hc
-    · have hbe : bi.eval e1 = bi.eval e2 := Circuit.busEval_congr hh hbi
+    · have hbe : bi.eval e1 = bi.eval e2 := OutputCircuit.busEval_congr hh hbi
       show (bi.eval e2).multiplicity ≠ 0 → bs.accepts (bi.eval e2)
       rw [← hbe]
       exact hsat.2 bi hbi
   exact ⟨imp f g h, imp g f (fun x hx => (h x hx).symm)⟩
 
-theorem Circuit.admissible_congr {cs : Circuit p} {bs : BusSemantics p}
-    {f g : Variable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
+theorem OutputCircuit.admissible_congr {cs : OutputCircuit p} {bs : BusSemantics p}
+    {f g : OutputVariable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
     cs.admissible bs f ↔ cs.admissible bs g := by
   have hmap : (cs.busInteractions.map (fun bi => bi.eval f))
       = (cs.busInteractions.map (fun bi => bi.eval g)) :=
-    List.map_congr_left (fun bi hbi => Circuit.busEval_congr h hbi)
+    List.map_congr_left (fun bi hbi => OutputCircuit.busEval_congr h hbi)
   unfold Circuit.admissible
   rw [hmap]
 
-theorem Circuit.sideEffects_congr {cs : Circuit p} {bs : BusSemantics p}
-    {f g : Variable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
+theorem OutputCircuit.sideEffects_congr {cs : OutputCircuit p} {bs : BusSemantics p}
+    {f g : OutputVariable → ZMod p} (h : ∀ x ∈ cs.vars, f x = g x) :
     cs.sideEffects bs f = cs.sideEffects bs g := by
   have hmap : cs.busInteractions.map (fun bi => bi.eval f)
       = cs.busInteractions.map (fun bi => bi.eval g) :=
-    List.map_congr_left (fun bi hbi => Circuit.busEval_congr h hbi)
+    List.map_congr_left (fun bi hbi => OutputCircuit.busEval_congr h hbi)
   unfold Circuit.sideEffects
   rw [hmap]
 
-theorem Derivations.methodFor_map_same (vs : List Variable)
-    (f : Variable → ComputationMethod p) (v : Variable) :
+theorem Derivations.methodFor_map_same (vs : List OutputVariable)
+    (f : OutputVariable → ComputationMethod p) (v : OutputVariable) :
     Derivations.methodFor (vs.map (fun u => (u, f u))) v =
       if v ∈ vs then some (f v) else none := by
   induction vs with
@@ -327,7 +296,7 @@ theorem Derivations.methodFor_map_same (vs : List Variable)
 
 /-- `methodFor` is `findSomeRev?` with a keyed probe — the shape `Std.HashMap`'s `insertMany` lookup
     lemma reports, so the two agree in `getElem?_ofList`. -/
-theorem Derivations.methodFor_eq_findSomeRev? (ds : Derivations p) (v : Variable) :
+theorem Derivations.methodFor_eq_findSomeRev? (ds : Derivations p) (v : OutputVariable) :
     ds.findSomeRev? (fun ⟨u, cm⟩ => if u == v then some cm else none) = ds.methodFor v := by
   induction ds with
   | nil => rfl
@@ -340,14 +309,14 @@ theorem Derivations.methodFor_eq_findSomeRev? (ds : Derivations p) (v : Variable
 
 /-- Keying `ds` by variable preserves `methodFor`: `insertMany` keeps the last binding for a
     duplicated key, and so does `methodFor`. -/
-theorem Derivations.getElem?_ofList (ds : Derivations p) (v : Variable) :
+theorem Derivations.getElem?_ofList (ds : Derivations p) (v : OutputVariable) :
     (Std.HashMap.ofList ds)[v]? = ds.methodFor v := by
   rw [Std.HashMap.ofList_eq_insertMany_empty, Std.HashMap.getElem?_insertMany_list,
     Std.HashMap.getElem?_empty, Derivations.methodFor_eq_findSomeRev?]
   cases ds.methodFor v <;> rfl
 
-theorem Derivations.safeMethodIdx_eq (ds : Derivations p) (inputVars : List Variable)
-    (v : Variable) :
+theorem Derivations.safeMethodIdx_eq (ds : Derivations p) (inputVars : List OutputVariable)
+    (v : OutputVariable) :
     Derivations.safeMethodIdx (Std.HashMap.ofList ds) (Std.HashSet.ofList inputVars) v
       = ds.safeMethod inputVars v := by
   rw [Derivations.safeMethodIdx, Derivations.safeMethod, Derivations.getElem?_ofList]
@@ -356,126 +325,338 @@ theorem Derivations.safeMethodIdx_eq (ds : Derivations p) (inputVars : List Vari
   | some cm =>
       exact if_congr (by simp [List.all_eq_true, Std.HashSet.contains_ofList]) rfl rfl
 
-theorem Derivations.forOutput_eq (ds : Derivations p) (inputVars outputVars : List Variable) :
+theorem Derivations.forOutput_eq (ds : Derivations p) (inputVars outputVars : List OutputVariable) :
     ds.forOutput inputVars outputVars
       = (outputVars.filter (fun v => v.powdrId?.isNone)).eraseDups.map
           (fun v => (v, ds.safeMethod inputVars v)) := by
   simp only [Derivations.forOutput, HashedDedup.hashedEraseDups_eq]
   exact List.map_congr_left fun v _ => by rw [Derivations.safeMethodIdx_eq]
 
-theorem Derivations.forOutput_methodFor {ds : Derivations p} {inputVars outputVars : List Variable}
-    {v : Variable} (hv : v ∈ outputVars) (hpw : v.powdrId? = none) :
+theorem Derivations.forOutput_methodFor {ds : Derivations p} {inputVars outputVars : List OutputVariable}
+    {v : OutputVariable} (hv : v ∈ outputVars) (hpw : v.powdrId? = none) :
     (ds.forOutput inputVars outputVars).methodFor v = some (ds.safeMethod inputVars v) := by
   rw [Derivations.forOutput_eq]
   rw [Derivations.methodFor_map_same, if_pos]
   simp [hv, hpw]
 
-theorem Derivations.safeMethod_vars (ds : Derivations p) (inputVars : List Variable) (v : Variable) :
-    ∀ x ∈ (ds.safeMethod inputVars v).vars, x ∈ inputVars := by
+theorem Derivations.safeMethod_vars (ds : Derivations p) (inputVars : List OutputVariable) (v : OutputVariable) :
+    ∀ x ∈ (ds.safeMethod inputVars v).vars, x.toOutputVariable ∈ inputVars := by
   cases hm : ds.methodFor v with
   | none =>
       intro x hx
       simp [Derivations.safeMethod, hm, ComputationMethod.vars] at hx
   | some cm =>
       simp only [Derivations.safeMethod, hm]
-      by_cases hsafe : ∀ x ∈ cm.vars, x ∈ inputVars
+      by_cases hsafe : ∀ x ∈ cm.vars, x.toOutputVariable ∈ inputVars
       · rw [if_pos hsafe]
         exact hsafe
       · rw [if_neg hsafe]
         simp [ComputationMethod.vars]
 
-theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List Variable}
-    {v : Variable} {cm : ComputationMethod p} (hm : ds.methodFor v = some cm)
-    (hvars : ∀ x ∈ cm.vars, x ∈ inputVars) :
+theorem Derivations.safeMethod_eq {ds : Derivations p} {inputVars : List OutputVariable}
+    {v : OutputVariable} {cm : ComputationMethod p} (hm : ds.methodFor v = some cm)
+    (hvars : ∀ x ∈ cm.vars, x.toOutputVariable ∈ inputVars) :
     ds.safeMethod inputVars v = cm := by
   simp only [Derivations.safeMethod, hm]
   rw [if_pos hvars]
 
-/-- The fact-aware optimizer is correct: its output soundly replaces the input and completely
-    replaces the input's real-trace executions (`witgen` on any admissible input trace reproduces a
-    valid witness) — the clauses `Optimizer.isCorrect` demands, for the circuit the pipeline is
-    handed (`optimizerWithBusFacts_correct` transports this across the clone). -/
-theorem optimizerCore_correct {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
-    (cs : Circuit p) :
-    (optimizerCore b facts cs).1.isSoundReplacementOf cs bs ∧
-      (optimizerCore b facts cs).1.isCompleteReplacementOf cs bs (optimizerCore b facts cs).2 := by
-  refine ⟨(pipeline b cs bs facts).correct.toSound, ?_⟩
-  intro hpow
+/-! ## Circuits exported by powdr
+
+`Optimizer.isCorrect` feeds the optimizer `Circuit.toOutputCircuit` of a powdr circuit; the
+completeness proof below needs that all its variables carry a powdr ID. -/
+
+theorem Expression.vars_mapVar {V W : Type} (f : V → W) (e : Expression V p) :
+    (e.mapVar f).vars = e.vars.map f := by
+  induction e with
+  | const n => rfl
+  | var x => rfl
+  | add e1 e2 ih1 ih2 => simp [mapVar, vars, ih1, ih2]
+  | mul e1 e2 ih1 ih2 => simp [mapVar, vars, ih1, ih2]
+
+theorem Circuit.vars_mapVar {V W : Type} (f : V → W) (circuit : Circuit V p) :
+    (circuit.mapVar f).vars = circuit.vars.map f := by
+  simp [Circuit.mapVar, Circuit.vars, List.flatMap_map, List.map_flatMap,
+    Expression.vars_mapVar]
+
+theorem Circuit.powdrId?_isSome_of_mem_vars (circuit : InputCircuit p) :
+    ∀ v ∈ circuit.toOutputCircuit.vars, v.powdrId?.isSome := by
+  intro v hv
+  rw [InputCircuit.toOutputCircuit, Circuit.vars_mapVar, List.mem_map] at hv
+  obtain ⟨u, -, rfl⟩ := hv
+  rfl
+
+theorem Expression.degree_mapVar {V W : Type} (f : V → W) (e : Expression V p) :
+    (e.mapVar f).degree = e.degree := by
+  induction e with
+  | const n => rfl
+  | var x => rfl
+  | add e1 e2 ih1 ih2 => simp [mapVar, degree, ih1, ih2]
+  | mul e1 e2 ih1 ih2 => simp [mapVar, degree, ih1, ih2]
+
+theorem Circuit.withinDegree_mapVar {V W : Type} (f : V → W) (circuit : Circuit V p)
+    (b : DegreeBound) : (circuit.mapVar f).withinDegree b ↔ circuit.withinDegree b := by
+  simp [Circuit.withinDegree, Circuit.mapVar, Expression.degree_mapVar]
+
+private theorem inputExpr_roundtrip (e : InputExpression p) :
+    (e.mapVar InputVariable.toOutputVariable).mapVar OutputVariable.toInput = e := by
+  induction e with
+  | const n => rfl
+  | var x => simp [Expression.mapVar, InputVariable.toVariable_toInput]
+  | add e1 e2 ih1 ih2 => simp [Expression.mapVar, ih1, ih2]
+  | mul e1 e2 ih1 ih2 => simp [Expression.mapVar, ih1, ih2]
+
+private theorem inputBus_roundtrip (bi : BusInteraction (InputExpression p)) :
+    { busId := bi.busId,
+      multiplicity := (bi.multiplicity.mapVar InputVariable.toOutputVariable).mapVar OutputVariable.toInput,
+      payload := bi.payload.map
+        (fun x => (x.mapVar InputVariable.toOutputVariable).mapVar OutputVariable.toInput) } = bi := by
+  cases bi
+  simp [inputExpr_roundtrip]
+
+theorem InputCircuit.toOutputCircuit_toInput (circuit : InputCircuit p) :
+    circuit.toOutputCircuit.mapVar OutputVariable.toInput = circuit := by
+  cases circuit with
+  | mk ac bi =>
+      simp [InputCircuit.toOutputCircuit, Circuit.mapVar]
+      constructor
+      · calc
+          List.map
+              ((fun x => Expression.mapVar OutputVariable.toInput x) ∘
+                fun x => Expression.mapVar InputVariable.toOutputVariable x)
+              ac
+              = List.map id ac := by
+                  apply List.map_congr_left
+                  intro e he
+                  simpa [Function.comp] using inputExpr_roundtrip e
+          _ = ac := by simp
+      · calc
+          List.map
+              ((fun bi' : BusInteraction (OutputExpression p) =>
+                  { busId := bi'.busId,
+                    multiplicity := Expression.mapVar OutputVariable.toInput bi'.multiplicity,
+                    payload := List.map (fun x => Expression.mapVar OutputVariable.toInput x) bi'.payload }) ∘
+                fun bi' : BusInteraction (InputExpression p) =>
+                { busId := bi'.busId,
+                  multiplicity := Expression.mapVar InputVariable.toOutputVariable bi'.multiplicity,
+                  payload := List.map (fun x => Expression.mapVar InputVariable.toOutputVariable x) bi'.payload })
+              bi
+              = List.map (fun bi' : BusInteraction (InputExpression p) =>
+                  { busId := bi'.busId,
+                    multiplicity := (bi'.multiplicity.mapVar InputVariable.toOutputVariable).mapVar
+                      OutputVariable.toInput,
+                    payload := bi'.payload.map
+                      (fun x => (x.mapVar InputVariable.toOutputVariable).mapVar OutputVariable.toInput) }) bi := by
+                  apply List.map_congr_left
+                  intro bi' hbi
+                  simp [Function.comp]
+          _
+              = List.map id bi := by
+                  apply List.map_congr_left
+                  intro bi' hbi
+                  simpa using inputBus_roundtrip bi'
+          _ = bi := by simp
+
+private theorem outputExprEval_fromInput (e : OutputExpression p) (env : InputVariable → ZMod p)
+    (hpow : ∀ v ∈ e.vars, v.powdrId?.isSome) :
+    e.eval (fun x => env x.toInput) = (e.mapVar OutputVariable.toInput).eval env := by
+  induction e with
+  | const n => rfl
+  | var v =>
+      have hv : v.powdrId?.isSome := hpow v (by simp [Expression.vars])
+      simp [Expression.mapVar, Expression.eval]
+  | add a b iha ihb =>
+      simp [Expression.mapVar, Expression.eval,
+        iha (fun v hv => hpow v (by simp [Expression.vars, hv])),
+        ihb (fun v hv => hpow v (by simp [Expression.vars, hv]))]
+  | mul a b iha ihb =>
+      simp [Expression.mapVar, Expression.eval,
+        iha (fun v hv => hpow v (by simp [Expression.vars, hv])),
+        ihb (fun v hv => hpow v (by simp [Expression.vars, hv]))]
+
+private theorem busEval_fromInput (bi : BusInteraction (OutputExpression p))
+    (env : InputVariable → ZMod p)
+    (hmultIn : ∀ v ∈ bi.multiplicity.vars, v.powdrId?.isSome)
+    (hpayloadIn : ∀ e ∈ bi.payload, ∀ v ∈ e.vars, v.powdrId?.isSome) :
+    bi.eval (fun x => env x.toInput) =
+      ({ busId := bi.busId,
+         multiplicity := bi.multiplicity.mapVar OutputVariable.toInput,
+         payload := bi.payload.map (·.mapVar OutputVariable.toInput) } :
+          BusInteraction (InputExpression p)).eval env := by
+  have hmult : bi.multiplicity.eval (fun x => env x.toInput) =
+      (bi.multiplicity.mapVar OutputVariable.toInput).eval env :=
+    outputExprEval_fromInput bi.multiplicity env hmultIn
+  have hpayEq :
+      bi.payload.map (fun e => e.eval (fun x => env x.toInput))
+        = bi.payload.map (fun e => e.mapVar OutputVariable.toInput |>.eval env) := by
+    apply List.map_congr_left
+    intro e he
+    exact outputExprEval_fromInput e env (hpayloadIn e he)
+  rw [BusInteraction.eval, BusInteraction.eval, hmult, List.map_map]
+  simpa [Function.comp] using hpayEq
+
+private theorem OutputCircuit.satisfies_fromInput {cs : OutputCircuit p} {bs : BusSemantics p}
+    (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) (env : InputVariable → ZMod p) :
+    (cs.mapVar OutputVariable.toInput).satisfies bs env → cs.satisfies bs (fun x => env x.toInput) := by
+  intro hsat
+  refine ⟨?_, ?_⟩
+  · intro c hc
+    have hc' : c.mapVar OutputVariable.toInput ∈ (cs.mapVar OutputVariable.toInput).algebraicConstraints := by
+      exact List.mem_map.mpr ⟨c, hc, rfl⟩
+    simpa [outputExprEval_fromInput c env
+      (fun v hv => hpow v (OutputCircuit.mem_vars_of_constraint hc hv))]
+      using hsat.1 (c.mapVar OutputVariable.toInput) hc'
+  · intro bi hbi
+    let bi' : BusInteraction (InputExpression p) :=
+      { busId := bi.busId,
+        multiplicity := bi.multiplicity.mapVar OutputVariable.toInput,
+        payload := bi.payload.map (·.mapVar OutputVariable.toInput) }
+    have hbi' : bi' ∈ (cs.mapVar OutputVariable.toInput).busInteractions := by
+      exact List.mem_map.mpr ⟨bi, hbi, rfl⟩
+    have hbe := busEval_fromInput bi env
+      (fun v hv => hpow v (OutputCircuit.mem_vars_of_mult hbi hv))
+      (fun e he v hv => hpow v (OutputCircuit.mem_vars_of_payload hbi he hv))
+    simpa [bi', hbe] using hsat.2 bi' hbi'
+
+private theorem OutputCircuit.admissible_fromInput {cs : OutputCircuit p} {bs : BusSemantics p}
+    (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) (env : InputVariable → ZMod p) :
+    (cs.mapVar OutputVariable.toInput).admissible bs env ↔ cs.admissible bs (fun x => env x.toInput) := by
+  have hmap : (cs.mapVar OutputVariable.toInput).busInteractions.map (fun bi => bi.eval env) =
+      cs.busInteractions.map (fun bi => bi.eval (fun x => env x.toInput)) := by
+    rw [Circuit.mapVar, List.map_map]
+    refine List.map_congr_left ?_
+    intro bi hbi
+    symm
+    exact busEval_fromInput bi env
+      (fun v hv => hpow v (OutputCircuit.mem_vars_of_mult hbi hv))
+      (fun e he v hv => hpow v (OutputCircuit.mem_vars_of_payload hbi he hv))
+  unfold Circuit.admissible
+  rw [hmap]
+
+private theorem OutputCircuit.sideEffects_fromInput {cs : OutputCircuit p} {bs : BusSemantics p}
+    (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) (env : InputVariable → ZMod p) :
+    (cs.mapVar OutputVariable.toInput).sideEffects bs env =
+      cs.sideEffects bs (fun x => env x.toInput) := by
+  have hmap : (cs.mapVar OutputVariable.toInput).busInteractions.map (fun bi => bi.eval env) =
+      cs.busInteractions.map (fun bi => bi.eval (fun x => env x.toInput)) := by
+    rw [Circuit.mapVar, List.map_map]
+    refine List.map_congr_left ?_
+    intro bi hbi
+    symm
+    exact busEval_fromInput bi env
+      (fun v hv => hpow v (OutputCircuit.mem_vars_of_mult hbi hv))
+      (fun e he v hv => hpow v (OutputCircuit.mem_vars_of_payload hbi he hv))
+  unfold Circuit.sideEffects
+  rw [hmap]
+
+/-- The optimizer on a converted circuit is correct: its output soundly replaces the input and
+    completely replaces the input's real-trace executions (`witgen` on any admissible input trace
+    reproduces a valid witness) — the clauses `Optimizer.isCorrect` demands, for an input whose
+    variables all carry a powdr ID. -/
+theorem optimizerOnCircuit_correct {bs : BusSemantics p} (b : DegreeBound) (facts : BusFacts p bs)
+    (cs : OutputCircuit p) (hpow : ∀ v ∈ cs.vars, v.powdrId?.isSome) :
+    (optimizerOnCircuit b facts cs).1.isSoundReplacementOf (cs.mapVar OutputVariable.toInput) bs ∧
+      (optimizerOnCircuit b facts cs).1.isCompleteReplacementOf (cs.mapVar OutputVariable.toInput) bs
+        (optimizerOnCircuit b facts cs).2 := by
+  refine ⟨(pipeline b cs bs facts).correct.toSound hpow, ?_⟩
   -- Phrase the goal in `pipeline` terms up front: the coverage proof is one of its components, so
-  -- `refine` would otherwise have to bridge the `optimizerCore` projections by `whnf`.
-  simp only [optimizerCore]
+  -- `refine` would otherwise have to bridge the `optimizerOnCircuit` projections by `whnf`.
+  simp only [optimizerOnCircuit]
   -- `PassCorrect` components (`Basic.lean`): no new powdr-ID column, and real-trace completeness.
   have hS := (pipeline b cs bs facts).correct.2.2.1
   have hcomp := (pipeline b cs bs facts).correct.2.2.2
   -- Every output variable is either reused from the input or has a safe method.
   have hcover : ((pipeline b cs bs facts).derivs.forOutput cs.vars
-      (pipeline b cs bs facts).out.vars).cover cs.vars (pipeline b cs bs facts).out.vars := by
+      (pipeline b cs bs facts).out.vars).cover
+      (cs.vars.map OutputVariable.toInput) (pipeline b cs bs facts).out.vars := by
     intro v hv
     cases hpw : v.powdrId? with
-    | some w => exact hS v hv (by simp [hpw])
+    | some w =>
+        have hvIn : v ∈ cs.vars := hS v hv (by simp [hpw])
+        exact List.mem_map.mpr ⟨v, hvIn, by simp [OutputVariable.toInput, hpw]⟩
     | none =>
         exact ⟨(pipeline b cs bs facts).derivs.safeMethod cs.vars v,
           Derivations.forOutput_methodFor hv hpw,
-          Derivations.safeMethod_vars _ _ _⟩
-  refine ⟨?_, hcover, ?_⟩
+          fun x hx => List.mem_map.mpr ⟨x.toOutputVariable, Derivations.safeMethod_vars _ _ _ x hx,
+            by simp [InputVariable.toVariable_toInput]⟩⟩
+  refine ⟨?_, ?_, ?_⟩
   · -- `forOutput` records only no-ID variables occurring in the output.
     intro d hd
     rw [Derivations.forOutput_eq, List.mem_map] at hd
     obtain ⟨v, hv, rfl⟩ := hd
     exact List.mem_of_mem_filter (List.mem_eraseDups.mp hv)
+  · simpa [Circuit.vars_mapVar] using hcover
   intro env hadm hsat f hf
-  obtain ⟨env', hsat', hadm', hse, hA, hR⟩ := hcomp env hadm hsat
-  have hrec : (pipeline b cs bs facts).out.reconstructs cs.vars
+  obtain ⟨env', hsat', hadm', hse, hA, hR⟩ := hcomp
+    (fun x => env x.toInput)
+    ((OutputCircuit.admissible_fromInput hpow env).mp hadm)
+    (OutputCircuit.satisfies_fromInput hpow env hsat)
+  have hrec : (pipeline b cs bs facts).out.reconstructs (cs.vars.map OutputVariable.toInput)
       (pipeline b cs bs facts).derivs env' := by
-    have hrec0 : cs.reconstructs cs.vars [] env :=
+    have hrec0 : cs.reconstructs (cs.vars.map OutputVariable.toInput) [] (fun x => env x.toInput) :=
       fun u hu hunone => absurd (hpow u hu) (by simp [hunone])
-    simpa using hR cs.vars (fun v hv _ => hv) [] hrec0
+    have hpowIn : ∀ v ∈ cs.vars, v.powdrId?.isSome → v.toInput ∈ cs.vars.map OutputVariable.toInput :=
+      fun v hv _ => List.mem_map.mpr ⟨v, hv, rfl⟩
+    simpa using hR (cs.vars.map OutputVariable.toInput) hpowIn [] hrec0
   have hagree : ∀ v ∈ (pipeline b cs bs facts).out.vars, f v = env' v := by
     intro v hv
     -- Case first, rewrite second: `witgen`'s implicit `outputVars` is the pipeline output, so a
     -- goal mentioning the application makes `cases` reduce it — i.e. run the optimizer in `whnf`.
     cases hpw : v.powdrId? with
     | some w =>
-        rw [hf v hv, Derivations.witgen_powdrId hcover env hv hpw]
-        exact (hA v (by simp [hpw])).symm
+        calc
+          f v = ((pipeline b cs bs facts).derivs.forOutput cs.vars
+              (pipeline b cs bs facts).out.vars).witgen hcover env v hv := hf v hv
+          _ = env ⟨v.name, w⟩ := Derivations.witgen_powdrId hcover env hv hpw
+          _ = env v.toInput := by simp [OutputVariable.toInput, hpw]
+          _ = env' v := (hA v (by simp [hpw])).symm
     | none =>
-        obtain ⟨cm, hm, hxpow, hxinput, heq⟩ := hrec v hv hpw
+        obtain ⟨cm, hm, hxinput, heq⟩ := hrec v hv hpw
+        have hxinput' : ∀ x ∈ cm.vars, x.toOutputVariable ∈ cs.vars := by
+          intro x hx
+          rcases List.mem_map.mp (hxinput x hx) with ⟨y, hy, hxy⟩
+          rw [← hxy]
+          have hypow : y.powdrId?.isSome := hpow y hy
+          simpa [OutputVariable.toInput_toVariable hypow] using hy
         have hsafe : (pipeline b cs bs facts).derivs.safeMethod cs.vars v = cm :=
-          Derivations.safeMethod_eq hm hxinput
+          Derivations.safeMethod_eq hm hxinput'
         have hm' := Derivations.forOutput_methodFor
           (ds := (pipeline b cs bs facts).derivs) (inputVars := cs.vars)
           (outputVars := (pipeline b cs bs facts).out.vars) hv hpw
         rw [hsafe] at hm'
-        rw [hf v hv, Derivations.witgen_methodFor hcover env hv hpw hm', ← heq]
-        exact ComputationMethod.eval_congr cm env env' (fun x hx => (hA x (hxpow x hx)).symm)
-  exact ⟨(Circuit.satisfies_congr hagree).mpr hsat',
-    (Circuit.admissible_congr hagree).mpr hadm',
-    hse.trans (Circuit.sideEffects_congr hagree).symm⟩
+        calc
+          f v = ((pipeline b cs bs facts).derivs.forOutput cs.vars
+              (pipeline b cs bs facts).out.vars).witgen hcover env v hv := hf v hv
+          _ = cm.eval env := Derivations.witgen_methodFor hcover env hv hpw hm'
+          _ = cm.eval (fun x => env' x.toOutputVariable) := by
+                apply ComputationMethod.eval_congr
+                intro x hx
+                exact (hA x.toOutputVariable (by simp [InputVariable.toOutputVariable])).symm
+          _ = env' v := heq
+  have hse' : (cs.mapVar OutputVariable.toInput).sideEffects bs env =
+      (pipeline b cs bs facts).out.sideEffects bs env' := by
+    rw [OutputCircuit.sideEffects_fromInput hpow env]
+    exact hse
+  exact ⟨(OutputCircuit.satisfies_congr hagree).mpr hsat',
+    (OutputCircuit.admissible_congr hagree).mpr hadm',
+    hse'.trans (OutputCircuit.sideEffects_congr hagree).symm⟩
 
-/-- The optimizer never pushes a within-bound circuit past the zkVM's degree bound (every pass is
-    degree-guarded). -/
-theorem optimizerCore_respectsDegree {bs : BusSemantics p} (b : DegreeBound)
-    (facts : BusFacts p bs) (cs : Circuit p)
-    (h : cs.withinDegree b) :
-    (optimizerCore b facts cs).1.withinDegree b :=
-  pipeline_respectsDeg b cs bs facts h
-
-/-- The fact-aware optimizer is correct: its output soundly replaces the input and completely
-    replaces the input's real-trace executions (`witgen` on any admissible input trace reproduces a
-    valid witness) — the clauses `Optimizer.isCorrect` demands. -/
+/-- The fact-aware optimizer is correct on the circuits powdr exports: `optimizerOnCircuit_correct`
+    for the converted circuit, whose variables all carry a powdr ID by construction. -/
 theorem optimizerWithBusFacts_correct {bs : BusSemantics p} (b : DegreeBound)
-    (facts : BusFacts p bs) (cs : Circuit p) :
-    (optimizerWithBusFacts b facts cs).1.isSoundReplacementOf cs bs ∧
-      (optimizerWithBusFacts b facts cs).1.isCompleteReplacementOf cs bs
-        (optimizerWithBusFacts b facts cs).2 := by
-  simp only [optimizerWithBusFacts, Circuit.clone_eq]
-  exact optimizerCore_correct b facts cs
+    (facts : BusFacts p bs) (inputCircuit : InputCircuit p) :
+    (optimizerWithBusFacts b facts inputCircuit).1.isSoundReplacementOf
+        inputCircuit bs ∧
+      (optimizerWithBusFacts b facts inputCircuit).1.isCompleteReplacementOf
+        inputCircuit bs (optimizerWithBusFacts b facts inputCircuit).2 := by
+  simpa [optimizerWithBusFacts, InputCircuit.toOutputCircuit_toInput]
+    using optimizerOnCircuit_correct b facts inputCircuit.toOutputCircuit
+      (Circuit.powdrId?_isSome_of_mem_vars inputCircuit)
 
 /-- The fact-aware optimizer never pushes a within-bound circuit past the zkVM's degree
     bound (every pass is degree-guarded). -/
 theorem optimizerWithBusFacts_respectsDegree {bs : BusSemantics p} (b : DegreeBound)
-    (facts : BusFacts p bs) (cs : Circuit p)
-    (h : cs.withinDegree b) :
-    (optimizerWithBusFacts b facts cs).1.withinDegree b := by
-  simp only [optimizerWithBusFacts, Circuit.clone_eq]
-  exact optimizerCore_respectsDegree b facts cs h
+    (facts : BusFacts p bs) (inputCircuit : InputCircuit p)
+    (h : inputCircuit.withinDegree b) :
+    (optimizerWithBusFacts b facts inputCircuit).1.withinDegree b :=
+  pipeline_respectsDeg b inputCircuit.toOutputCircuit bs facts
+    ((Circuit.withinDegree_mapVar _ inputCircuit b).mpr h)

@@ -88,13 +88,13 @@ private def parseBusMapSp1 (j : Lean.Json) :
     let ty ← parseBusTypeSp1 v
     pure (id, ty)
 
-partial def parseJsonExpr (j : Lean.Json) : Except String (Expression p) :=
+partial def parseJsonExpr (j : Lean.Json) : Except String (InputExpression p) :=
   match j with
   | Lean.Json.num n =>
     -- All constants in powdr exports are integers (exponent 0).
     let z := n.mantissa * (10 ^ n.exponent)
     .ok (.const (z : ZMod p))
-  | Lean.Json.str s => .ok (.var (Variable.ofPowdrName s))
+  | Lean.Json.str s => (InputVariable.ofPowdrName s).map .var
   | Lean.Json.arr items =>
     if h3 : items.size = 3 then
       let lhs := items[0]
@@ -127,11 +127,12 @@ partial def parseJsonExpr (j : Lean.Json) : Except String (Expression p) :=
       .error s!"expected 2 or 3-element array, got {items.size}"
   | _ => .error s!"unexpected JSON in expression: {j}"
 
-private def parseConstraint (j : Lean.Json) : Except String (Expression p) :=
+private def parseConstraint (j : Lean.Json) :
+    Except String (InputExpression p) :=
   parseJsonExpr j
 
 private def parseBusInteraction (j : Lean.Json) :
-    Except String (BusInteraction (Expression p)) := do
+    Except String (BusInteraction (InputExpression p)) := do
   let id ← j.getObjVal? "id"
   let busId ← id.getNat?
   let mult ← j.getObjVal? "mult"
@@ -147,30 +148,32 @@ private def parseBusInteraction (j : Lean.Json) :
     payload := payload
   }
 
-/-! ### Variable interning
+/-! ### OutputVariable interning
 
-The parser mints a fresh `String`/`Variable` per occurrence; interning rebuilds the system with one
-shared `Variable` per distinct value, so the runtime's pointer fast-path in `String` equality
-short-circuits the many later equality tests. The interned system is the same value (`Variable`s
-compare equal), so nothing downstream observes the difference except time. -/
+The parser mints a fresh `String`/`InputVariable` per occurrence; interning rebuilds the system with
+one shared variable per distinct value, so the runtime's pointer fast-path in `String` equality
+short-circuits the many later equality tests (the names survive `InputCircuit.toOutputCircuit`). The
+interned system is the same value (variables compare equal), so nothing downstream observes the
+difference except time. -/
 
-/-- Collect one canonical `Variable` object per distinct value. -/
-private def collectVars (m : Std.HashMap Variable Variable) : Expression p →
-    Std.HashMap Variable Variable
+/-- Collect one canonical `InputVariable` object per distinct value. -/
+private def collectVars (m : Std.HashMap InputVariable InputVariable) :
+    InputExpression p → Std.HashMap InputVariable InputVariable
   | .const _ => m
   | .var v => if m.contains v then m else m.insert v v
   | .add a b => collectVars (collectVars m a) b
   | .mul a b => collectVars (collectVars m a) b
 
 /-- Rebuild an expression with every variable replaced by its canonical (equal, shared) object. -/
-private def internExpr (m : Std.HashMap Variable Variable) : Expression p → Expression p
+private def internExpr (m : Std.HashMap InputVariable InputVariable) :
+    InputExpression p → InputExpression p
   | .const c => .const c
   | .var v => .var (m.getD v v)
   | .add a b => .add (internExpr m a) (internExpr m b)
   | .mul a b => .mul (internExpr m a) (internExpr m b)
 
 /-- Intern all variables of a freshly-parsed system (see the section comment). -/
-private def internSystem (cs : Circuit p) : Circuit p :=
+private def internSystem (cs : InputCircuit p) : InputCircuit p :=
   let m := cs.busInteractions.foldl
     (fun m bi => bi.payload.foldl collectVars (collectVars m bi.multiplicity))
     (cs.algebraicConstraints.foldl collectVars ∅)
@@ -183,7 +186,7 @@ private def internSystem (cs : Circuit p) : Circuit p :=
     `bus_map` with the right per-VM parser), the constraint system under `machine`, and the
     `next_free_id` cursor if present. -/
 private def parseMachinePart (jsonStr : String) :
-    Except String (Lean.Json × Circuit p × Option Nat) := do
+    Except String (Lean.Json × InputCircuit p × Option Nat) := do
   let json ← Lean.Json.parse jsonStr
   let machine ← json.getObjVal? "machine"
 
@@ -191,29 +194,29 @@ private def parseMachinePart (jsonStr : String) :
   let constraintArr ← match constraintsJson with
     | Lean.Json.arr a => pure a
     | _ => .error "constraints is not an array"
-  let constraints : List (Expression p) ←
+  let constraints : List (InputExpression p) ←
     constraintArr.toList.mapM fun c => parseConstraint (p := p) c
 
   let busJson ← machine.getObjVal? "bus_interactions"
   let busArr ← match busJson with
     | Lean.Json.arr a => pure a
     | _ => .error "bus_interactions is not an array"
-  let busInteractions : List (BusInteraction (Expression p)) ←
+  let busInteractions : List (BusInteraction (InputExpression p)) ←
     busArr.toList.mapM (parseBusInteraction (p := p))
 
   -- powdr's `ColumnAllocator` cursor; absent or non-numeric parses as `none`.
   let nextFreeId? := (json.getObjVal? "next_free_id").toOption.bind (·.getNat?.toOption)
 
-  let system : Circuit p := internSystem {
+  let system : InputCircuit p := internSystem {
     algebraicConstraints := constraints,
     busInteractions := busInteractions
   }
   pure (json, system, nextFreeId?)
 
-/-- Parse a powdr export into a `Circuit`, its OpenVM `BusMap`, and the `next_free_id`
-    cursor. -/
+/-- Parse a powdr export into the circuit it describes (`InputCircuit`, the optimizer's
+    input type), its OpenVM `BusMap`, and the `next_free_id` cursor. -/
 def parseJsonSystem (jsonStr : String) :
-    Except String (Circuit p × BusMapList × Option Nat) := do
+    Except String (InputCircuit p × BusMapList × Option Nat) := do
   let (json, system, nextFreeId?) ← parseMachinePart (p := p) jsonStr
   let busMap ← parseBusMap (← json.getObjVal? "bus_map")
   pure (system, busMap, nextFreeId?)
@@ -221,7 +224,7 @@ def parseJsonSystem (jsonStr : String) :
 /-- The SP1 counterpart of `parseJsonSystem`: same machine parsing, but the `bus_map` is read as SP1
     bus types. SP1 exports are over KoalaBear, so instantiate `p := koalaBear`. -/
 def parseJsonSystemSp1 (jsonStr : String) :
-    Except String (Circuit p × ApcOptimizer.SP1.BusMapList × Option Nat) := do
+    Except String (InputCircuit p × ApcOptimizer.SP1.BusMapList × Option Nat) := do
   let (json, system, nextFreeId?) ← parseMachinePart (p := p) jsonStr
   let busMap ← parseBusMapSp1 (← json.getObjVal? "bus_map")
   pure (system, busMap, nextFreeId?)

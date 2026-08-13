@@ -17,8 +17,7 @@ apc-optimizer, it should be sufficient to review:
 
 ### Assumptions (all VMs)
 
-All variables in the input circuit carry a powdr ID. If that was not the case, the completeness
-statement would be meaningless.
+None.
 
 ### Assumptions (OpenVM)
 
