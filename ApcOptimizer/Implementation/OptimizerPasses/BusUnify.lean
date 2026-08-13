@@ -4,17 +4,20 @@ import ApcOptimizer.Implementation.OptimizerPasses.DropPasses
 
 set_option autoImplicit false
 
-/-! # Dense consecutive-match bus unification (runtime transform for `busUnify`)
+/-! # Dense timestamp-group bus unification (runtime transform for `busUnify`)
 
-Impl-only (no soundness lemma). `denseBusUnifyF` matches the `denseF` shape
-`DenseVerifiedPassW.of` (`Bridge.lean`) wraps directly.
+Adds the payload-copy equalities a memory bus's discipline entails, justified *order-free*: the
+rely is `admissibleMemoryBusM` (per-address multiset counting) plus the TS_BOUND fact
+(`facts.memTsField` — every active message's declared ts-slot value is `< B ≤ 2^29`), consumed
+through `admissibleMemoryBusM_copies_of_ts` (`Implementation/MemoryBusMultiset.lean`). Nothing
+about the interaction list's order is trusted.
 
-The engine prepares every memory-bus interaction once (`denseBUPrep`) — the address slots'
-constant value, linear form and two-root reductions, plus an order-insensitive *fingerprint* of
-each form — then sweeps each bus once over an array of those records, proposing `(sendPos, recvPos)`
-index pairs. The sweep is untrusted: `denseCheckPair` re-verifies every proposal, so the sweep uses
-the fingerprint tests (integer comparisons, over-approximating a refutation only on a hash
-collision) while the verifier uses the exact ones. -/
+The engine prepares every memory-bus interaction once (`denseBUPrep` — the address slots' constant
+value, linear form and two-root reductions), buckets by canonical address key to *propose* groups
+(untrusted), and verifies each proposal with `denseBUGroupPairs?`: fiber completeness (every
+interaction classified member-send / member-receive / certified-outside), one shared send-ts base
+with increasing offsets of spread `< B`, and a solved LessThan gadget per receive. Proofs in
+`Proofs/BusUnify.lean`. -/
 
 namespace ApcOptimizer.Dense
 
@@ -105,7 +108,8 @@ def denseAddrConstsNeq (shape : MemoryBusShape) (S bi : BusInteraction (DenseExp
 
 /-! ## A canonical address key -/
 
-/-- A canonical address key. -/
+/-- A canonical address key (each slot constant-folded where possible); buckets the group
+    proposals. -/
 structure DenseAddrKey (p : ℕ) where
   exprs : List (DenseExpr p)
 deriving DecidableEq
@@ -113,6 +117,8 @@ deriving DecidableEq
 instance : Hashable (DenseAddrKey p) :=
   ⟨fun k => k.exprs.foldl (fun h e => mixHash h e.bHash) 7⟩
 
+/-- Every slot folded to a constant, so the key identifies the evaluated address; the sweep
+    (`BusSweep.lean`) meets such a message only against the window at its own key. -/
 def DenseAddrKey.allConst (k : DenseAddrKey p) : Bool :=
   k.exprs.all fun e => match e with
     | .const _ => true
@@ -121,11 +127,11 @@ def DenseAddrKey.allConst (k : DenseAddrKey p) : Bool :=
 /-! ## Prepared address records
 
 One record per memory-bus interaction, built once per invocation. `cval` / `lin` / `reds` are the
-data the certificates of `AddrDiseq.lean` re-derive per compared pair; `linSig` / `redSig` are the
-order-insensitive term signatures that let the sweep decide the same tests by comparing integers.
-Two linear forms differ by a nonzero constant exactly when their normalized term lists agree and
-their constants do not (`denseKeyDiffNZ`), so the arms compare an integer and a list. Both branches
-of one two-root reduction differ by a constant, hence share one signature. -/
+data the certificates of `AddrDiseq.lean` re-derive per compared pair; `linSig` / `linKey` are the
+canonical term signatures. Two linear forms differ by a nonzero constant exactly when their
+normalized term lists agree and their constants do not (`denseKeyDiffNZ`), so the arms compare an
+integer and a list. Both branches of one two-root reduction differ by a constant, hence share one
+signature. -/
 
 structure DenseBUSlot (p : ℕ) where
   expr : DenseExpr p
@@ -251,146 +257,353 @@ def denseBUNonzeroNeq (nw : DenseNonzeroWits p) (a b : DenseBUPre p) : Bool :=
         (fun g => denseIsZeroLin (D.add (g.scale (-1))) || denseIsZeroLin (D.add g))
     | none => false)
 
-/-! ## The consumer sweep
+/-! ## The timestamp-group engine
 
-One left-to-right pass over a bus's prepared array maintaining open send windows (`constOpen`,
-keyed by canonical address; `symOpen`, tested against every message) and closing, excluding or
-dropping them as later messages consume, exclude or block them. -/
+The pass certifies one *address group* at a time under the order-free rely: every interaction on
+the bus is classified against a group leader as a member send, a member receive, or certifiably
+outside the group (different address, or a constant multiplicity in neither fiber); any undecided
+interaction aborts the group. The group's send timestamps must share one linear base with strictly
+increasing constant offsets of spread `< B` (the declared TS_BOUND), and each receive's ts slot
+must carry the solved LessThan gadget against its own send (`send_ts − recv_ts = c₀ + Σ coeffᵢ ·
+limbᵢ` with `c₀ ≥ 1` and range-checked limbs). `admissibleMemoryBusM_copies_of_ts`
+(`Implementation/MemoryBusMultiset.lean`) then forces every interior receive to copy the previous
+send's payload. -/
 
-/-- One message tested against one open window (consumer / excluded / blocker). -/
-inductive DenseStepRes
-  | consumer
-  | excluded
-  | blocker
+/-- The classification of one interaction against a group leader. -/
+inductive DenseBUVerdict where
+  | send
+  | recv
+  | out
 
-/-- The sweep's classification: exact on the consumer and constant arms, signature-gated on the
-    affine and two-root arms. A signature collision can only turn a blocker into an exclusion, so
-    the window lives longer and the extra proposal is rejected by `denseCheckPair`. -/
-def denseBUStepSig (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (prevMult : ZMod p)
-    (a b : DenseBUPre p) : DenseStepRes :=
-  if decide (b.mult = some prevMult) && denseBUConstsEq a b then .consumer
-  else if denseBUConstsNeq a b || denseBUAffineNeq a b || denseBUTwoRootNeq a b
-      || denseBUNonzeroNeq nw a b || decide (b.mult = some ops.zero) then .excluded
-  else .blocker
+/-- Classify a prepared record against the group leader `a`: a member send (constant multiplicity
+    `setMult`, certified same address), a member receive (`prevMult`, same address), or certified
+    outside the group — provably different address (the `AddrDiseq.lean` arms) or a constant
+    multiplicity in neither fiber. `none` (undecided) aborts the group. -/
+def denseBUClassify (nw : DenseNonzeroWits p) (setMult prevMult : ZMod p)
+    (a m : DenseBUPre p) : Option DenseBUVerdict :=
+  if decide (m.mult = some setMult) && denseBUConstsEq a m then some .send
+  else if decide (m.mult = some prevMult) && denseBUConstsEq a m then some .recv
+  else if denseBUConstsNeq a m || denseBUAffineNeq a m || denseBUTwoRootNeq a m
+      || denseBUNonzeroNeq nw a m
+      || (match m.mult with
+          | some c => decide (c ≠ setMult) && decide (c ≠ prevMult)
+          | none => false) then some .out
+  else none
 
-/-- An open send window: its prepared record and its position. -/
-structure DenseBUWin (p : ℕ) where
-  pre : DenseBUPre p
-  i : Nat
+/-- Split a bus's interactions into the leader's member sends and receives (source order), if
+    every interaction classifies. Each list entry carries its own prepared record. -/
+def denseBUSplit (nw : DenseNonzeroWits p) (setMult prevMult : ZMod p) (a : DenseBUPre p) :
+    List (BusInteraction (DenseExpr p) × DenseBUPre p) →
+    Option (List (BusInteraction (DenseExpr p)) × List (BusInteraction (DenseExpr p)))
+  | [] => some ([], [])
+  | (bi, pre) :: rest =>
+    match denseBUClassify nw setMult prevMult a pre,
+        denseBUSplit nw setMult prevMult a rest with
+    | some .send, some (s, r) => some (bi :: s, r)
+    | some .recv, some (s, r) => some (s, bi :: r)
+    | some .out, some (s, r) => some (s, r)
+    | _, _ => none
 
-/-- The sweep. Returns the consumed windows as `(sendPos, recvPos)` pairs, in consume order. -/
-def denseBUSweep (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (setMult prevMult : ZMod p)
-    (arr : Array (DenseBUPre p)) :
-    (fuel : Nat) → (j : Nat) →
-    (constOpen : Std.HashMap (DenseAddrKey p) (DenseBUWin p)) →
-    (symOpen : List (DenseBUWin p)) →
-    (out : List (Nat × Nat)) → List (Nat × Nat)
-  | 0, _, _, _, out => out
-  | fuel + 1, j, constOpen, symOpen, out =>
-    match arr[j]? with
-    | none => out
-    | some mp =>
-      -- (1) constant-keyed windows: an all-constant message meets only the window at its own key;
-      --     a symbolic-address message is tested against every one.
-      let (constOpen, out) :=
-        if mp.allConst then
-          match mp.key with
-          | some k =>
-            match constOpen[k]? with
-            | some w =>
-              match denseBUStepSig ops nw prevMult w.pre mp with
-              | .consumer =>
-                (constOpen.erase k, if w.i < j then (w.i, j) :: out else out)
-              | .excluded => (constOpen, out)
-              | .blocker => (constOpen.erase k, out)
-            | none => (constOpen, out)
-          | none => (constOpen, out)
-        else
-          let (drops, out) := constOpen.toList.foldl (init := (([] : List (DenseAddrKey p)), out))
-            fun da kw =>
-              match denseBUStepSig ops nw prevMult kw.2.pre mp with
-              | .consumer =>
-                (kw.1 :: da.1, if kw.2.i < j then (kw.2.i, j) :: da.2 else da.2)
-              | .excluded => da
-              | .blocker => (kw.1 :: da.1, da.2)
-          (drops.foldl (·.erase ·) constOpen, out)
-      -- (2) symbolic-keyed windows are tested literally against every message.
-      let (symOpen, out) :=
-        if symOpen.isEmpty then (symOpen, out) else
-        symOpen.foldr (init := (([] : List (DenseBUWin p)), out)) fun w sa =>
-          match denseBUStepSig ops nw prevMult w.pre mp with
-          | .consumer => (sa.1, if w.i < j then (w.i, j) :: sa.2 else sa.2)
-          | .excluded => (w :: sa.1, sa.2)
-          | .blocker => (sa.1, sa.2)
-      -- (3) a send opens its window; a same-key window that survived (1) moves to `symOpen`.
-      let (constOpen, symOpen) :=
-        if decide (mp.mult = some setMult) then
-          match mp.key with
-          | some k =>
-            let w : DenseBUWin p := ⟨mp, j⟩
-            if k.allConst then
-              match constOpen[k]? with
-              | some old => (constOpen.insert k w, old :: symOpen)
-              | none => (constOpen.insert k w, symOpen)
-            else (constOpen, w :: symOpen)
-          | none => (constOpen, symOpen)
-        else (constOpen, symOpen)
-      denseBUSweep ops nw setMult prevMult arr fuel (j + 1) constOpen symOpen out
+/-! ## Timestamp certificates -/
 
-/-- Scatter the sweep's pairs by send position, then read them back ascending — the pairs come
-    out in consume order, and the equalities have to follow send order. -/
-def denseBUScatter (n : Nat) (pairs : List (Nat × Nat)) : Array (Option Nat) :=
-  pairs.foldl (fun a ij => a.setIfInBounds ij.1 (some ij.2)) (Array.replicate n none)
+/-- The linearized ts-slot expression of an interaction. -/
+def denseBUTsLin (tsField : Nat) (bi : BusInteraction (DenseExpr p)) : Option (DenseLinExpr p) :=
+  match bi.payload[tsField]? with
+  | some e => denseLinearize e
+  | none => none
 
-def denseBUCands (out : Array (Option Nat)) : (i : Nat) → List (Nat × Nat) → List (Nat × Nat)
-  | 0, acc => acc
-  | i + 1, acc =>
-    match out[i]? with
-    | some (some j) => denseBUCands out i ((i, j) :: acc)
-    | _ => denseBUCands out i acc
+/-- The send offsets: every send's ts slot linearizes with canonical term key `key0` (the shared
+    base), leaving its constant. -/
+def denseBUOffs (tsField : Nat) (key0 : List (VarId × ZMod p)) :
+    List (BusInteraction (DenseExpr p)) → Option (List (ZMod p))
+  | [] => some []
+  | S :: rest =>
+    match denseBUTsLin tsField S, denseBUOffs tsField key0 rest with
+    | some L, some offs =>
+      if denseTermKey L = key0 then some (L.const :: offs) else none
+    | _, _ => none
 
-/-! ## The verifier
+/-- Consecutive offsets step by a constant in `[1, B)`. Under TS_BOUND that orders the sends'
+    timestamp *values* (`val_lt_of_step`) wherever the shared base sits — the base a pass finds is
+    whichever instruction's clock survived substitution, so the offsets themselves are signed. -/
+def denseBUStepsOk (B : Nat) : List (ZMod p) → Bool
+  | [] => true
+  | [_] => true
+  | c :: c' :: rest =>
+    decide (1 ≤ (c' - c).val) && decide ((c' - c).val < B) && denseBUStepsOk B (c' :: rest)
 
-`denseCheckPair` on prepared records over an index range: no `mid` list is materialized, and every
-arm is the exact certificate. -/
+/-- The group sends share one ts base and step through it in increasing order. -/
+def denseBUSendTsOk (tsField B : Nat) (sends : List (BusInteraction (DenseExpr p))) : Bool :=
+  match sends.head? with
+  | none => false
+  | some S0 =>
+    match denseBUTsLin tsField S0 with
+    | none => false
+    | some L0 =>
+      match denseBUOffs tsField (denseTermKey L0) sends with
+      | none => false
+      | some offs => denseBUStepsOk B offs
 
-def denseBUMidOk (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (a b : DenseBUPre p) : Bool :=
-  denseBUConstsNeq a b || denseBUAffineNeq a b || denseBUTwoRootNeq a b
-    || denseBUNonzeroNeq nw a b || decide (b.mult = some ops.zero)
+/-- An active single-variable range check `[x, width]` on a `varRangeBus` witnessing
+    `(denv x).val < 2 ^ width.val`; returns that bound. -/
+def denseBUVarBound (bs : BusSemantics p) (facts : BusFacts p bs) :
+    List (BusInteraction (DenseExpr p)) → VarId → Option Nat
+  | [], _ => none
+  | bi :: rest, v =>
+    match bi.payload, denseMultConst bi with
+    | [DenseExpr.var v', DenseExpr.const b], some c =>
+      if facts.varRangeBus bi.busId && decide (v' = v) && decide (c ≠ 0) then
+        some (2 ^ b.val)
+      else denseBUVarBound bs facts rest v
+    | _, _ => denseBUVarBound bs facts rest v
 
-def denseBUMidScan (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (arr : Array (DenseBUPre p))
-    (a : DenseBUPre p) (j : Nat) : (fuel : Nat) → (q : Nat) → Bool
-  | 0, _ => true
-  | fuel + 1, q =>
-    if q ≥ j then true
-    else
-      match arr[q]? with
-      | none => true
-      | some b => if denseBUMidOk ops nw a b then denseBUMidScan ops nw arr a j fuel (q + 1)
-                  else false
+/-- The first slot among `slots` holding exactly `.var v` where `facts.slotBound` (at constant
+    multiplicity `c` and the interaction's constant-slot pattern `pat`) declares a bound. -/
+def denseBUSlotScanAt (bs : BusSemantics p) (facts : BusFacts p bs)
+    (bi : BusInteraction (DenseExpr p)) (c : ZMod p) (pat : List (Option (ZMod p))) (v : VarId) :
+    (slots : List Nat) → Option Nat
+  | [] => none
+  | slot :: rest =>
+    match bi.payload[slot]? with
+    | some (DenseExpr.var v') =>
+      if v' = v then
+        match facts.slotBound bi.busId c pat slot with
+        | some w => some w
+        | none => denseBUSlotScanAt bs facts bi c pat v rest
+      else denseBUSlotScanAt bs facts bi c pat v rest
+    | _ => denseBUSlotScanAt bs facts bi c pat v rest
 
-/-- The verifier checks the ordering itself, which is what lets the sweep stay entirely untrusted:
-    nothing about the windows, the scatter or the candidate order carries a proof obligation. -/
-def denseBUCheckPair (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (setMult prevMult : ZMod p)
-    (arr : Array (DenseBUPre p)) (i j : Nat) : Bool :=
-  match arr[i]?, arr[j]? with
-  | some a, some r =>
-    decide (i < j) && decide (a.mult = some setMult) && decide (r.mult = some prevMult) &&
-      denseBUConstsEq a r && denseBUMidScan ops nw arr a j (j - i) (i + 1)
+/-- A range-check witness through the generic `facts.slotBound`: an active interaction (constant
+    nonzero multiplicity) carrying exactly `.var v` in a slot the fact bounds at the interaction's
+    constant-slot pattern — e.g. SP1's byte-bus operands (`< 256`) and op-6 `Range` results
+    (`< 2^w`), which are 4-slot messages `denseBUVarBound`'s two-slot `varRangeBus` shape misses. -/
+def denseBUSlotScan (bs : BusSemantics p) (facts : BusFacts p bs) :
+    List (BusInteraction (DenseExpr p)) → VarId → Option Nat
+  | [], _ => none
+  | bi :: rest, v =>
+    match denseMultConst bi with
+    | some c =>
+      if decide (c ≠ 0) then
+        match denseBUSlotScanAt bs facts bi c (bi.payload.map DenseExpr.constValue?) v
+            (List.range bi.payload.length) with
+        | some w => some w
+        | none => denseBUSlotScan bs facts rest v
+      else denseBUSlotScan bs facts rest v
+    | none => denseBUSlotScan bs facts rest v
+
+/-- A witnessed bound for `v`, from either range-check shape: the two-slot `varRangeBus` scan
+    first, then the generic `facts.slotBound` scan. -/
+def denseBUAnyBound (bs : BusSemantics p) (facts : BusFacts p bs)
+    (allBis : List (BusInteraction (DenseExpr p))) (v : VarId) : Option Nat :=
+  match denseBUVarBound bs facts allBis v with
+  | some w => some w
+  | none => denseBUSlotScan bs facts allBis v
+
+/-- Scan the indexed positions for a bound witness for `v`, re-verifying each candidate on its
+    own (`denseBUAnyBound` on the singleton) — the index stays untrusted. -/
+def denseBUIdxScan (bs : BusSemantics p) (facts : BusFacts p bs)
+    (allBis : List (BusInteraction (DenseExpr p))) (v : VarId) :
+    (positions : List Nat) → Option Nat
+  | [] => none
+  | i :: rest =>
+    match allBis[i]? with
+    | some bi =>
+      match denseBUAnyBound bs facts [bi] v with
+      | some w => some w
+      | none => denseBUIdxScan bs facts allBis v rest
+    | none => denseBUIdxScan bs facts allBis v rest
+
+/-- The candidate-position index. Untrusted: every consulted entry is re-verified, so a wrong or
+    missing entry costs a miss, never soundness. Built once per invocation, replacing
+    per-variable scans of the whole interaction list. -/
+structure DenseBUIdx where
+  /-- `v` ↦ positions of interactions that can witness a range bound for `v` — a two-slot range
+      check on `v`, or a `slotBound`-declared slot holding exactly `v`. -/
+  bounds : Std.HashMap VarId (List Nat)
+  /-- `v` ↦ `(position, slot)` of `slotBound`-declared slots whose expression mentions `v` — the
+      expression-limb candidates of `denseBUGadgetX`. -/
+  xcands : Std.HashMap VarId (List (Nat × Nat))
+
+def denseBUBuildIdx (bs : BusSemantics p) (facts : BusFacts p bs)
+    (allBis : List (BusInteraction (DenseExpr p))) : DenseBUIdx :=
+  (allBis.foldl (fun (acc : Nat × DenseBUIdx) bi =>
+    let (i, m) := acc
+    (i + 1,
+      match denseMultConst bi with
+      | some c =>
+        if c ≠ 0 then
+          let m := match bi.payload with
+            | [DenseExpr.var v, DenseExpr.const _] =>
+              if facts.varRangeBus bi.busId then
+                { m with bounds := m.bounds.insert v (i :: m.bounds.getD v []) }
+              else m
+            | _ => m
+          let pat := bi.payload.map DenseExpr.constValue?
+          (List.range bi.payload.length).foldl (fun m slot =>
+            match facts.slotBound bi.busId c pat slot with
+            | some _ =>
+              match bi.payload[slot]? with
+              | some (DenseExpr.var v) =>
+                { m with bounds := m.bounds.insert v (i :: m.bounds.getD v []) }
+              | some e =>
+                match denseLinearize e with
+                | some L =>
+                  { m with xcands := L.terms.foldl (fun xm t =>
+                      xm.insert t.1 ((i, slot) :: xm.getD t.1 [])) m.xcands }
+                | none => m
+              | none => m
+            | none => m) m
+        else m
+      | none => m)) (0, ⟨∅, ∅⟩)).2
+
+/-- Per-term range certificates for a gadget's limb terms: each variable's witnessed bound,
+    found through the position index. -/
+def denseBUTermCerts (bs : BusSemantics p) (facts : BusFacts p bs)
+    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx) :
+    List (VarId × ZMod p) → Option (List (VarId × ZMod p × Nat))
+  | [] => some []
+  | (v, coeff) :: rest =>
+    match denseBUIdxScan bs facts allBis v (idx.bounds.getD v []),
+        denseBUTermCerts bs facts allBis idx rest with
+    | some w, some cs => some ((v, coeff, w) :: cs)
+    | _, _ => none
+
+/-- The variable-limb LessThan certificate on the normalized ts difference `N`
+    (`send_ts − recv_ts`): `N = c₀ + Σ coeffᵢ · limbᵢ` with `c₀ ≥ 1`, every limb a range-checked
+    variable, and the no-wrap certificate `c₀ + B + Σ coeffᵢ·(boundᵢ − 1) ≤ p`
+    (consumed via `val_lt_of_lessThan_gadget`). -/
+def denseBUGadgetCore (bs : BusSemantics p) (facts : BusFacts p bs)
+    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (B : Nat) (N : DenseLinExpr p) : Bool :=
+  match denseBUTermCerts bs facts allBis idx N.terms with
+  | some certs =>
+    decide (1 ≤ N.const.val) &&
+      decide (N.const.val + B + (certs.map (fun c => c.2.1.val * (c.2.2 - 1))).sum ≤ p)
+  | none => false
+
+/-- The remainder check of `denseBUGadgetXSlot` at synthetic-limb coefficient `k`: subtracting
+    `k·LX` from `N` leaves `c₀ + Σ coeffᵢ · limbᵢ` with `c₀ ≥ 1` and variable limbs, the no-wrap
+    total now also carrying the synthetic limb's `k·(bX − 1)`. -/
+def denseBUGadgetXRem (bs : BusSemantics p) (facts : BusFacts p bs)
+    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (B : Nat) (N LX : DenseLinExpr p) (k : ZMod p) (bX : Nat) : Bool :=
+  match denseBUTermCerts bs facts allBis idx ((N.add (LX.scale (-k))).norm).terms with
+  | some certs =>
+    decide (1 ≤ ((N.add (LX.scale (-k))).norm).const.val) &&
+      decide (((N.add (LX.scale (-k))).norm).const.val + B + k.val * (bX - 1)
+        + (certs.map (fun c => c.2.1.val * (c.2.2 - 1))).sum ≤ p)
+  | none => false
+
+/-- One synthetic expression limb for the LessThan certificate: slot `slot` of the active
+    interaction `bi` is declared bounded by `facts.slotBound`, its expression linearizes to `LX`,
+    and `denseBUGadgetXRem` certifies the remainder after subtracting `k·LX` — `k` fixed by the
+    first shared variable's coefficient ratio. This recognizes range checks applied to solved
+    *expressions* rather than witness columns — e.g. SP1's inlined u8 limb
+    `(send_ts − recv_ts − 1 − diff_low)·2⁻¹⁶`, where powdr eliminated the `diff_high` column and
+    byte-checks its defining expression instead. -/
+def denseBUGadgetXSlot (bs : BusSemantics p) (facts : BusFacts p bs)
+    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (B : Nat) (N : DenseLinExpr p)
+    (bi : BusInteraction (DenseExpr p)) (c : ZMod p) (slot : Nat) : Bool :=
+  match facts.slotBound bi.busId c (bi.payload.map DenseExpr.constValue?) slot with
+  | some bX =>
+    match bi.payload[slot]? with
+    | some eX =>
+      match denseLinearize eX with
+      | some LX =>
+        match N.terms.find? (fun t => !zmodIsZero (LX.coeff t.1)) with
+        | some t0 => denseBUGadgetXRem bs facts allBis idx B N LX (t0.2 * (LX.coeff t0.1)⁻¹) bX
+        | none => false
+      | none => false
+    | none => false
+  | none => false
+
+/-- The expression-limb fallback of the LessThan certificate: some active interaction carries a
+    bounded slot expression that completes the gadget (`denseBUGadgetXSlot`). Only tried when the
+    variable-limb path failed. -/
+def denseBUGadgetX (bs : BusSemantics p) (facts : BusFacts p bs)
+    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (B : Nat) (N : DenseLinExpr p) : Bool :=
+  (((N.terms.flatMap (fun t => idx.xcands.getD t.1 [])).foldl
+      (fun (acc : Std.HashSet (Nat × Nat) × List (Nat × Nat)) is =>
+        if acc.1.contains is then acc else (acc.1.insert is, is :: acc.2))
+      (∅, [])).2).any (fun is =>
+    match allBis[is.1]? with
+    | some bi =>
+      match denseMultConst bi with
+      | some c => decide (c ≠ 0) && denseBUGadgetXSlot bs facts allBis idx B N bi c is.2
+      | none => false
+    | none => false)
+
+/-- The solved LessThan gadget between a receive's and its own send's ts slots:
+    `send_ts − recv_ts` normalizes to `c₀ + Σ coeffᵢ · limbᵢ` with `c₀ ≥ 1`, every limb
+    range-checked — either a checked variable (`denseBUGadgetCore`) or, failing that, one checked
+    slot *expression* plus checked variables (`denseBUGadgetX`) — and the no-wrap certificate
+    `c₀ + B + Σ coeffᵢ·(boundᵢ − 1) ≤ p` (consumed via `val_lt_of_lessThan_gadget`). -/
+def denseBUGadgetOk (bs : BusSemantics p) (facts : BusFacts p bs)
+    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (tsField B : Nat) (S R : BusInteraction (DenseExpr p)) : Bool :=
+  match denseBUTsLin tsField S, denseBUTsLin tsField R with
+  | some LS, some LR =>
+    denseBUGadgetCore bs facts allBis idx B ((LS.add (LR.scale (-1))).norm) ||
+      denseBUGadgetX bs facts allBis idx B ((LS.add (LR.scale (-1))).norm)
   | _, _ => false
 
-/-- For each verified candidate, the entailed slot equalities, in ascending send-position order. -/
-def denseBUCollect (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (setMult prevMult : ZMod p)
-    (shape : MemoryBusShape) (bis : Array (BusInteraction (DenseExpr p)))
-    (arr : Array (DenseBUPre p)) : List (Nat × Nat) → List (DenseExpr p)
-  | [] => []
-  | (i, j) :: rest =>
-    let acc := denseBUCollect ops nw setMult prevMult shape bis arr rest
-    if denseBUCheckPair ops nw setMult prevMult arr i j then
-      match bis[i]?, bis[j]? with
-      | some S, some R => denseMemEqConstraints shape S R ++ acc
-      | _, _ => acc
-    else acc
+/-! ## The group verifier -/
+
+/-- Verify one proposed group (leader at position `pos`): everything on the bus classifies, the
+    fibers pair up (`#sends = #recvs ≥ 2`), the sends' ts structure holds, and each receive
+    (source order) carries the gadget against its same-position send. Returns the member sends and
+    receives. -/
+def denseBUGroupPairs? (bs : BusSemantics p) (facts : BusFacts p bs) (nw : DenseNonzeroWits p)
+    (setMult prevMult : ZMod p) (tsField B : Nat)
+    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (zipped : List (BusInteraction (DenseExpr p) × DenseBUPre p)) (pos : Nat) :
+    Option (List (BusInteraction (DenseExpr p)) × List (BusInteraction (DenseExpr p))) :=
+  match zipped[pos]? with
+  | none => none
+  | some lp =>
+    if decide (2 ^ 30 < p) && decide (B ≤ 2 ^ 29) then
+      match denseBUSplit nw setMult prevMult lp.2 zipped with
+      | some (sends, recvs) =>
+        if decide (2 ≤ sends.length) && decide (sends.length = recvs.length)
+            && denseBUSendTsOk tsField B sends
+            && (sends.zip recvs).all (fun sr =>
+                denseBUGadgetOk bs facts allBis idx tsField B sr.1 sr.2)
+        then some (sends, recvs)
+        else none
+      | none => none
+    else none
+
+/-- The equalities of one verified group: interior receive `i` copies send `i − 1`
+    (`admissibleMemoryBusM_copies_of_ts`), so pair the sends with the receives shifted by one. -/
+def denseBUGroupEqs (shape : MemoryBusShape)
+    (sends recvs : List (BusInteraction (DenseExpr p))) : List (DenseExpr p) :=
+  (sends.zip recvs.tail).flatMap (fun sr => denseMemEqConstraints shape sr.1 sr.2)
+
+/-! ## Group proposals
+
+Untrusted: buckets the bus by canonical address key and proposes each bucket with at least two
+sends passing the cheap ts pre-check; only `denseBUGroupPairs?` carries proof obligations. -/
+
+def denseBUProps (tsField B : Nat) (setMult : ZMod p)
+    (zipped : List (BusInteraction (DenseExpr p) × DenseBUPre p)) : List Nat :=
+  let step := fun (acc : Nat ×
+        Std.HashMap (DenseAddrKey p) (Nat × List (BusInteraction (DenseExpr p))))
+      (bp : BusInteraction (DenseExpr p) × DenseBUPre p) =>
+    let (i, m) := acc
+    (i + 1,
+      match bp.2.key with
+      | some k =>
+        match m[k]? with
+        | some (l, sends) =>
+          m.insert k (l, if bp.2.mult = some setMult then bp.1 :: sends else sends)
+        | none => m.insert k (i, if bp.2.mult = some setMult then [bp.1] else [])
+      | none => m)
+  let m := (zipped.foldl step (0, ∅)).2
+  m.toList.filterMap (fun kv =>
+    let sends := kv.2.2.reverse
+    if 2 ≤ sends.length && denseBUSendTsOk tsField B sends then some kv.2.1 else none)
 
 /-! ## Per-invocation scaffolding -/
 
@@ -438,16 +651,19 @@ def denseBUTwoRootMap (avars : Std.HashSet VarId) (cs : List (DenseExpr p)) : De
     cs.foldl (fun T c => denseBUAddTwoRoot avars T c) DenseTwoRootMap.empty
   else DenseTwoRootMap.empty
 
-/-- The entailed equalities of one bus: prepare, sweep, verify. -/
-def denseBUForBus (ops : DenseZModOps p) (T : DenseTwoRootMap p) (nw : DenseNonzeroWits p)
-    (shape : MemoryBusShape) (bisL : List (BusInteraction (DenseExpr p))) : List (DenseExpr p) :=
+/-- The entailed equalities of one bus with a declared ts slot: prepare, propose, verify each
+    group, emit the interior copy equalities. -/
+def denseBUForBus (bs : BusSemantics p) (facts : BusFacts p bs) (ops : DenseZModOps p)
+    (T : DenseTwoRootMap p) (nw : DenseNonzeroWits p) (shape : MemoryBusShape) (tsField B : Nat)
+    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (bisL : List (BusInteraction (DenseExpr p))) : List (DenseExpr p) :=
   let setMult := denseSetNewMult ops shape
   let prevMult := denseGetPreviousMult ops shape
-  let bis := bisL.toArray
-  let arr := bis.map (denseBUPrep shape T)
-  let pairs := denseBUSweep ops nw setMult prevMult arr arr.size 0 ∅ [] []
-  let out := denseBUScatter arr.size pairs
-  denseBUCollect ops nw setMult prevMult shape bis arr (denseBUCands out out.size [])
+  let zipped := bisL.map (fun bi => (bi, denseBUPrep shape T bi))
+  (denseBUProps tsField B setMult zipped).flatMap (fun pos =>
+    match denseBUGroupPairs? bs facts nw setMult prevMult tsField B allBis idx zipped pos with
+    | some (sends, recvs) => denseBUGroupEqs shape sends recvs
+    | none => [])
 
 /-- The two-root table over the constraints that can be queried (`denseBUAddrVars`). -/
 def denseBUTable (busLists : List (Nat × MemoryBusShape × List (BusInteraction (DenseExpr p))))
@@ -460,17 +676,24 @@ def denseBUWits (d : DenseConstraintSystem p) : DenseNonzeroWits p :=
   let ws := d.algebraicConstraints.flatMap denseReciprocalWits?
   ⟨ws, denseNZIndexOf ws⟩
 
-/-- The equalities every bus contributes, before the zero / already-present filter. -/
-def denseBUEqsOf (busLists : List (Nat × MemoryBusShape × List (BusInteraction (DenseExpr p))))
+/-- The equalities every bus contributes, before the zero / already-present filter. A bus without
+    a declared ts slot (`facts.memTsField`) contributes nothing. -/
+def denseBUEqsOf (bs : BusSemantics p) (facts : BusFacts p bs)
+    (busLists : List (Nat × MemoryBusShape × List (BusInteraction (DenseExpr p))))
     (d : DenseConstraintSystem p) : List (DenseExpr p) :=
   let T := denseBUTable busLists d
   let nw := denseBUWits d
-  (busLists.map (fun sl => denseBUForBus denseZModOps T nw sl.2.1 sl.2.2)).flatten
+  let idx := denseBUBuildIdx bs facts d.busInteractions
+  (busLists.map (fun sl =>
+    match facts.memTsField sl.1 with
+    | some (tsField, B) =>
+      denseBUForBus bs facts denseZModOps T nw sl.2.1 tsField B d.busInteractions idx sl.2.2
+    | none => [])).flatten
 
-def denseBUEqs (memShape : Nat → Option MemoryBusShape) (d : DenseConstraintSystem p) :
+def denseBUEqs (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
     List (DenseExpr p) :=
-  let busLists := denseBUBusLists memShape d.busInteractions
-  if busLists.isEmpty then [] else denseBUEqsOf busLists d
+  let busLists := denseBUBusLists facts.memShape d.busInteractions
+  if busLists.isEmpty then [] else denseBUEqsOf bs facts busLists d
 
 /-- Drop the equalities that are identically zero or already present. The already-present test
     buckets by `DenseExpr.bHash`; only a constraint of an equality's own shape can be `==` to one,
@@ -487,19 +710,17 @@ def denseBUFilterNew (d : DenseConstraintSystem p) (eqs : List (DenseExpr p)) :
   eqs.filter (fun c => !c.normalize.fold.isConstZero && !containsC c)
 
 /-- The constraints `denseBusUnifyF` appends: the entailed slot equalities of every verified
-    consecutive send→receive pair, minus those that are identically zero or already present. -/
+    group's interior receives, minus those that are identically zero or already present. -/
 def denseBusUnifyNewCs (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) : List (DenseExpr p) :=
-  let _ := bs
-  let eqs := denseBUEqs facts.memShape d
+  let eqs := denseBUEqs bs facts d
   if eqs.isEmpty then [] else denseBUFilterNew d eqs
 
-/-- For a memory bus, a `set` (send) at address `a` immediately followed by a matching `get`
-    (receive) at the same address must carry the same payload, so this adds the entailed slot
-    equalities `getᵢ = setᵢ` for every provably-matched consecutive send→receive pair on each
-    declared memory / execution-bridge bus (skipping equations already present or zero).
-
-    No-new-variable side condition holds by construction (`denseMemEqConstraints_vars`). -/
+/-- For a memory bus, each `getPrevious` (receive) reads back the payload the previous same-address
+    `setNew` (send) committed, so this adds the entailed slot equalities `getᵢ = setᵢ` for every
+    certified address group's interior receives against the timestamp-previous send, on each
+    declared memory / execution-bridge bus with a declared timestamp slot (skipping equations
+    already present or zero). Justified order-free via `admissibleMemoryBusM_copies_of_ts`. -/
 def denseBusUnifyF (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
     DenseConstraintSystem p :=
   if (1 : ZMod p) ≠ 0 then

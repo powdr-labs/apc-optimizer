@@ -166,8 +166,51 @@ def memShapeOf (busMap : BusMap) (busId : Nat) : Option MemoryBusShape :=
   | some .executionBridge => some { addressFields := [], direction := .receiveThenSend }
   | _ => none
 
-/-- The SP1 bus semantics for a given bus map (default: the hard-coded default bus map). -/
-def sp1BusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap) :
+/-- The payload slot carrying the *low clock limb* on a declared memory-shaped bus, with the bound
+    TS_BOUND asserts on its value (`tsBounded`, `ApcOptimizer/MemoryBus.lean`).
+
+    SP1 has no single timestamp field: its clock is the *pair* `(clk_high, clk_low)` (payload
+    slots 0 and 1 on both memory and the execution bridge), split at bit 24, and clock order is
+    lexicographic on the pair. Within one autoprecompile block, however, `clk_high` is a *single
+    shared expression*: instruction chips pass it through untouched, and a block that would need a
+    high-limb carry (a `StateBumpChip` row) is never formed as an APC. So within the block, clock
+    order is carried entirely by `clk_low`, and bounding that slot is exactly what lets the
+    optimizer recover integer order from it — the SP1 analogue of OpenVM's TS_BOUND, with a local
+    24-bit bound in place of a global `2^29` one.
+
+    The declared bounds:
+    - *memory* (slot 1, `< 2^24`): every record's `clk_low` is the low 24 bits of a real access
+      timestamp — the executor splits the clock at bit 24, and in-block current-access timestamps
+      stay below `2^24` because each instruction's received CPU state is range-checked canonical
+      and its accesses add at most the sub-slot offsets.
+    - *execution bridge* (slot 1, `< 2^25`): every *received* state is range-checked canonical
+      (`< 2^24`) by the receiving instruction. The block's final *sent* state is checked by no
+      in-block chip and may be non-canonical — the carry state a `StateBumpChip` row after the
+      block repairs — but it exceeds `2^24` by less than one instruction's clock increment, which
+      SP1 itself assumes to be at most `2^24` (the `StateBumpChip` `is_clk` booleanity argument). -/
+def memTsFieldOf (busMap : BusMap) (busId : Nat) : Option (Nat × Nat) :=
+  match busMap busId with
+  | some .memory => some (1, 2 ^ 24)
+  | some .executionBridge => some (1, 2 ^ 25)
+  | _ => none
+
+/-- The entry-record designation on a chain-shaped bus (ENTRY_KEY, `ApcOptimizer/MemoryBus.lean`):
+    the execution bridge's record entering the block from outside carries the block's entry pc,
+    since the block is entered at its first instruction. SP1 carries the pc as *limbs*
+    `[pc mod 2^16, pc / 2^16, …]` in payload slots 2–4, so the designation is on slot 2 with the
+    entry pc's low limb — weaker than the full pc, but enough to separate the entry record from
+    the block's interior records, whose pcs step by 4. `none` — hence no assumption — where the
+    optimizer was not told the block's entry pc, and on every other bus. -/
+def memEntryKeyOf (busMap : BusMap) (entryPc : Option Nat) (busId : Nat) :
+    Option (Nat × ZMod p) :=
+  match busMap busId, entryPc with
+  | some .executionBridge, some pc => some (2, ((pc % 2 ^ 16 : Nat) : ZMod p))
+  | _, _ => none
+
+/-- The SP1 bus semantics for a given bus map (default: the hard-coded default bus map) and, if
+    the optimizer was told it, the block's entry pc (see `memEntryKeyOf`). -/
+def sp1BusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap)
+    (entryPc : Option Nat := none) :
     BusSemantics p where
   isStateful busId :=
     match busMap busId with
@@ -175,14 +218,43 @@ def sp1BusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap) :
     | none => false
   accepts := accepts busMap
   maintainsInvariants := maintainsInvariants busMap
-  -- The memory discipline, per declared bus. On SP1 *memory* the `setNew` multiplicity is `-1`
-  -- (`direction := .sendThenReceive`); on the *execution bridge* it is `1` (`.receiveThenSend`, which
-  -- sends the next CPU state). Either way `admissibleMemoryBus` pairs each `setNew` with the next
-  -- same-address `getPrevious` directly in list order.
+  -- Four conjuncts: the order-free memory discipline per declared bus (on SP1 *memory* the
+  -- `setNew` multiplicity is `-1`, `direction := .sendThenReceive`; on the *execution bridge* it
+  -- is `1`, `.receiveThenSend` — either way `admissibleMemoryBusM` bounds, per evaluated address,
+  -- the excess of the `getPrevious` payload multiset over the `setNew` one); the low-clock-limb
+  -- bound (TS_BOUND on `clk_low` — sound within one APC block because `clk_high` is a single
+  -- shared expression there, see `memTsFieldOf`); the entry-record designation on the chain bus
+  -- (ENTRY_KEY, vacuous unless the block's entry pc was supplied); and the x0-returns-zero rely.
   admissible msgs :=
     (∀ (busId : Nat) (shape : MemoryBusShape), memShapeOf busMap busId = some shape →
-      admissibleMemoryBus shape (msgs.filter (fun m => m.busId = busId)))
+      admissibleMemoryBusM shape
+        (↑(msgs.filter (fun m => m.busId = busId)) : Multiset (BusInteraction (ZMod p))))
+    ∧ (∀ (busId slot bound : Nat), memTsFieldOf busMap busId = some (slot, bound) →
+        tsBounded slot bound (msgs.filter (fun m => m.busId = busId)))
+    ∧ (∀ (busId slot : Nat) (key : ZMod p) (shape : MemoryBusShape),
+        memShapeOf busMap busId = some shape →
+        memEntryKeyOf busMap entryPc busId = some (slot, key) →
+        entryKeyed shape slot key
+          (↑(msgs.filter (fun m => m.busId = busId)) : Multiset (BusInteraction (ZMod p))))
     ∧ x0ReturnsZero busMap msgs
+
+/-- Auditor sanity: the whole SP1 rely (`sp1BusSemantics.admissible`) is order-free — it is
+    invariant under reordering the interaction list. -/
+theorem sp1Admissible_perm (busMap : BusMap) (entryPc : Option Nat)
+    {msgs msgs' : List (BusInteraction (ZMod p))} (h : msgs.Perm msgs') :
+    (sp1BusSemantics p busMap entryPc).admissible msgs ↔
+      (sp1BusSemantics p busMap entryPc).admissible msgs' := by
+  unfold sp1BusSemantics x0ReturnsZero
+  refine and_congr ?_ (and_congr ?_ (and_congr ?_ ?_))
+  · refine forall_congr' fun busId => forall_congr' fun shape => imp_congr Iff.rfl ?_
+    exact admissibleMemoryBusM_perm shape (h.filter _)
+  · refine forall_congr' fun busId => forall_congr' fun slot => forall_congr' fun bound =>
+      imp_congr Iff.rfl ?_
+    exact tsBounded_perm slot bound (h.filter _)
+  · refine forall_congr' fun busId => forall_congr' fun slot => forall_congr' fun key =>
+      forall_congr' fun shape => imp_congr Iff.rfl (imp_congr Iff.rfl ?_)
+    exact entryKeyed_perm shape slot key (h.filter _)
+  · exact forall_congr' fun m => imp_congr h.mem_iff Iff.rfl
 
 /-- SP1's proving-backend degree bound (powdr's `DEFAULT_DEGREE_BOUND` for SP1), used when the
     optimizer is run directly rather than with a bound passed in over the FFI. -/

@@ -98,36 +98,6 @@ theorem denseActiveStatefulMsgs_cons_survive (bs : BusSemantics p) (denv : VarId
   rw [List.filter_cons_of_pos
     (p := fun m : BusInteraction (ZMod p) => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId) h]
 
-theorem denseMem_activeStatefulMsgs (bs : BusSemantics p) (denv : VarId → ZMod p)
-    (L : List (BusInteraction (DenseExpr p))) (m : BusInteraction (ZMod p))
-    (hm : m ∈ denseActiveStatefulMsgs bs denv L) :
-    ∃ m0 ∈ L, denseBIEval m0 denv = m := by
-  unfold denseActiveStatefulMsgs at hm
-  obtain ⟨hmem, _⟩ := List.mem_filter.mp hm
-  obtain ⟨m0, hm0, hev⟩ := List.mem_map.mp hmem
-  exact ⟨m0, hm0, hev⟩
-
-/-- Lifts a split of the active∧stateful evaluated messages of `A` to a syntactic split of `A`, so
-    the pass's syntactic shield can discharge the `admissible_dropPair` shield. -/
-theorem denseActiveStatefulMsgs_split (bs : BusSemantics p) (denv : VarId → ZMod p)
-    (A : List (BusInteraction (DenseExpr p))) (A₁ A₂ : List (BusInteraction (ZMod p)))
-    (Sx : BusInteraction (ZMod p)) (h : denseActiveStatefulMsgs bs denv A = A₁ ++ Sx :: A₂) :
-    ∃ (A_pre : List (BusInteraction (DenseExpr p))) (m0 : BusInteraction (DenseExpr p))
-      (A_suf : List (BusInteraction (DenseExpr p))),
-      A = A_pre ++ m0 :: A_suf ∧ denseBIEval m0 denv = Sx
-        ∧ denseActiveStatefulMsgs bs denv A_suf = A₂ := by
-  have h' : (A.map (fun bi => denseBIEval bi denv)).filter
-      (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId) = A₁ ++ Sx :: A₂ := h
-  have hfs := filter_split (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId) Sx
-      (A.map (fun bi => denseBIEval bi denv)) A₁ A₂ h'
-  obtain ⟨M_pre, M_suf, hmapeq, _, hMsuf⟩ := hfs
-  have hms := map_split (fun bi => denseBIEval bi denv) Sx A M_pre M_suf hmapeq
-  obtain ⟨A_pre, m0, A_suf, hAeq, _, hm0, hAsuf⟩ := hms
-  refine ⟨A_pre, m0, A_suf, hAeq, hm0, ?_⟩
-  show (A_suf.map (fun bi => denseBIEval bi denv)).filter
-    (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId) = A₂
-  rw [hAsuf]; exact hMsuf
-
 /-- A list of stateless interactions contributes nothing to the dense active∧stateful messages. -/
 theorem denseActiveStatefulMsgs_stateless (bs : BusSemantics p) (denv : VarId → ZMod p)
     (L : List (BusInteraction (DenseExpr p)))
@@ -139,10 +109,12 @@ theorem denseActiveStatefulMsgs_stateless (bs : BusSemantics p) (denv : VarId �
   obtain ⟨m0, hm0, rfl⟩ := List.mem_map.mp hm
   simp [denseBIEval, h m0 hm0]
 
-/-- Correctness of dropping one matched consecutive send/receive pair (equal evaluated payloads,
-    opposite multiplicities on a stateful `busId`), optionally emitting replacement byte checks. The
-    byte obligation (`hbyte`), between-region refutation (`hmidEval`), before-region shield
-    (`hpreEval`) and per-check facts (`hchecks`) are hypotheses; assembled via `DensePassCorrect.ofEnvEq`. -/
+/-- Correctness of dropping one matched send/receive pair (equal evaluated payloads, opposite
+    multiplicities on a stateful `busId`), optionally emitting replacement byte checks. The byte
+    obligation (`hbyte`) and per-check facts (`hchecks`) are hypotheses; admissibility is preserved
+    by the order-free `BusFacts.admissible_dropPair`, which needs only the payload equality
+    (`hpayEval`) — the region hypotheses `_hmidEval`/`_hpreEval` are not consumed and exist only so
+    callers' certificates keep their shape. Assembled via `DensePassCorrect.ofEnvEq`. -/
 theorem denseDropPair_correct (isInput : VarId → Bool)
     (d : DenseConstraintSystem p) (bs : BusSemantics p) (facts : BusFacts p bs)
     (hp1 : (1 : ZMod p) ≠ 0)
@@ -169,11 +141,11 @@ theorem denseDropPair_correct (isInput : VarId → Bool)
     (hRm : R.multiplicity.constValue? = some (-shape.setNewMult))
     (hpayEval : ∀ (denv : VarId → ZMod p), (∀ c ∈ d.algebraicConstraints, c.eval denv = 0) →
       (denseBIEval S denv).payload = (denseBIEval R denv).payload)
-    (hmidEval : ∀ (denv : VarId → ZMod p), (∀ c ∈ d.algebraicConstraints, c.eval denv = 0) →
+    (_hmidEval : ∀ (denv : VarId → ZMod p), (∀ c ∈ d.algebraicConstraints, c.eval denv = 0) →
         ∀ m0 ∈ B, (denseBIEval m0 denv).busId = busId →
         (denseBIEval m0 denv).multiplicity ≠ 0 →
         shape.address (denseBIEval m0 denv) = shape.address (denseBIEval S denv) → False)
-    (hpreEval : ∀ (denv : VarId → ZMod p), (∀ c ∈ d.algebraicConstraints, c.eval denv = 0) →
+    (_hpreEval : ∀ (denv : VarId → ZMod p), (∀ c ∈ d.algebraicConstraints, c.eval denv = 0) →
         ∀ (A_pre : List (BusInteraction (DenseExpr p)))
         (m0 : BusInteraction (DenseExpr p)) (A_suf : List (BusInteraction (DenseExpr p))),
         A = A_pre ++ m0 :: A_suf → (denseBIEval m0 denv).busId = busId →
@@ -202,9 +174,6 @@ theorem denseDropPair_correct (isInput : VarId → Bool)
     fun denv => by rw [hSmEv denv]; exact shape.setNewMult_ne_zero hp1
   have hRactive : ∀ denv, (denseBIEval R denv).multiplicity ≠ 0 :=
     fun denv => by rw [hRmEv denv]; exact neg_ne_zero.mpr (shape.setNewMult_ne_zero hp1)
-  have haddrEv : ∀ denv, (∀ c ∈ d.algebraicConstraints, c.eval denv = 0) →
-      shape.address (denseBIEval S denv) = shape.address (denseBIEval R denv) := fun denv hcon => by
-    simp only [MemoryBusShape.address, hpayEval denv hcon]
   have hmem_core : ∀ bi, bi ∈ A ++ B ++ C → bi ∈ d.busInteractions := by
     intro bi hbi
     rw [hsplit]
@@ -294,25 +263,9 @@ theorem denseDropPair_correct (isInput : VarId → Bool)
       rwa [hasmFull] at this
     show bs.admissible (denseActiveStatefulMsgs bs denv out.busInteractions)
     rw [hasmOut]
-    refine facts.admissible_dropPair hp1 busId shape hshape _ _ _
+    exact facts.admissible_dropPair busId shape hshape _ _ _
       (denseBIEval S denv) (denseBIEval R denv)
-      hSbus hRbus (hSmEv denv) (hRmEv denv) (haddrEv denv hcon) ?_ ?_ hadm'
-    · intro m hm hbid hmne hmaddr
-      obtain ⟨m0, hm0, rfl⟩ := denseMem_activeStatefulMsgs bs denv B m hm
-      exact hmidEval denv hcon m0 hm0 hbid hmne hmaddr
-    ·
-      intro A₁ Sx A₂ hAsplit hbid hne haddr hmult
-      obtain ⟨A_pre, m0, A_suf, hAeq, hm0, hAsuf⟩ :=
-        denseActiveStatefulMsgs_split bs denv A A₁ A₂ Sx hAsplit
-      subst hm0
-      obtain ⟨Rp, hRpmem, hRpbid, hRpne, hRpaddr, hRpmult⟩ :=
-        hpreEval denv hcon A_pre m0 A_suf hAeq hbid hne haddr hmult
-      refine ⟨denseBIEval Rp denv, ?_, hRpbid, hRpne, hRpaddr, hRpmult⟩
-      rw [← hAsuf]
-      unfold denseActiveStatefulMsgs
-      refine List.mem_filter.mpr ⟨List.mem_map.mpr ⟨Rp, hRpmem, rfl⟩, ?_⟩
-      rw [show bs.isStateful (denseBIEval Rp denv).busId = true from by rw [hRpbid]; exact hStateful]
-      rw [Bool.and_true, decide_eq_true_eq]; exact hRpne
+      hSbus hRbus (hSmEv denv) (hRmEv denv) (hpayEval denv hcon) hadm'
   have hsub : ∀ i ∈ out.occ, i ∈ d.occ := by
     intro i hi
     have hi2 : i ∈ d.algebraicConstraints.flatMap DenseExpr.vars

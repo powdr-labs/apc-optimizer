@@ -7347,3 +7347,96 @@ everywhere, which is the floor for the shared engine shape without cross-pass pr
 (`denseBUTable`/`denseBUWits` are rebuilt per pass — a separate, pass-independent idea).
 
 **Worked: yes.**
+### 184. SP1 under the order-free rely: TS_BOUND on `clk_low`, ENTRY_KEY by pc low limb, expression-limb gadgets (rsp 1.84x → 3.87x, sp1:keccak 1.70x → 5.04x)
+
+**Idea.** The order-free rework left SP1 with no declared timestamp slot ("still open: SP1" in
+PR #288), regressing every SP1 suite: the timestamp-group `busUnify`/`busSweep` engines need
+`facts.memTsField`, and SP1's clock is the two-limb pair `(clk_high, clk_low)` split at bit 24 —
+no single bounded slot. The shared-base principle closes the gap: within one APC block every
+stateful interaction's `clk_high` is a *single shared expression* (instruction chips pass it
+through untouched; a block needing a `StateBumpChip` carry is never formed as an APC), so in-block
+order is carried by `clk_low` alone, and TS_BOUND on that slot is sound with a *local* bound —
+`2^24` on memory (true limbs of real access timestamps), `2^25` on the exec bridge (the final sent
+state may be the pre-bump carry state, over by less than one instruction's clock increment, which
+SP1's own `is_clk` booleanity argument caps at `2^24`).
+
+**How.** Three layers, measured cumulatively on `Benchmarks/SP1`:
+1. `memTsFieldOf` + the `tsBounded` conjunct in `sp1BusSemantics.admissible` (audited), with the
+   `BusFacts.memTsField` instance — necessary but alone moved nothing: SP1 groups still died.
+2. Gadget certification learns two SP1 range-check shapes. Limb bounds via `facts.slotBound`
+   (SP1 checks are 4-slot byte-bus messages `[6, x, 16, 0]` / `[3, 0, b, c]`, which the two-slot
+   `varRangeBus` scan misses), and one synthetic *expression* limb (`denseBUGadgetX`): powdr
+   eliminates SP1's `diff_high` column and byte-checks its solved expression
+   `(send_ts − recv_ts − 1 − diff_low)·2⁻¹⁶`, so the LessThan certificate subtracts `k·LX` (`k`
+   from the shared variable's coefficient ratio) and certifies the remainder — still nothing,
+   because without the exec-bridge chain every instruction keeps its own clk base and no address
+   group shares a ts base.
+3. ENTRY_KEY for SP1 (`memEntryKeyOf`, audited): the pc rides as limbs `[pc mod 2^16, …]` in
+   slots 2–4, so the chain designation is slot 2 with the entry pc's low limb, threaded through
+   `sp1Facts`/`sp1Optimizer`/FFI/CLI. With it `execChain` fires, gauss unifies the clk bases, and
+   the whole cascade lands: rsp variables 1.838x → **3.868x** (main 3.922x, powdr 3.980x),
+   sp1:keccak 1.704x → **5.042x** (main 5.163x, powdr 4.809x, so now ahead of powdr), OpenVM
+   keccak unchanged at 13.618x.
+
+**Perf.** The first cut of the expression-limb fallback scanned all interactions per failed
+gadget and all interactions again per remainder term — sp1:keccak went **>600 s**. Fixed by
+`DenseBUIdx`, a per-invocation candidate-position index (variable ↦ bound-witness positions;
+variable ↦ `(position, slot)` expression-limb candidates), consulted then *re-verified on the
+single indexed interaction* — untrusted by construction, a wrong entry is a miss, never
+unsoundness. sp1:keccak **>600 s → 2.7 s** (busUnify 2.0 s of it), rsp sweep ~2 s for 100 cases,
+effectiveness byte-identical before/after the index.
+
+**Residue.** Not the abstract two-limb wraparound story: the honest SP1 assumptions are the two
+bounds above plus the entry-pc designation, each documented at its audited definition. The
+remaining rsp gap to main (3.868x vs 3.922x, 46 losses) and the sp1:keccak constraints gap
+(38.4x vs main 41.9x) are unexamined; sp1:keccak runtime (2.7 s vs main's 0.7 s) shares the
+branch's known busUnify runtime item.
+
+### 185. busForward ported to the order-free rely: positions on the certified canonical order (recovers #301 in full on all four OpenVM suites, no SP1 effect)
+
+**Idea.** Entry 182's `busForward` reads its window positions off the bus's interaction list *in
+export order* and takes the positional discipline straight from `facts.admissible_sound` — which
+the order-free rely (`admissibleMemoryBusM`) grants of no list at all. The migration `busSweep`
+already went through applies verbatim: run the engine on `denseBSCanon`, the bus's interactions
+rearranged into the *certified* canonical access order, and take the positional discipline as a
+hypothesis supplied by `denseBSOrder?_admissibleMemoryBus`.
+
+**How.** No new machinery; three changes.
+- `denseBFForBus` gains `bs`/`facts`/`tsField`/`B`/`allBis`/`idx`, certifies an order with
+  `denseBSOrder?` and sweeps `denseBSCanon shape T bisL ps` instead of `bisL`. A bus without a
+  declared `facts.memTsField` contributes nothing — the certificate needs one.
+- `denseBFCheckCert_sound` drops `facts`/`hshape`/`hbis` for `hsub` plus
+  `hAdm : admissibleMemoryBus shape (bisL.map (denseBIEval · denv))`, exactly as
+  `denseBSCheckPair_sound` does; `denseBusForwardNewCs_sound` supplies `hAdm` from
+  `denseBSOrder?_admissibleMemoryBus` and reads membership off `denseBSCanon_mem`.
+- `memFwdChain` consumes `admissibleMemoryBus` directly (the positional predicate is still audited)
+  instead of the deleted `admissibleMemoryBus.consecutive`, and `denseBSMidOk`/`denseBSMidScan`
+  replace `busUnify`'s removed twins. The chain induction, the interleaving countermodel and the
+  verifier are otherwise unchanged from #301.
+
+MEASURED (A/B: this branch with and against the `busForward` entry removed, all 303 cases across
+the six suites; sizes deterministic, so the diff is exact). **No regression on any axis anywhere.**
+
+| suite | variables | bus interactions |
+|---|---|---|
+| OpenVM keccak | 13.618× → **14.981×** | 7.587× → **7.838×** |
+| OpenVM sha256 | 14.191× → **14.430×** | 8.734× → **8.793×** |
+| openvm-eth | 4.553× → **4.557×** (per-case wins 31 → 33) | 3.557× unchanged |
+| wasm-eth | 7.254× → **7.259×** | 6.205× unchanged |
+| sp1/rsp | 3.868× unchanged | 2.692× unchanged |
+| sp1/keccak | 5.042× unchanged | 2.987× unchanged |
+
+The four OpenVM aggregates land on main's own post-#301 figures (14.981×/7.838×, 14.430×/8.793×,
+4.557×, 7.259× against main's 7.260×), so the canonical-order detour costs the pass nothing where
+it fires.
+
+**Runtime.** keccak 1.67 → 2.00 s, sha256 22.8 → 30.5 s end-to-end. `busForward`'s own time is
+essentially `busSweep`'s (368 ms vs 381 ms on keccak, 8.0 s vs 7.8 s on sha256) because both
+passes certify *the same* canonical order per bus per cleanup cycle. The duplicated certification,
+not the forwarding sweep, is the cost — the two could share one memoized certificate (the branch's
+untrusted-hint/verified-consumption shape fits), which is the obvious next runtime item.
+
+**Open.** No SP1 effect, where #301 measured a small win on main (rsp 5 cases/−20 vars,
+sp1:keccak −8 vars). Unexamined: either the order certificate does not land on SP1's memory bus,
+or `busUnify`'s timestamp-group engine already captures those slots. Joins the branch's existing
+SP1 residual item (rsp 3.868× vs main's 3.930×).

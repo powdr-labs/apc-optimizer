@@ -1,4 +1,4 @@
-import ApcOptimizer.Implementation.OptimizerPasses.BusUnify
+import ApcOptimizer.Implementation.OptimizerPasses.BusSweep
 
 set_option autoImplicit false
 
@@ -17,7 +17,14 @@ by merging the value variables).
 
 Engine shape as in `BusUnify.lean`: prepared records (`denseBUPrep`), an untrusted windowed
 sweep proposing `(sendPos, [(recvPos, sendPos), …], recvPos)` certificates, and a trusted
-verifier (`denseBFCheckCert`) re-checking every proposal. -/
+verifier (`denseBFCheckCert`) re-checking every proposal.
+
+The positions are read off the bus's interactions *rearranged into canonical access order*
+(`denseBSCanon`, `BusSweep.lean`), which the order-free rely certifies via `denseBSOrder?` — the
+window's "nothing at this address in between" test is positional, so the list it runs on has to be
+the certified time order rather than the export's order (`Proofs/BusSweep.lean`,
+`denseBSOrder?_admissibleMemoryBus`). A bus whose interactions do not certify contributes
+nothing. -/
 
 namespace ApcOptimizer.Dense
 
@@ -72,21 +79,21 @@ def denseBFEmitFast (shape : MemoryBusShape) (bis : Array (BusInteraction (Dense
 
 /-- Verify a proposal's pair list over `[q, j)`: each listed pair `(k, l)` in order — receive at
     `k`, send at `l`, internally same-(syntactic/constant-)address — with every position outside
-    the pairs passing `denseBUMidOk` against the outer send `aS`. The strict ordering
+    the pairs passing `denseBSMidOk` against the outer send `aS`. The strict ordering
     `q ≤ k < l < j` is load-bearing: interleaved pairs would break the entailment (countermodel in
     `Proofs/BusForward.lean`). -/
 def denseBFCheckPairs (ops : DenseZModOps p) (nw : DenseNonzeroWits p)
     (setMult prevMult : ZMod p) (arr : Array (DenseBUPre p)) (aS : DenseBUPre p) (j : Nat) :
     (pairs : List (Nat × Nat)) → (q : Nat) → Bool
-  | [], q => denseBUMidScan ops nw arr aS j (j - q) q
+  | [], q => denseBSMidScan ops nw arr aS j (j - q) q
   | (k, l) :: rest, q =>
     decide (q ≤ k) && decide (k < l) && decide (l < j) &&
     (match arr[k]?, arr[l]? with
      | some ak, some al =>
        decide (ak.mult = some prevMult) && decide (al.mult = some setMult) &&
        denseBUConstsEq ak al &&
-       denseBUMidScan ops nw arr aS k (k - q) q &&
-       denseBUMidScan ops nw arr aS l (l - (k + 1)) (k + 1) &&
+       denseBSMidScan ops nw arr aS k (k - q) q &&
+       denseBSMidScan ops nw arr aS l (l - (k + 1)) (k + 1) &&
        denseBFCheckPairs ops nw setMult prevMult arr aS j rest (l + 1)
      | _, _ => false)
 
@@ -105,7 +112,7 @@ def denseBFCheckCert (ops : DenseZModOps p) (nw : DenseNonzeroWits p)
 
 /-! ## The proposer sweep (untrusted) -/
 
-/-- The slot-only arms of `denseBUMidOk` (the zero-multiplicity arm is tested at the call site).
+/-- The slot-only arms of `denseBSMidOk` (the zero-multiplicity arm is tested at the call site).
     Depends only on the two address-slot lists, so the sweep memoizes it per class pair. -/
 def denseBFAddrExcl (nw : DenseNonzeroWits p) (a b : DenseBUPre p) : Bool :=
   denseBUConstsNeq a b || denseBUAffineNeq a b || denseBUTwoRootNeq a b || denseBUNonzeroNeq nw a b
@@ -152,7 +159,7 @@ inductive DenseBFStep (p : ℕ) where
   | drop
   | propose (prop : Nat × List (Nat × Nat) × Nat)
 
-/-- `nCls`/`mcls` and `memo` memoize the `denseBUMidOk` slot arms per (window, message) class
+/-- `nCls`/`mcls` and `memo` memoize the `denseBSMidOk` slot arms per (window, message) class
     pair; the verdict equals the unmemoized test, so the proposals are unchanged. -/
 def denseBFStep (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (setMult prevMult : ZMod p)
     (bis : Array (BusInteraction (DenseExpr p))) (mb : BusInteraction (DenseExpr p))
@@ -273,33 +280,47 @@ def denseBFCollect (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (setMult pre
       | _, _ => acc
     else acc
 
-/-- The entailed value-forwarding equalities of one bus: prepare, sweep, verify. -/
-def denseBFForBus (ops : DenseZModOps p) (T : DenseTwoRootMap p) (nw : DenseNonzeroWits p)
-    (shape : MemoryBusShape) (bisL : List (BusInteraction (DenseExpr p))) : List (DenseExpr p) :=
+/-- The entailed value-forwarding equalities of one bus with a declared ts slot: prepare, certify a
+    pairing into canonical access order, sweep that order, verify. -/
+def denseBFForBus (bs : BusSemantics p) (facts : BusFacts p bs) (ops : DenseZModOps p)
+    (T : DenseTwoRootMap p) (nw : DenseNonzeroWits p) (shape : MemoryBusShape) (tsField B : Nat)
+    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (bisL : List (BusInteraction (DenseExpr p))) : List (DenseExpr p) :=
   let setMult := denseSetNewMult ops shape
   let prevMult := denseGetPreviousMult ops shape
-  let bis := bisL.toArray
-  let arr := bis.map (denseBUPrep shape T)
-  let (cls, nCls) := denseBFClasses arr
-  let props := denseBFSweep ops nw setMult prevMult shape bis arr cls nCls arr.size 0 ∅ [] ∅ []
-  denseBFCollect ops nw setMult prevMult shape bis arr props
+  let zipped := bisL.map (fun bi => (bi, denseBUPrep shape T bi))
+  match denseBSOrder? bs facts shape T setMult prevMult tsField B allBis idx zipped with
+  | none => []
+  | some ps =>
+    let bis := (denseBSCanon shape T bisL ps).toArray
+    let arr := bis.map (denseBUPrep shape T)
+    let (cls, nCls) := denseBFClasses arr
+    let props := denseBFSweep ops nw setMult prevMult shape bis arr cls nCls arr.size 0 ∅ [] ∅ []
+    denseBFCollect ops nw setMult prevMult shape bis arr props
 
-def denseBFEqsOf (busLists : List (Nat × MemoryBusShape × List (BusInteraction (DenseExpr p))))
+/-- A bus without a declared ts slot (`facts.memTsField`) contributes nothing: the canonical-order
+    certificate the positional window test rests on needs one. -/
+def denseBFEqsOf (bs : BusSemantics p) (facts : BusFacts p bs)
+    (busLists : List (Nat × MemoryBusShape × List (BusInteraction (DenseExpr p))))
     (d : DenseConstraintSystem p) : List (DenseExpr p) :=
   let T := denseBUTable busLists d
   let nw := denseBUWits d
-  (busLists.map (fun sl => denseBFForBus denseZModOps T nw sl.2.1 sl.2.2)).flatten
+  let idx := denseBUBuildIdx bs facts d.busInteractions
+  (busLists.map (fun sl =>
+    match facts.memTsField sl.1 with
+    | some (tsField, B) =>
+      denseBFForBus bs facts denseZModOps T nw sl.2.1 tsField B d.busInteractions idx sl.2.2
+    | none => [])).flatten
 
-def denseBFEqs (memShape : Nat → Option MemoryBusShape) (d : DenseConstraintSystem p) :
+def denseBFEqs (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
     List (DenseExpr p) :=
-  let busLists := denseBUBusLists memShape d.busInteractions
-  if busLists.isEmpty then [] else denseBFEqsOf busLists d
+  let busLists := denseBUBusLists facts.memShape d.busInteractions
+  if busLists.isEmpty then [] else denseBFEqsOf bs facts busLists d
 
 /-- The constraints `denseBusForwardF` appends, minus those identically zero or already present. -/
 def denseBusForwardNewCs (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) : List (DenseExpr p) :=
-  let _ := bs
-  let eqs := denseBFEqs facts.memShape d
+  let eqs := denseBFEqs bs facts d
   if eqs.isEmpty then [] else denseBUFilterNew d eqs
 
 /-- For a memory-bus send `S` and a later receive `R` at the same address, with every message

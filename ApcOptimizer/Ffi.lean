@@ -14,6 +14,12 @@ matching verified optimizer with the given degree bound, and serializes the resu
 cursor — **required** (a missing one yields `{"error": ...}`), advanced past the fresh ids assigned
 to new columns so powdr reseeds its allocator directly.
 
+An optional `entry_pc` (equivalently a `block` descriptor, as in `ApcWithBusMap`) states the pc at
+which the block is entered. Supplying it declares the execution bridge's entry record (ENTRY_KEY,
+`ApcOptimizer/MemoryBus.lean`), which is what lets the optimizer chain the block's CPU states — and
+with them every instruction's memory timestamps onto one base. Omitting it assumes nothing and
+costs effectiveness.
+
 On any parse error the function returns a `{"error": "..."}` object rather than a machine, so the
 Rust side can surface a clear message instead of an opaque deserialization failure. The function
 never throws across the FFI boundary.
@@ -44,18 +50,19 @@ private def errorJson (msg : String) : String :=
 private def runOpenVm (b : DegreeBound) (input : String) : String :=
   match parseJsonSystem (p := babyBear) input with
   | .error err => errorJson err
-  | .ok (_, _, none) => errorJson "missing required field `next_free_id`"
-  | .ok (cs, busMap, some base) =>
-    let (optimized, ds) := openVmOptimizer busMap.toBusMap b cs
+  | .ok (_, _, none, _) => errorJson "missing required field `next_free_id`"
+  | .ok (cs, busMap, some base, entryPc?) =>
+    let (optimized, ds) :=
+      openVmOptimizer busMap.toBusMap (entryPc?.map (fun n => (n : ZMod babyBear))) b cs
     ApcOptimizer.Serialize.serializeResult optimized ds base
 
 /-- Parse a powdr SP1 export, run `sp1Optimizer` with degree bound `b`, and serialize. -/
 private def runSp1 (b : DegreeBound) (input : String) : String :=
   match parseJsonSystemSp1 (p := koalaBear) input with
   | .error err => errorJson err
-  | .ok (_, _, none) => errorJson "missing required field `next_free_id`"
-  | .ok (cs, busMap, some base) =>
-    let (optimized, ds) := sp1Optimizer busMap.toBusMap b cs
+  | .ok (_, _, none, _) => errorJson "missing required field `next_free_id`"
+  | .ok (cs, busMap, some base, entryPc?) =>
+    let (optimized, ds) := sp1Optimizer busMap.toBusMap entryPc? b cs
     ApcOptimizer.Serialize.serializeResult optimized ds base
 
 /-- Parse a powdr export, run the verified optimizer for the requested VM with the given degree

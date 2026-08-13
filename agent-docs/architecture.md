@@ -80,14 +80,18 @@ passes usable knowledge:
   **VM-neutral** `byteXorSpec` descriptor — a layout-generic `(op, o₁, o₂, r)` decode/encode plus
   its `xorOp`/`pairOp` acceptance semantics — rather than any OpenVM-shaped payload, so the same
   passes fire on both the OpenVM bitwise-lookup bus and the SP1 byte-lookup bus.
-- **`admissible` / `ApcOptimizer/MemoryBus.lean` — audited assumption.** The memory discipline:
-  `admissibleMemoryBus` states that a `setNew` followed by a same-address `getPrevious` (with no
-  active same-address message between, **in list order**) carry equal payloads. The `setNew`/`getPrevious`
+- **`admissible` / `ApcOptimizer/MemoryBus.lean` — audited assumption.** The memory discipline is
+  *order-free*: `admissibleMemoryBusM` asserts, per evaluated address, that the receives' payload
+  multiset exceeds the sends' by at most one element (bus balance + window atomicity), assuming
+  nothing about the interaction list's order; TS_BOUND (`tsBounded`) additionally bounds each
+  message's declared timestamp-slot value (below `2^29` for OpenVM). The `setNew`/`getPrevious`
   multiplicities are chosen per bus by `MemoryBusShape.direction` (via `setNewMult`) — `1`/`-1` for
   OpenVM (which sends the new record and receives the previous one), `-1`/`1` for SP1 (which sends the
-  previous record and receives the new one). This is a completeness-only assumption about real traces —
-  the input must list memory interactions in timestamp order (see the README's assumptions). It is
-  consumed by `busUnifyPass` to cancel send/receive pairs and chain accesses across instructions.
+  previous record and receives the new one). These are completeness-only assumptions about real
+  traces (see the README's assumptions). They are consumed by `busPairCancel` (pair dropping) and
+  `busUnifyPass`, which recovers timestamp *order* inside an address group from the bounded values
+  and the circuit's own LessThan gadgets (`admissibleMemoryBusM_copies_of_ts`,
+  `Implementation/MemoryBusMultiset.lean`).
 
 ## OpenVM instantiation
 

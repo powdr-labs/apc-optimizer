@@ -26,4 +26,24 @@ ApcOptimizer.Dense.get_spawn
 # leaf child *without* unfolding the walk on a compound one; both rewrite by `rfl`.
 ApcOptimizer.Dense.denseNrmGo_const
 ApcOptimizer.Dense.denseNrmGo_var
-
+# Auditor-facing sanity theorems: the memory-bus rely and both VM relies are order-free
+# (invariant under reordering the interaction list). Consumed by auditors, not by the proof.
+admissibleMemoryBusM_perm
+tsBounded_perm
+entryKeyed_perm
+ApcOptimizer.OpenVM.openVmAdmissible_perm
+ApcOptimizer.SP1.sp1Admissible_perm
+# The canonical-order sanity bridge (`Implementation/MemoryBusMultiset.lean`): the order-free
+# rely recovers the positional `admissibleMemoryBus` on the canonical interleaved access order
+# (cited by the audited docstring in `ApcOptimizer/MemoryBus.lean`). Consumed by auditors, not
+# by the proof; listed with its private helpers (the walk starts only from [roots]).
+interleaveAccesses_admissibleMemoryBus_of_M
+interleaveAccesses_admissibleMemoryBus
+interleaveAccesses_length
+interleaveAccesses_getElem?_even
+interleaveAccesses_getElem?_odd
+interleaveAccesses_getElem?_cases
+getElem?_split_left
+getElem?_split_right
+getElem?_split_mid
+pairwise_lt_finRange

@@ -126,34 +126,52 @@ structure BusFacts (p : ℕ) (bs : BusSemantics p) where
   /-- Every bus with a declared shape is stateful. -/
   memShape_stateful : ∀ (busId : Nat) (shape : MemoryBusShape),
     memShape busId = some shape → bs.isStateful busId = true
-  /-- The VM's abstract `admissible` entails the concrete `admissibleMemoryBus` discipline on each
-      declared bus's active messages. -/
+  /-- The VM's abstract `admissible` entails the concrete order-free `admissibleMemoryBusM`
+      discipline on each declared bus's active messages. -/
   admissible_sound :
     ∀ (msgs : List (BusInteraction (ZMod p))),
       bs.admissible (msgs.filter
         (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)) →
       ∀ (busId : Nat) (shape : MemoryBusShape), memShape busId = some shape →
-        admissibleMemoryBus shape ((msgs.filter (fun m => m.busId = busId)).filter
-          (fun m => decide (m.multiplicity ≠ 0)))
-  /-- Reverse bridge for pair cancellation (completeness): dropping a matched, isolated
-      send→receive pair from a declared bus preserves `admissible`, given no active same-address
-      message between them and the *shield* condition on the before-region `A` (every active
-      same-address send in `A` is followed by an active same-address receive in `A`). Follows from
-      `admissibleMemoryBus_dropPair`. -/
+        admissibleMemoryBusM shape
+          (↑((msgs.filter (fun m => m.busId = busId)).filter
+            (fun m => decide (m.multiplicity ≠ 0))) : Multiset (BusInteraction (ZMod p)))
+  /-- Declared timestamp slot of a memory-shaped bus:
+      `memTsField busId = some (slot, bound)` asserts TS_BOUND — every active message on `busId`
+      carries `payload[slot].val < bound` (see `tsBounded`; justified by the VM's global
+      timestamp argument). -/
+  memTsField : (busId : Nat) → Option (Nat × Nat)
+  memTsField_sound :
+    ∀ (msgs : List (BusInteraction (ZMod p))),
+      bs.admissible (msgs.filter
+        (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)) →
+      ∀ (busId slot bound : Nat), memTsField busId = some (slot, bound) →
+        ∀ m ∈ msgs.filter (fun m => m.busId = busId), m.multiplicity ≠ 0 →
+          tsSlotVal slot m < bound
+  /-- Declared entry key of a chain-shaped bus: `memEntryKey busId = some (slot, key)` asserts
+      ENTRY_KEY — the record entering the block from outside on `busId` carries `key` in payload
+      slot `slot` (see `entryKeyed`; for an execution bridge, the block's entry pc). -/
+  memEntryKey : (busId : Nat) → Option (Nat × ZMod p)
+  memEntryKey_sound :
+    ∀ (msgs : List (BusInteraction (ZMod p))),
+      bs.admissible (msgs.filter
+        (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)) →
+      ∀ (busId slot : Nat) (key : ZMod p) (shape : MemoryBusShape),
+        memShape busId = some shape → memEntryKey busId = some (slot, key) →
+        entryKeyed shape slot key
+          (↑((msgs.filter (fun m => m.busId = busId)).filter
+            (fun m => decide (m.multiplicity ≠ 0))) : Multiset (BusInteraction (ZMod p)))
+  /-- Reverse bridge for pair cancellation (completeness): dropping an equal-payload
+      `setNew`/`getPrevious` pair from a declared bus preserves `admissible` — the pair
+      contributes the same payload to both fibers of `admissibleMemoryBusM` at its address, so
+      the per-address excess is unchanged (`admissibleMemoryBusM_dropPair`,
+      `Implementation/MemoryBusDrop.lean`). -/
   admissible_dropPair :
-    (1 : ZMod p) ≠ 0 →
     ∀ (busId : Nat) (shape : MemoryBusShape), memShape busId = some shape →
     ∀ (A B C : List (BusInteraction (ZMod p))) (S R : BusInteraction (ZMod p)),
       S.busId = busId → R.busId = busId →
       S.multiplicity = shape.setNewMult → R.multiplicity = -shape.setNewMult →
-      shape.address S = shape.address R →
-      (∀ m ∈ B, m.busId = busId → m.multiplicity ≠ 0 → shape.address m = shape.address S → False) →
-      (∀ (A₁ : List (BusInteraction (ZMod p))) (Sx : BusInteraction (ZMod p))
-         (A₂ : List (BusInteraction (ZMod p))),
-         A = A₁ ++ Sx :: A₂ → Sx.busId = busId → Sx.multiplicity ≠ 0 →
-         shape.address Sx = shape.address S → Sx.multiplicity = shape.setNewMult →
-         ∃ m ∈ A₂, m.busId = busId ∧ m.multiplicity ≠ 0 ∧ shape.address m = shape.address S ∧
-           m.multiplicity = -shape.setNewMult) →
+      S.payload = R.payload →
       bs.admissible (A ++ S :: B ++ R :: C) →
       bs.admissible (A ++ B ++ C)
   /-- Variable-range-checker stateless bus: `[x, b]` accepted iff
@@ -261,7 +279,11 @@ def BusFacts.trivial (bs : BusSemantics p) [DecidablePred bs.accepts] : BusFacts
   memShape _ := none
   memShape_stateful := by intro _ _ h; exact absurd h (by simp)
   admissible_sound := by intro _ _ _ _ h; exact absurd h (by simp)
-  admissible_dropPair := by intro _ _ _ h; exact absurd h (by simp)
+  memTsField _ := none
+  memTsField_sound := by intro _ _ _ _ _ h; exact absurd h (by simp)
+  memEntryKey _ := none
+  memEntryKey_sound := by intro _ _ _ _ _ _ _ h; exact absurd h (by simp)
+  admissible_dropPair := by intro _ _ h; exact absurd h (by simp)
   varRangeBus _ := false
   varRangeBus_sound := by intro _ h; exact absurd h (by simp)
   tupleRangeBus _ := none

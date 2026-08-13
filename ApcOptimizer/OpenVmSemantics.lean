@@ -177,8 +177,29 @@ def memShapeOf (busMap : BusMap) (busId : Nat) : Option MemoryBusShape :=
   | some .executionBridge => some { addressFields := [], direction := .receiveThenSend }
   | _ => none
 
-/-- The OpenVM bus semantics for a given bus map (default: the hard-coded default bus map). -/
-def openVmBusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap) :
+/-- The payload slot carrying the timestamp on a declared memory-shaped bus: slot 6 on the memory
+    bus (`(address_space, pointer, data… (4 limbs), timestamp)`) and slot 1 on the execution
+    bridge (`(pc, timestamp)`). -/
+def memTsFieldOf (busMap : BusMap) (busId : Nat) : Option Nat :=
+  match busMap busId with
+  | some .memory => some 6
+  | some .executionBridge => some 1
+  | _ => none
+
+/-- The entry-record designation on a chain-shaped bus (ENTRY_KEY, `ApcOptimizer/MemoryBus.lean`):
+    the execution bridge's record entering the block from outside carries the block's entry pc in
+    payload slot `0`, since the block is entered at its first instruction. `none` — hence no
+    assumption — where the optimizer was not told the block's entry pc, and on every other bus. -/
+def memEntryKeyOf (busMap : BusMap) (entryPc : Option (ZMod p)) (busId : Nat) :
+    Option (Nat × ZMod p) :=
+  match busMap busId, entryPc with
+  | some .executionBridge, some pc => some (0, pc)
+  | _, _ => none
+
+/-- The OpenVM bus semantics for a given bus map (default: the hard-coded default bus map) and, if
+    the optimizer was told it, the block's entry pc (see `memEntryKeyOf`). -/
+def openVmBusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap)
+    (entryPc : Option (ZMod p) := none) :
     BusSemantics p where
   isStateful busId :=
     match busMap busId with
@@ -186,10 +207,39 @@ def openVmBusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap) :
     | none => false
   accepts := accepts busMap
   maintainsInvariants := maintainsInvariants busMap
+  -- Four conjuncts: the order-free memory discipline per declared bus; the timestamp bound
+  -- (TS_BOUND — OpenVM's global timestamp argument keeps every timestamp below `2^29` across
+  -- the whole trace); the entry-record designation on a chain bus (ENTRY_KEY, vacuous unless the
+  -- block's entry pc was supplied); and the x0-returns-zero rely.
   admissible msgs :=
     (∀ (busId : Nat) (shape : MemoryBusShape), memShapeOf busMap busId = some shape →
-      admissibleMemoryBus shape (msgs.filter (fun m => m.busId = busId)))
+      admissibleMemoryBusM shape
+        (↑(msgs.filter (fun m => m.busId = busId)) : Multiset (BusInteraction (ZMod p))))
+    ∧ (∀ (busId tsField : Nat), memTsFieldOf busMap busId = some tsField →
+        tsBounded tsField (2 ^ 29) (msgs.filter (fun m => m.busId = busId)))
+    ∧ (∀ (busId slot : Nat) (key : ZMod p) (shape : MemoryBusShape),
+        memShapeOf busMap busId = some shape →
+        memEntryKeyOf busMap entryPc busId = some (slot, key) →
+        entryKeyed shape slot key
+          (↑(msgs.filter (fun m => m.busId = busId)) : Multiset (BusInteraction (ZMod p))))
     ∧ x0ReturnsZero busMap msgs
+
+/-- Auditor sanity: the whole OpenVM rely (`openVmBusSemantics.admissible`) is order-free — it is
+    invariant under reordering the interaction list. -/
+theorem openVmAdmissible_perm (busMap : BusMap) (entryPc : Option (ZMod p))
+    {msgs msgs' : List (BusInteraction (ZMod p))} (h : msgs.Perm msgs') :
+    (openVmBusSemantics p busMap entryPc).admissible msgs ↔
+      (openVmBusSemantics p busMap entryPc).admissible msgs' := by
+  unfold openVmBusSemantics x0ReturnsZero
+  refine and_congr ?_ (and_congr ?_ (and_congr ?_ ?_))
+  · refine forall_congr' fun busId => forall_congr' fun shape => imp_congr Iff.rfl ?_
+    exact admissibleMemoryBusM_perm shape (h.filter _)
+  · refine forall_congr' fun busId => forall_congr' fun tsField => imp_congr Iff.rfl ?_
+    exact tsBounded_perm tsField (2 ^ 29) (h.filter _)
+  · refine forall_congr' fun busId => forall_congr' fun slot => forall_congr' fun key =>
+      forall_congr' fun shape => imp_congr Iff.rfl (imp_congr Iff.rfl ?_)
+    exact entryKeyed_perm shape slot key (h.filter _)
+  · exact forall_congr' fun m => imp_congr h.mem_iff Iff.rfl
 
 /-- OpenVM's proving-backend degree bound (powdr's `DEFAULT_DEGREE_BOUND`), used when the optimizer
     is run directly rather than with a bound passed in over the FFI. -/
