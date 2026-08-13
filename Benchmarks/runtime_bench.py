@@ -8,6 +8,12 @@ For each case, run:
 and aggregate: total/mean/median optimizer time, the slowest cases, and where the time goes
 per pass across the whole set. Cases run *serially* so timings don't fight for cores.
 
+Where available, each case is also run once under the platform's CPU counters (`perf stat` on
+Linux, `/usr/bin/time -l` on macOS) to report cycles, instructions and IPC. That is what separates
+the two kinds of speedup: fewer *instructions* means less work (an algorithmic win), while flat
+instructions at fewer *cycles* means less stalling (a memory/layout win, invisible to per-pass
+timing because it taxes every pass alike). `--compare` classifies the change on that basis.
+
 This measures runtime only; effectiveness is benchmark.py's job.
 
     Benchmarks/runtime_bench.py                 # all openvm-eth cases
@@ -29,6 +35,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -83,6 +90,92 @@ RUN_MS_RE = re.compile(r"^\s*\((\d+) ms\)\s*$", re.M)
 PROFILE_HEAD_RE = re.compile(r": (\d+) cleanup iterations, (\d+) ms total")
 # `apc-optimizer profile` per-pass line, e.g. "  domainBatch: 258 ms".
 PROFILE_PASS_RE = re.compile(r"^\s+(\w+): (\d+) ms$", re.M)
+
+
+# CPU counters, read from whichever tool the platform has. Both report the whole process, so
+# parse/IO is included -- fine for classifying a change (the ratios move together), not for
+# attributing absolute counts to the optimizer.
+PERF_EVENTS = "cycles,instructions"
+# `/usr/bin/time -l`, e.g. "         26387451617  instructions retired".
+TIME_L_RE = re.compile(r"^\s*(\d+)\s+(instructions retired|cycles elapsed|"
+                       r"maximum resident set size)\s*$", re.M)
+TIME_L_KEY = {"instructions retired": "instructions", "cycles elapsed": "cycles",
+              "maximum resident set size": "max_rss"}
+
+
+def counter_backend():
+    """The available CPU-counter tool, or None (counters are then simply omitted)."""
+    if sys.platform.startswith("linux") and shutil.which("perf"):
+        return "perf"
+    if sys.platform == "darwin" and Path("/usr/bin/time").exists():
+        return "time-l"
+    return None
+
+
+def read_counters(cmd, backend):
+    """{cycles, instructions, max_rss?} for one run of `cmd`, or None if the tool refused (perf is
+    commonly blocked by perf_event_paranoid in containers)."""
+    if backend == "perf":
+        p = subprocess.run(["perf", "stat", "-x,", "-e", PERF_EVENTS, "--", *cmd],
+                           capture_output=True, text=True)
+        vals = {}
+        for line in p.stderr.splitlines():
+            f = line.split(",")
+            if len(f) >= 3:
+                try:
+                    vals[f[2]] = int(float(f[0]))
+                except ValueError:
+                    pass  # "<not counted>" / "<not supported>" / header noise
+        got = {k: vals[k] for k in ("cycles", "instructions") if k in vals}
+        return got if len(got) == 2 else None
+    if backend == "time-l":
+        p = subprocess.run(["/usr/bin/time", "-l", *cmd], capture_output=True, text=True)
+        got = {TIME_L_KEY[name]: int(v) for v, name in TIME_L_RE.findall(p.stderr)}
+        return got if "cycles" in got and "instructions" in got else None
+    return None
+
+
+def ipc(c):
+    return c["instructions"] / c["cycles"] if c and c.get("cycles") else None
+
+
+def sum_counters(per_case):
+    """Sum cycles/instructions over cases; max the peak RSS (it is a peak, not a total)."""
+    cs = [c for c in per_case.values() if c]
+    if not cs:
+        return None
+    out = {k: sum(c[k] for c in cs) for k in ("cycles", "instructions")}
+    rss = [c["max_rss"] for c in cs if "max_rss" in c]
+    if rss:
+        out["max_rss"] = max(rss)
+    return out
+
+
+def classify(base, target):
+    """One line saying whether a change moved work or stalls -- the diagnosis that per-pass timing
+    cannot give. Thresholds are deliberately loose; counters carry a few % of run-to-run noise."""
+    b, t = sum_counters(base), sum_counters(target)
+    if not b or not t:
+        return None
+    di = t["instructions"] / b["instructions"]
+    dc = t["cycles"] / b["cycles"]
+    if abs(di - 1) < 0.02 and dc < 0.98:
+        kind = ("**memory-bound win**: instructions are flat, so the same work now stalls less "
+                "(layout/locality, not algorithm)")
+    elif abs(di - 1) < 0.02 and dc > 1.02:
+        kind = ("**memory-bound regression**: instructions are flat but cycles rose -- the same "
+                "work stalls more")
+    elif di < 0.98:
+        kind = "**algorithmic win**: fewer instructions retired (less work)"
+    elif di > 1.02 and dc < 0.98:
+        kind = ("**net win despite more work**: instructions rose but cycles fell -- typically "
+                "trading a cheap traversal for better locality")
+    elif di > 1.02:
+        kind = "**more work**: instructions retired rose"
+    else:
+        kind = "no significant change in either counter"
+    return (f"Counters (whole process, summed): Δ instructions {di:.2f}×, Δ cycles {dc:.2f}×, "
+            f"IPC {ipc(b):.2f} → {ipc(t):.2f} — {kind}.")
 
 
 def best_of(cmd, repeat, parse):
@@ -151,13 +244,23 @@ def bench(args):
     if args.n is not None:
         cases = cases[: args.n]
 
+    backend = None if args.no_counters else counter_backend()
     run_ms = {}          # case name -> optimizer call wall time (ms)
     pass_ms = {}         # pass name -> cumulative ms across all cases
     iters = {}           # case name -> cleanup iterations
+    counters = {}        # case name -> {cycles, instructions, max_rss?}
     for i, case in enumerate(cases):
         (total,) = best_of([str(binary), "run", *vm_tok, str(case)], args.repeat, parse_run)
         _, its, passes = best_of([str(binary), "profile", *vm_tok, str(case)],
                                  args.repeat, parse_profile)
+        if backend:
+            c = read_counters([str(binary), "run", *vm_tok, str(case)], backend)
+            if c is None:
+                print(f"note: {backend} reported no counters; continuing without them",
+                      file=sys.stderr)
+                backend = None
+            else:
+                counters[case.name] = c
         run_ms[case.name] = total
         iters[case.name] = its
         for name, ms in passes.items():
@@ -165,7 +268,8 @@ def bench(args):
         print(f"[{i + 1}/{len(cases)}] {case.name}: {fmt_ms(total)}, {its} iterations",
               file=sys.stderr)
     return {"benchmark": benchmark, "vm": vm, "repeat": args.repeat,
-            "run_ms": run_ms, "pass_ms": pass_ms, "iters": iters}
+            "run_ms": run_ms, "pass_ms": pass_ms, "iters": iters,
+            "counters": counters, "counter_backend": backend}
 
 
 def summary_stats(run_ms):
@@ -221,6 +325,14 @@ def emit_md(data):
     lines.append(f"Cleanup iterations per case: "
                  f"min {min(iters.values())}, median {int(statistics.median(iters.values()))}, "
                  f"max {max(iters.values())}.")
+    tot = sum_counters(data.get("counters", {}))
+    if tot:
+        lines.append("")
+        lines.append(f"CPU counters (whole process, summed over cases, via "
+                     f"{data.get('counter_backend')}): "
+                     f"{tot['instructions'] / 1e9:.2f} G instructions, "
+                     f"{tot['cycles'] / 1e9:.2f} G cycles, IPC {ipc(tot):.2f}"
+                     + (f", peak RSS {tot['max_rss'] / 1e6:.0f} MB" if "max_rss" in tot else ""))
     return "\n".join(lines) + "\n"
 
 
@@ -240,6 +352,10 @@ def emit_compare_md(base, target):
     lines.append("")
     lines.append("Δ = target / baseline; below 1× means the target is faster.")
     lines.append("")
+    verdict = classify(base.get("counters", {}), target.get("counters", {}))
+    if verdict:
+        lines.append(verdict)
+        lines.append("")
     lines.append("| | target | baseline | Δ |")
     lines.append("|---|---|---|---|")
     for label, t, b in (("total", tt, bt), ("mean", tmean, bmean),
@@ -278,8 +394,12 @@ def emit_detail_compare_md(base, target):
     this branch = target, for embedding under the effectiveness table. Δ = this branch / main."""
     common = sorted(set(base["run_ms"]) & set(target["run_ms"]))
     b_run, t_run = base["run_ms"], target["run_ms"]
-    lines = ["<details><summary>Slowest cases (out of top 10)</summary>", "",
-             "| case | main | this branch | Δ |", "|---|---|---|---|"]
+    lines = []
+    verdict = classify(base.get("counters", {}), target.get("counters", {}))
+    if verdict:
+        lines += [verdict, ""]
+    lines += ["<details><summary>Slowest cases (out of top 10)</summary>", "",
+              "| case | main | this branch | Δ |", "|---|---|---|---|"]
     for name in sorted(common, key=lambda n: -t_run[n])[:10]:
         lines.append(f"| {name} | {fmt_ms(b_run[name])} | {fmt_ms(t_run[name])} "
                      f"| {fmt_ratio(t_run[name], b_run[name])} |")
@@ -309,6 +429,9 @@ def main():
                     help="only the top N cases by cost rank (default: all)")
     ap.add_argument("--repeat", type=int, default=1,
                     help="runs per case; the fastest is kept (default: 1)")
+    ap.add_argument("--no-counters", action="store_true",
+                    help="skip the CPU-counter run per case (perf / /usr/bin/time -l); counters "
+                         "are used automatically when the platform provides them")
     ap.add_argument("--no-build", action="store_true",
                     help="skip `lake build` (the binary must already exist)")
     ap.add_argument("--binary", type=Path, default=None, metavar="EXE",
