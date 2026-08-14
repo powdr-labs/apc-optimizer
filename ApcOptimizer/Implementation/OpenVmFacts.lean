@@ -712,7 +712,10 @@ def openVmFacts (p : ℕ) [NeZero p]
       openVm_isStateful_of_memShape busMap busId shape hshape
     -- `openVmBusSemantics.admissible` is the per-bus `admissibleMemoryBusM` conjunction, `.1`
     have hd := hadm.1 busId shape hshape
-    rwa [openVm_filter_active_busId busMap entryPc msgs busId hstateful] at hd
+    rw [openVm_filter_active_busId busMap entryPc msgs busId hstateful] at hd
+    refine excessBounded_of_admissibleMemoryBusM shape (b := busId) ?_ hd
+    intro m hm
+    simpa using List.of_mem_filter (List.mem_of_mem_filter hm)
   memTsField busId := (memTsFieldOf busMap busId).map (fun slot => (slot, 2 ^ 29))
   memTsField_sound := by
     intro msgs hadm busId slot bound hfact m hm hmne
@@ -765,9 +768,10 @@ def openVmFacts (p : ℕ) [NeZero p]
             = A.filter (fun m => m.busId = busId) ++ B.filter (fun m => m.busId = busId)
               ++ C.filter (fun m => m.busId = busId) := by
           simp only [List.filter_append]
-        rw [hfiltFull, coe_split_pair] at hfull
+        rw [hfiltFull] at hfull
         rw [hgoal]
-        exact admissibleMemoryBusM_dropPair shape hSm hRm hpay hfull
+        exact admissibleMemoryBusM_dropPair shape (hSbus.trans hRbus.symm) hSm hRm hpay
+          ((admissibleMemoryBusM_perm shape (perm_split_pair _ _ _ S R)).mp hfull)
       · -- `busId' ≠ busId`: `S`, `R` are on `busId`, so they drop out and the filter is unchanged.
         have hne : busId ≠ busId' := fun h => hbb h.symm
         have heq : (A ++ B ++ C).filter (fun m => m.busId = busId')
@@ -970,5 +974,22 @@ def openVmFacts (p : ℕ) [NeZero p]
   -- `rangeCheckAt` is only needed for SP1's op-6 byte-bus range check.
   rangeCheckAt _ _ := none
   rangeCheckAt_sound := by intro _ _ _ _ h; exact absurd h (by simp)
+
+/-- Auditor sanity: the whole OpenVM rely (`openVmBusSemantics.admissible`) is order-free — it is
+    invariant under reordering the interaction list. -/
+theorem openVmAdmissible_perm (busMap : BusMap) (entryPc : Option (ZMod p))
+    {msgs msgs' : List (BusInteraction (ZMod p))} (h : msgs.Perm msgs') :
+    (openVmBusSemantics p busMap entryPc).admissible msgs ↔
+      (openVmBusSemantics p busMap entryPc).admissible msgs' := by
+  unfold openVmBusSemantics x0ReturnsZero
+  refine and_congr ?_ (and_congr ?_ (and_congr ?_ ?_))
+  · refine forall_congr' fun busId => forall_congr' fun shape => imp_congr Iff.rfl ?_
+    exact admissibleMemoryBusM_perm shape (h.filter _)
+  · refine forall_congr' fun busId => forall_congr' fun tsField => imp_congr Iff.rfl ?_
+    exact tsBounded_perm tsField (2 ^ 29) (h.filter _)
+  · refine forall_congr' fun busId => forall_congr' fun slot => forall_congr' fun key =>
+      forall_congr' fun shape => imp_congr Iff.rfl (imp_congr Iff.rfl ?_)
+    exact entryKeyed_perm shape slot key (h.filter _)
+  · exact forall_congr' fun m => imp_congr h.mem_iff Iff.rfl
 
 end ApcOptimizer.OpenVM

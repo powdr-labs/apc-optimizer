@@ -172,7 +172,7 @@ theorem pairUp_filter_fst {α : Type*} (P : α → Bool) :
 theorem admissibleMemoryBus_of_pairUp (shape : MemoryBusShape)
     {L : List (BusInteraction (ZMod p))} {ps : List (BusInteraction (ZMod p) × BusInteraction (ZMod p))}
     (hpair : pairUp L = some ps)
-    (hM : admissibleMemoryBusM shape (↑L : Multiset (BusInteraction (ZMod p))))
+    (hM : excessBounded shape (↑L : Multiset (BusInteraction (ZMod p))))
     (hmne : -shape.setNewMult ≠ (shape.setNewMult : ZMod p))
     (hmults : ∀ q ∈ ps, q.1.multiplicity = -shape.setNewMult ∧ q.2.multiplicity = shape.setNewMult)
     (haddr : ∀ q ∈ ps, shape.address q.1 = shape.address q.2)

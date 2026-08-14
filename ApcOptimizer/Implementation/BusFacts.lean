@@ -1,4 +1,4 @@
-import ApcOptimizer.MemoryBus
+import ApcOptimizer.Implementation.MemoryBusState
 
 set_option autoImplicit false
 
@@ -126,14 +126,14 @@ structure BusFacts (p : ℕ) (bs : BusSemantics p) where
   /-- Every bus with a declared shape is stateful. -/
   memShape_stateful : ∀ (busId : Nat) (shape : MemoryBusShape),
     memShape busId = some shape → bs.isStateful busId = true
-  /-- The VM's abstract `admissible` entails the concrete order-free `admissibleMemoryBusM`
-      discipline on each declared bus's active messages. -/
+  /-- The VM's abstract `admissible` entails the count-based `excessBounded` bound on each declared
+      bus's active messages (via `excessBounded_of_admissibleMemoryBusM`). -/
   admissible_sound :
     ∀ (msgs : List (BusInteraction (ZMod p))),
       bs.admissible (msgs.filter
         (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)) →
       ∀ (busId : Nat) (shape : MemoryBusShape), memShape busId = some shape →
-        admissibleMemoryBusM shape
+        excessBounded shape
           (↑((msgs.filter (fun m => m.busId = busId)).filter
             (fun m => decide (m.multiplicity ≠ 0))) : Multiset (BusInteraction (ZMod p)))
   /-- Declared timestamp slot of a memory-shaped bus:

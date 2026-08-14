@@ -1,12 +1,12 @@
-import ApcOptimizer.MemoryBus
+import ApcOptimizer.Implementation.MemoryBusState
 import ApcOptimizer.Implementation.MemoryBusCascade
 
 set_option autoImplicit false
 
 /-! # Order-free memory-bus discipline: consumption and canonical order
 
-Consequences of `admissibleMemoryBusM` (`ApcOptimizer/MemoryBus.lean`, the order-free
-replacement for the positional `admissibleMemoryBus`). `admissibleMemoryBusM_copies` is the
+Consequences of `excessBounded` (`ApcOptimizer/MemoryBus.lean`, the count-based shadow of the
+order-free `admissibleMemoryBusM`). `admissibleMemoryBusM_copies` is the
 consumption form: presenting one address group as `k` accesses with strictly increasing send
 timestamps and the per-access LessThan bound, every interior receive is forced to copy the
 previous send's payload (via `cascade_forced`). The TS_BOUND section derives those timestamp
@@ -62,7 +62,7 @@ theorem two_le_count_map_finRange {k : ℕ} {α : Type*} [DecidableEq α]
     payload alone. Then every interior receive copies the previous send's payload. -/
 theorem admissibleMemoryBusM_copies {k : ℕ} (shape : MemoryBusShape)
     (M : Multiset (BusInteraction (ZMod p))) (addr : List (Option (ZMod p)))
-    (hM : admissibleMemoryBusM shape M)
+    (hM : excessBounded shape M)
     (send recv : Fin k → BusInteraction (ZMod p))
     (hsend : sendsAt shape addr M = Multiset.map send ↑(List.finRange k))
     (hrecv : recvsAt shape addr M = Multiset.map recv ↑(List.finRange k))
@@ -304,7 +304,7 @@ theorem val_lt_of_lessThan_gadget (a x : ZMod p) (c0 B : ℕ) (hc0 : 1 ≤ c0)
     receive to copy the previous send's payload. -/
 theorem admissibleMemoryBusM_copies_of_steps {k : ℕ} (shape : MemoryBusShape)
     (M : Multiset (BusInteraction (ZMod p))) (addr : List (Option (ZMod p)))
-    (hp : 2^30 < p) (hM : admissibleMemoryBusM shape M)
+    (hp : 2^30 < p) (hM : excessBounded shape M)
     (send recv : Fin k → BusInteraction (ZMod p))
     (hsend : sendsAt shape addr M = Multiset.map send ↑(List.finRange k))
     (hrecv : recvsAt shape addr M = Multiset.map recv ↑(List.finRange k))
@@ -478,7 +478,7 @@ theorem interleaveAccesses_admissibleMemoryBus {n : ℕ} (shape : MemoryBusShape
 /-! ## Glue: from the multiset discipline to the positional one
 
 `interleaveAccesses_admissibleMemoryBus_of_M` composes the chain: an order-free
-`admissibleMemoryBusM` multiset whose send/receive fibers are the access families, globally
+`excessBounded` multiset whose send/receive fibers are the access families, globally
 increasing send timestamps, and the per-access LessThan bound make the canonical order
 positionally `admissibleMemoryBus`. The address-group enumeration is a `filter` of the global
 index order — a subsequence, inheriting its monotonicity under whatever aliasing the evaluated
@@ -496,7 +496,7 @@ theorem pairwise_lt_finRange (n : ℕ) : (List.finRange n).Pairwise (· < ·) :=
 theorem interleaveAccesses_admissibleMemoryBus_of_M {n : ℕ} (shape : MemoryBusShape)
     (M : Multiset (BusInteraction (ZMod p)))
     (recv send : Fin n → BusInteraction (ZMod p))
-    (hM : admissibleMemoryBusM shape M)
+    (hM : excessBounded shape M)
     (hMsends : M.filter (fun m => m.multiplicity = shape.setNewMult)
       = Multiset.map send ↑(List.finRange n))
     (hMrecvs : M.filter (fun m => m.multiplicity = -shape.setNewMult)

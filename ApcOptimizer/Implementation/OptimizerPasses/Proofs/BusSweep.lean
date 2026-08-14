@@ -271,10 +271,10 @@ theorem denseBSOrder?_admissibleMemoryBus (bs : BusSemantics p) (facts : BusFact
     obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hm
     simpa using hactive x hx
   rw [hfilter] at hM
-  have hMc : admissibleMemoryBusM shape
+  have hMc : excessBounded shape
       (↑((qs.flatMap (fun q => [q.1.1, q.2.1])).map (fun bi => denseBIEval bi denv)) :
         Multiset (BusInteraction (ZMod p))) :=
-    (admissibleMemoryBusM_perm shape (hpermB.map (fun bi => denseBIEval bi denv))).mpr hM
+    (excessBounded_perm shape (hpermB.map (fun bi => denseBIEval bi denv))).mpr hM
   -- the TS_BOUND rely on this bus
   have hbnds := facts.memTsField_sound (d.busInteractions.map (fun bi => denseBIEval bi denv))
     hadm' busId tsField B htsf

@@ -720,7 +720,10 @@ def sp1Facts (p : ℕ) [NeZero p]
         by_cases hb : m.busId = busId
         · rw [hb, hstateful]; simp
         · simp [hb]
-      rwa [hlist] at hd
+      rw [hlist] at hd
+      refine excessBounded_of_admissibleMemoryBusM shape (b := busId) ?_ hd
+      intro m hm
+      simpa using List.of_mem_filter (List.mem_of_mem_filter hm)
     admissible_dropPair := by
       intro busId shape hshape A B C S R hSbus hRbus hSm hRm hpay hadm_full
       obtain ⟨hdisc, hts, hkey, hzero⟩ := hadm_full
@@ -738,9 +741,10 @@ def sp1Facts (p : ℕ) [NeZero p]
               = A.filter (fun m => m.busId = busId) ++ B.filter (fun m => m.busId = busId)
                 ++ C.filter (fun m => m.busId = busId) := by
             simp only [List.filter_append]
-          rw [hfiltFull, coe_split_pair] at hfull
+          rw [hfiltFull] at hfull
           rw [hgoal]
-          exact admissibleMemoryBusM_dropPair shape hSm hRm hpay hfull
+          exact admissibleMemoryBusM_dropPair shape (hSbus.trans hRbus.symm) hSm hRm hpay
+            ((admissibleMemoryBusM_perm shape (perm_split_pair _ _ _ S R)).mp hfull)
         · have hne : busId ≠ busId' := fun h => hbb h.symm
           have heq : (A ++ B ++ C).filter (fun m => m.busId = busId')
               = (A ++ S :: B ++ R :: C).filter (fun m => m.busId = busId') := by
@@ -932,5 +936,23 @@ def sp1Facts (p : ℕ) [NeZero p]
           rw [← hxq]
           exact (sp1_accepts_iff busMap entryPc m).trans (byte_op6_iff busMap m hmbus op q1 w c hpe hop hw hc)
       · exact absurd hfact (by simp) }
+
+/-- Auditor sanity: the whole SP1 rely (`sp1BusSemantics.admissible`) is order-free — it is
+    invariant under reordering the interaction list. -/
+theorem sp1Admissible_perm (busMap : BusMap) (entryPc : Option Nat)
+    {msgs msgs' : List (BusInteraction (ZMod p))} (h : msgs.Perm msgs') :
+    (sp1BusSemantics p busMap entryPc).admissible msgs ↔
+      (sp1BusSemantics p busMap entryPc).admissible msgs' := by
+  unfold sp1BusSemantics x0ReturnsZero
+  refine and_congr ?_ (and_congr ?_ (and_congr ?_ ?_))
+  · refine forall_congr' fun busId => forall_congr' fun shape => imp_congr Iff.rfl ?_
+    exact admissibleMemoryBusM_perm shape (h.filter _)
+  · refine forall_congr' fun busId => forall_congr' fun slot => forall_congr' fun bound =>
+      imp_congr Iff.rfl ?_
+    exact tsBounded_perm slot bound (h.filter _)
+  · refine forall_congr' fun busId => forall_congr' fun slot => forall_congr' fun key =>
+      forall_congr' fun shape => imp_congr Iff.rfl (imp_congr Iff.rfl ?_)
+    exact entryKeyed_perm shape slot key (h.filter _)
+  · exact forall_congr' fun m => imp_congr h.mem_iff Iff.rfl
 
 end ApcOptimizer.SP1

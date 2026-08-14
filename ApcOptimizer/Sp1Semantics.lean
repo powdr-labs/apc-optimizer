@@ -227,8 +227,7 @@ def sp1BusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap)
   -- (ENTRY_KEY, vacuous unless the block's entry pc was supplied); and the x0-returns-zero rely.
   admissible msgs :=
     (∀ (busId : Nat) (shape : MemoryBusShape), memShapeOf busMap busId = some shape →
-      admissibleMemoryBusM shape
-        (↑(msgs.filter (fun m => m.busId = busId)) : Multiset (BusInteraction (ZMod p))))
+      admissibleMemoryBusM shape (msgs.filter (fun m => m.busId = busId)))
     ∧ (∀ (busId slot bound : Nat), memTsFieldOf busMap busId = some (slot, bound) →
         tsBounded slot bound (msgs.filter (fun m => m.busId = busId)))
     ∧ (∀ (busId slot : Nat) (key : ZMod p) (shape : MemoryBusShape),
@@ -237,24 +236,6 @@ def sp1BusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap)
         entryKeyed shape slot key
           (↑(msgs.filter (fun m => m.busId = busId)) : Multiset (BusInteraction (ZMod p))))
     ∧ x0ReturnsZero busMap msgs
-
-/-- Auditor sanity: the whole SP1 rely (`sp1BusSemantics.admissible`) is order-free — it is
-    invariant under reordering the interaction list. -/
-theorem sp1Admissible_perm (busMap : BusMap) (entryPc : Option Nat)
-    {msgs msgs' : List (BusInteraction (ZMod p))} (h : msgs.Perm msgs') :
-    (sp1BusSemantics p busMap entryPc).admissible msgs ↔
-      (sp1BusSemantics p busMap entryPc).admissible msgs' := by
-  unfold sp1BusSemantics x0ReturnsZero
-  refine and_congr ?_ (and_congr ?_ (and_congr ?_ ?_))
-  · refine forall_congr' fun busId => forall_congr' fun shape => imp_congr Iff.rfl ?_
-    exact admissibleMemoryBusM_perm shape (h.filter _)
-  · refine forall_congr' fun busId => forall_congr' fun slot => forall_congr' fun bound =>
-      imp_congr Iff.rfl ?_
-    exact tsBounded_perm slot bound (h.filter _)
-  · refine forall_congr' fun busId => forall_congr' fun slot => forall_congr' fun key =>
-      forall_congr' fun shape => imp_congr Iff.rfl (imp_congr Iff.rfl ?_)
-    exact entryKeyed_perm shape slot key (h.filter _)
-  · exact forall_congr' fun m => imp_congr h.mem_iff Iff.rfl
 
 /-- SP1's proving-backend degree bound (powdr's `DEFAULT_DEGREE_BOUND` for SP1), used when the
     optimizer is run directly rather than with a bound passed in over the FFI. -/

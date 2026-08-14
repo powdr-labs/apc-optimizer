@@ -9,19 +9,23 @@ set_option autoImplicit false
     value). Both memory reads and memory writes are such a `getPrevious`/`setNew` pair (a read
     additionally constrains the two values to agree).
 
-    The primary discipline is the order-free `admissibleMemoryBusM`: a property of the *multiset*
-    of evaluated messages, assuming nothing about the order of the interaction list
-    (`admissibleMemoryBusM_perm`). Per evaluated address it asserts the multiset shadow of two
-    system-level facts:
+    The primary discipline is the order-free `admissibleMemoryBusM`, stated on the *net bus state*
+    (`busState`: the multiplicity each message is sent with, summed) and hence assuming nothing about
+    the order of the interaction list. Per evaluated address it asserts
+    the state shadow of two system-level facts:
 
-    1. **Bus balance** — a received record is a sent record: matched receives consume send
-       payload tuples injectively (the defining property of the global bus argument, e.g. [1]).
+    1. **Bus balance** — a received record is a sent record: an in-block receive consumes an in-block
+       send, netting to zero (the defining property of the global bus argument, e.g. [1]).
     2. **Window atomicity** — per address, at most one record enters the block from outside (the
-       entry receive); every other receive consumes an in-block send.
+       entry receive) and at most one is left behind for later (the exit send); those are the only
+       messages the block leaves unbalanced.
 
-    Together: at every address, the receives' payload multiset exceeds the sends' by at most one
-    element. Grouping is by *evaluated* address, so the statement is independent of how symbolic
-    addresses alias.
+    Grouping is by *evaluated* address, so the statement is independent of how symbolic addresses
+    alias. The field-valued state stands for the underlying message *counts*, and determines them
+    only because the rely also fixes the multiplicities to `±1` and keeps the message count below
+    `p` — see `admissibleMemoryBusM`. Everything derived from these definitions, including the
+    count-based form the passes consume and the order-freeness of each rely, lives in
+    `Implementation/MemoryBusState.lean`.
 
     The positional `admissibleMemoryBus` remains temporarily: it additionally trusts that the
     interaction list is *ordered by time* and asserts payload copying between list-adjacent
@@ -36,7 +40,7 @@ set_option autoImplicit false
     A third rely, `entryKeyed` (ENTRY_KEY), *designates* the record entering the block from outside
     on a chain bus: it carries a known key (for an execution bridge, the block's entry pc). It
     strengthens window atomicity, which only counts the entering record without saying which one it
-    is — see `entryKeyed` for why the multiset data alone cannot say.
+    is — see `entryKeyed` for why the message data alone cannot say.
 
     [1] https://link.springer.com/article/10.1007/BF01185212
 -/
@@ -73,10 +77,15 @@ def MemoryBusShape.setNewMult (shape : MemoryBusShape) : ZMod p :=
   | .receiveThenSend => 1
   | .sendThenReceive => -1
 
+/-- The address projection of an evaluated payload, per a memory-bus shape. -/
+def MemoryBusShape.addressOf (shape : MemoryBusShape) (payload : List (ZMod p)) :
+    List (Option (ZMod p)) :=
+  shape.addressFields.map (fun (slot : Nat) => payload[slot]?)
+
 /-- The address projection of an evaluated message, per a memory-bus shape. -/
 def MemoryBusShape.address (shape : MemoryBusShape) (m : BusInteraction (ZMod p)) :
     List (Option (ZMod p)) :=
-  shape.addressFields.map (fun (slot : Nat) => m.payload[slot]?)
+  shape.addressOf m.payload
 
 /-- Given an ordered list of memory bus interaction messages *on the same bus*, decide whether
     it follows the memory bus discipline: after a `setNew` to a given address (multiplicity
@@ -91,6 +100,24 @@ def admissibleMemoryBus (shape : MemoryBusShape) (L : List (BusInteraction (ZMod
     (∀ m ∈ mid, m.multiplicity ≠ 0 → shape.address m = shape.address S → False) →
     S.payload = R.payload
 
+def busState (M : List (BusInteraction (ZMod p))) : BusState p := fun message =>
+  M.filter (fun m => (m.busId, m.payload) = message) |>.map BusInteraction.multiplicity |>.sum
+
+def admissibleMemoryBusM (shape : MemoryBusShape) (M : List (BusInteraction (ZMod p))) : Prop :=
+  (∀ m ∈ M, m.multiplicity = shape.setNewMult ∨ m.multiplicity = -shape.setNewMult) ∧
+  M.length + 1 < p ∧
+  ∀ addr : List (Option (ZMod p)),
+    -- The bus state, restricted to the messages at the current address
+    let state := busState (M.filter (fun m => shape.address m = addr))
+    -- Case 1: everything balances (no entry or exit)
+    state = (fun _ => 0) ∨
+    -- Case 2: exactly one record enters and one exists
+    ∃ entryRecord exitRecord : BusMessage p,
+      state = fun message =>
+        if message = entryRecord then -shape.setNewMult
+        else if message = exitRecord then shape.setNewMult
+        else 0
+
 /-- The `getPrevious` messages of `M` at evaluated address `addr`. -/
 def recvsAt (shape : MemoryBusShape) (addr : List (Option (ZMod p)))
     (M : Multiset (BusInteraction (ZMod p))) : Multiset (BusInteraction (ZMod p)) :=
@@ -102,24 +129,11 @@ def sendsAt (shape : MemoryBusShape) (addr : List (Option (ZMod p)))
   M.filter (fun m => m.multiplicity = shape.setNewMult ∧ shape.address m = addr)
 
 /-- The payloads the receives at `addr` hold in excess of the sends: what enters the block from
-    outside there. `admissibleMemoryBusM` bounds its cardinality by one. -/
+    outside there. The discipline bounds its cardinality by one. -/
 def excessAt (shape : MemoryBusShape) (addr : List (Option (ZMod p)))
     (M : Multiset (BusInteraction (ZMod p))) : Multiset (List (ZMod p)) :=
   (recvsAt shape addr M).map BusInteraction.payload
     - (sendsAt shape addr M).map BusInteraction.payload
-
-/-- Order-free memory-bus discipline: at every evaluated address, the receives' payload multiset
-    exceeds the sends' payload multiset by at most one element — the entry receive. -/
-def admissibleMemoryBusM (shape : MemoryBusShape)
-    (M : Multiset (BusInteraction (ZMod p))) : Prop :=
-  ∀ addr : List (Option (ZMod p)), Multiset.card (excessAt shape addr M) ≤ 1
-
-/-- The discipline is invariant under reordering the interaction list. -/
-theorem admissibleMemoryBusM_perm (shape : MemoryBusShape)
-    {L L' : List (BusInteraction (ZMod p))} (h : L.Perm L') :
-    admissibleMemoryBusM shape (L : Multiset (BusInteraction (ZMod p))) ↔
-      admissibleMemoryBusM shape (L' : Multiset (BusInteraction (ZMod p))) := by
-  rw [Multiset.coe_eq_coe.mpr h]
 
 /-- ENTRY_KEY: every payload entering the block from outside carries `key` in slot `slot`.
 
@@ -133,13 +147,6 @@ def entryKeyed (shape : MemoryBusShape) (slot : Nat) (key : ZMod p)
   ∀ (addr : List (Option (ZMod p))) (P : List (ZMod p)),
     P ∈ excessAt shape addr M → P[slot]? = some key
 
-/-- The entry designation is invariant under reordering the interaction list. -/
-theorem entryKeyed_perm (shape : MemoryBusShape) (slot : Nat) (key : ZMod p)
-    {L L' : List (BusInteraction (ZMod p))} (h : L.Perm L') :
-    entryKeyed shape slot key (L : Multiset (BusInteraction (ZMod p))) ↔
-      entryKeyed shape slot key (L' : Multiset (BusInteraction (ZMod p))) := by
-  rw [Multiset.coe_eq_coe.mpr h]
-
 /-- The `Nat` value of a message's declared timestamp slot (`0` if the payload is too short to
     have one). -/
 def tsSlotVal (tsField : Nat) (m : BusInteraction (ZMod p)) : Nat :=
@@ -151,8 +158,3 @@ def tsSlotVal (tsField : Nat) (m : BusInteraction (ZMod p)) : Nat :=
     reordering (`tsBounded_perm`). -/
 def tsBounded (tsField bound : Nat) (msgs : List (BusInteraction (ZMod p))) : Prop :=
   ∀ m ∈ msgs, tsSlotVal tsField m < bound
-
-/-- The timestamp bound is invariant under reordering the interaction list. -/
-theorem tsBounded_perm (tsField bound : Nat) {L L' : List (BusInteraction (ZMod p))}
-    (h : L.Perm L') : tsBounded tsField bound L ↔ tsBounded tsField bound L' :=
-  forall_congr' fun _ => imp_congr h.mem_iff Iff.rfl

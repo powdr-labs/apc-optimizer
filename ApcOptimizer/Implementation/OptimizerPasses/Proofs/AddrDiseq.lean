@@ -62,9 +62,9 @@ theorem denseAddr_slot_neq (shape : MemoryBusShape) (S bi : BusInteraction (Dens
   intro heq
   obtain ⟨j, hj⟩ : ∃ j, shape.addressFields[j]? = some slot := List.getElem?_of_mem hslot
   have e1 : (shape.address (denseBIEval S denv))[j]? = some ((denseBIEval S denv).payload[slot]?) := by
-    simp only [MemoryBusShape.address, List.getElem?_map, hj, Option.map_some]
+    simp only [MemoryBusShape.address, MemoryBusShape.addressOf, List.getElem?_map, hj, Option.map_some]
   have e2 : (shape.address (denseBIEval bi denv))[j]? = some ((denseBIEval bi denv).payload[slot]?) := by
-    simp only [MemoryBusShape.address, List.getElem?_map, hj, Option.map_some]
+    simp only [MemoryBusShape.address, MemoryBusShape.addressOf, List.getElem?_map, hj, Option.map_some]
   rw [heq, e2] at e1
   have key : (denseBIEval S denv).payload[slot]? = (denseBIEval bi denv).payload[slot]? :=
     (Option.some.inj e1).symm
@@ -85,9 +85,9 @@ theorem denseAddr_eq_slot (shape : MemoryBusShape) (S m : BusInteraction (DenseE
     (denseBIEval S denv).payload[f]? = (denseBIEval m denv).payload[f]? := by
   obtain ⟨j, hj⟩ : ∃ j, shape.addressFields[j]? = some f := List.getElem?_of_mem hf
   have e1 : (shape.address (denseBIEval S denv))[j]? = some ((denseBIEval S denv).payload[f]?) := by
-    simp only [MemoryBusShape.address, List.getElem?_map, hj, Option.map_some]
+    simp only [MemoryBusShape.address, MemoryBusShape.addressOf, List.getElem?_map, hj, Option.map_some]
   have e2 : (shape.address (denseBIEval m denv))[j]? = some ((denseBIEval m denv).payload[f]?) := by
-    simp only [MemoryBusShape.address, List.getElem?_map, hj, Option.map_some]
+    simp only [MemoryBusShape.address, MemoryBusShape.addressOf, List.getElem?_map, hj, Option.map_some]
   rw [heq, e2] at e1
   exact (Option.some.inj e1).symm
 

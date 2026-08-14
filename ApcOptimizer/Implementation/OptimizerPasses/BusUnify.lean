@@ -7,7 +7,7 @@ set_option autoImplicit false
 /-! # Dense timestamp-group bus unification (runtime transform for `busUnify`)
 
 Adds the payload-copy equalities a memory bus's discipline entails, justified *order-free*: the
-rely is `admissibleMemoryBusM` (per-address multiset counting) plus the TS_BOUND fact
+rely is `admissibleMemoryBusM` (per-address net bus state) plus the TS_BOUND fact
 (`facts.memTsField` — every active message's declared ts-slot value is `< B ≤ 2^29`), consumed
 through `admissibleMemoryBusM_copies_of_ts` (`Implementation/MemoryBusMultiset.lean`). Nothing
 about the interaction list's order is trusted.
