@@ -10,8 +10,7 @@ set_option autoImplicit false
 The certificate of `ExecChain.lean` read semantically: the key-slot constants pin the chain, each
 access steps its own timestamp, and `entryKeyed_chain_copies`
 (`Implementation/MemoryBusChain.lean`) then forces every non-entry receive to copy the previous
-send's payload. The fiber presentations and the classification verdicts are the `busUnify` ones
-(`Proofs/BusUnify.lean`); only the certificate and its consumption are new. -/
+send's payload. The fiber presentations and the classification verdicts come from `Proofs/BusUnify.lean`. -/
 
 namespace ApcOptimizer.Dense
 
@@ -91,7 +90,7 @@ private theorem denseECTs_eval {tsField : Nat} {bi : BusInteraction (DenseExpr p
 
 /-- A verified access step: under TS_BOUND on the receive, its ts-slot value is below its own
     send's. The difference is a constant `δ` with `1 ≤ δ.val < B ≤ 2^29` and `2^30 < p`, so the
-    field cannot wrap between the two (`val_lt_of_offset_lt`). -/
+    field cannot wrap between the two (`val_lt_of_step`). -/
 theorem denseECStepOk_sound {tsField B : Nat} {S R : BusInteraction (DenseExpr p)}
     (hp : 2 ^ 30 < p) (hB : B ≤ 2 ^ 29) (h : denseECStepOk tsField B S R = true)
     (denv : VarId → ZMod p) (hbnd : tsSlotVal tsField (denseBIEval R denv) < B) :

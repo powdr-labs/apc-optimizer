@@ -14,7 +14,7 @@ set_option autoImplicit false
 (`DensePassCorrect.denseAddConstraints`); the substance is real-trace completeness — every
 admissible satisfying assignment already fulfils the added slot equalities. The justification is
 *order-free*: `denseBUGroupPairs?_sound` assembles the verifier's certificates into the
-hypotheses of `admissibleMemoryBusM_copies_of_ts` (`Implementation/MemoryBusMultiset.lean`) —
+hypotheses of `admissibleMemoryBusM_copies_of_steps` (`Implementation/MemoryBusMultiset.lean`) —
 fiber presentations from the classification split, send-timestamp structure from the shared
 linear base, and the per-access LessThan bound from the solved gadget plus the TS_BOUND rely
 (`facts.memTsField_sound`).
@@ -1561,35 +1561,31 @@ theorem denseBusUnifyNewCs_sound (bs : BusSemantics p) (facts : BusFacts p bs) (
 theorem denseBusUnifyF_eq (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) :
     denseBusUnifyF bs facts d =
-      (if (1 : ZMod p) ≠ 0 then
-        (if (denseBusUnifyNewCs bs facts d).isEmpty then d
-         else { d with algebraicConstraints :=
-                  d.algebraicConstraints ++ denseBusUnifyNewCs bs facts d })
-       else d) := rfl
+      (if (denseBusUnifyNewCs bs facts d).isEmpty then d
+       else { d with algebraicConstraints :=
+                d.algebraicConstraints ++ denseBusUnifyNewCs bs facts d }) := rfl
 
 theorem denseBusUnifyF_covered (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) (hcov : d.CoveredBy reg) :
     (denseBusUnifyF bs facts d).CoveredBy reg := by
   rw [denseBusUnifyF_eq]
-  split_ifs with hp1 _hempty
+  split_ifs with _hempty
   · exact hcov
   · refine ⟨fun e he => ?_, hcov.2⟩
     rcases List.mem_append.1 he with h | h
     · exact hcov.1 e h
     · intro i hi
       exact DenseConstraintSystem.occ_valid hcov i (denseBusUnifyNewCs_vars bs facts d e h i hi)
-  · exact hcov
 
 theorem denseBusUnifyF_correct (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) (hcov : d.CoveredBy reg) :
     DensePassCorrect reg.isInput d (denseBusUnifyF bs facts d) [] bs := by
   rw [denseBusUnifyF_eq]
-  split_ifs with hp1 _hempty
+  split_ifs with _hempty
   · exact DensePassCorrect.refl reg.isInput d bs
   · exact DensePassCorrect.denseAddConstraints d bs (denseBusUnifyNewCs bs facts d)
       (denseBusUnifyNewCs_vars bs facts d)
       (fun denv hadm hsat => denseBusUnifyNewCs_sound bs facts reg d hcov denv hadm hsat)
-  · exact DensePassCorrect.refl reg.isInput d bs
 
 /-! ## The dense `busUnify` pass -/
 
