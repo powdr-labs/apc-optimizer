@@ -1,0 +1,27 @@
+pr,merged_at,bench_run_at,runtime_main_s,runtime_branch_s,delta,title
+202,2026-07-24T12:07:24Z,2026-07-24T12:02:43Z,1132.8,1076.1,-5%,bench: add sha256 runtime stress case (own CI runner)
+198,2026-07-24T12:13:17Z,2026-07-24T12:34:14Z,1101.6,1051.3,-5%,perf(redundantByteDrop): indexed byte-justification (~37x on the pass)
+203,2026-07-24T12:25:37Z,2026-07-24T12:42:17Z,1068.8,1026.6,-4%,Apply #198 to main...
+199,2026-07-24T12:32:55Z,2026-07-24T12:48:43Z,1017.7,966.1,-5%,perf(oneHotAnnihilate): index product constraints (O(constraints²) → O(constraints))
+204,2026-07-24T13:29:29Z,2026-07-24T13:44:26Z,991.7,1035.9,+4%,"docs: rename docs/ to agent-docs/, flatten, add README"
+205,2026-07-24T14:16:56Z,2026-07-24T14:11:34Z,1035.2,781.0,-25%,perf(registry): read byId.size before the push in register — encode 80.5s → 0.8s on 170k sha256
+210,2026-07-25T12:04:19Z,2026-07-25T11:35:57Z,858.7,547.9,-36%,perf: 1.8x faster on large APCs — domainFold/flagFold/rootPairUnify/busPairCancel (989s → 550s on 170k sha256)
+211,2026-07-26T11:55:29Z,2026-07-26T11:52:24Z,555.2,383.7,-31%,perf(reencode): stop rescanning the whole system per candidate group (184s -> 97s on 170k sha256)
+212,2026-07-26T12:45:04Z,2026-07-26T12:41:50Z,380.8,354.4,-7%,perf(busPairCancel): per-variable domain index for byte justification (90s -> 50s on 170k sha256)
+215,2026-07-26T13:37:16Z,2026-07-26T13:08:54Z,354.3,345.3,-3%,"perf(addrDiseq): scope the two-root build to address slots, linearize factors once (404s -> 378s on 170k sha256)"
+214,2026-07-26T13:40:12Z,2026-07-26T13:01:41Z,349.7,351.7,+1%,"report: cleaner benchmark titles, drop the geomean"
+217,2026-07-26T21:28:38Z,2026-07-26T16:56:36Z,336.6,332.2,-1%,perf(domainFold): gate the index on the candidate-group count (exponent 2.07 → 1.10)
+220,2026-07-27T12:56:24Z,2026-07-27T09:41:31Z,333.6,255.5,-23%,"perf: sha256_big runtime −28% (reencode state on stable positions, busUnify sweep, bytePack resume)"
+221,2026-07-27T13:57:48Z,2026-07-27T13:52:51Z,257.9,238.9,-7%,"perf: de-quadratify the shared expression walks (sha256 0.95×, gauss 0.75×, effectiveness identical)"
+223,2026-07-27T16:32:41Z,2026-07-27T16:26:09Z,245.9,225.0,-8%,"perf: sparse same-key region scans for busPairCancel (58→32 s on the 168k-var sha256 case) + prepared certificates, bucketed domains, one-walk reencode freshness"
+225,2026-07-27T18:33:46Z,2026-07-27T18:28:30Z,220.8,201.9,-9%,"perf: hoist the ZMod instance dictionary out of the affine-layer loops (gauss 1.5-2.4×, normalize 2.2-2.7×, pipeline 1.15-1.27×, effectiveness identical)"
+226,2026-07-27T19:34:15Z,2026-07-27T19:28:01Z,204.6,184.6,-10%,"perf: reencode 1.8-2.6x + fix a csimp ordering bug that disabled #225's denseLinearize hoist (pipeline 1.18-1.26x, effectiveness identical)"
+227,2026-07-27T20:10:14Z,2026-07-27T20:07:59Z,186.7,178.1,-5%,"perf: thread the ZMod zero through the point evaluator + denseConstDiffNZ (reencode 1.7x, busPairCancel 1.43x, busUnify 1.31x, pipeline 1.15x on wasm; effectiveness identical)"
+228,2026-07-27T20:52:20Z,2026-07-27T20:27:59Z,180.4,178.0,-1%,"perf: share one DenseZModOps across the composite affine operations (busUnify 1.51x, carryBranch 1.30x, rootPairUnify 1.35x, pipeline 1.07x on wasm; effectiveness identical)"
+224,2026-07-27T23:47:55Z,2026-07-27T17:15:10Z,223.6,226.9,+1%,"refactor: split the #223 modules into impl + proofs, delete the dead busUnify csimp twin (net −22 lines)"
+229,2026-07-27T23:56:03Z,2026-07-27T23:49:49Z,176.5,176.0,-0%,"perf: run reencode's incremental candidate loop unconditionally (reencode 2.08x on the openvm-eth family, effectiveness identical)"
+219,2026-07-28T03:03:33Z,2026-07-28T02:48:06Z,176.9,180.1,+2%,perf: hash-index the nonzero-witness disequality scan (busPairCancel 44s→1s on SP1 keccak)
+231,2026-07-28T04:01:50Z,2026-07-28T03:49:32Z,177.8,172.3,-3%,"perf: decide reencode's degree gate while rewriting instead of walking the output again (reencode 1.15x on sha256, 1.12x on openvm-eth; effectiveness identical)"
+232,2026-07-28T07:14:48Z,2026-07-28T05:34:48Z,171.4,176.8,+3%,perf: mine byte-operand bounds into the domain table (domainBatch ~4× on SP1)
+234,2026-07-28T08:55:02Z,2026-07-28T08:29:33Z,169.5,171.1,+1%,perf: mine byte-operand bounds into the domain table (domainBatch ~4× on SP1)
+195,2026-07-28T12:00:47Z,2026-07-28T11:58:49Z,167.7,169.7,+1%,docs: render the audited surface as a Verso site
