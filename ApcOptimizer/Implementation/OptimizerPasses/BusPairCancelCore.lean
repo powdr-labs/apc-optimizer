@@ -113,8 +113,7 @@ theorem denseActiveStatefulMsgs_stateless (bs : BusSemantics p) (denv : VarId �
     multiplicities on a stateful `busId`), optionally emitting replacement byte checks. The byte
     obligation (`hbyte`) and per-check facts (`hchecks`) are hypotheses; admissibility is preserved
     by the order-free `BusFacts.admissible_dropPair`, which needs only the payload equality
-    (`hpayEval`) — the region hypotheses `_hmidEval`/`_hpreEval` are not consumed and exist only so
-    callers' certificates keep their shape. Assembled via `DensePassCorrect.ofEnvEq`. -/
+    (`hpayEval`). Assembled via `DensePassCorrect.ofEnvEq`. -/
 theorem denseDropPair_correct (isInput : VarId → Bool)
     (d : DenseConstraintSystem p) (bs : BusSemantics p) (facts : BusFacts p bs)
     (hp1 : (1 : ZMod p) ≠ 0)
@@ -140,21 +139,7 @@ theorem denseDropPair_correct (isInput : VarId → Bool)
     (hSm : S.multiplicity.constValue? = some shape.setNewMult)
     (hRm : R.multiplicity.constValue? = some (-shape.setNewMult))
     (hpayEval : ∀ (denv : VarId → ZMod p), (∀ c ∈ d.algebraicConstraints, c.eval denv = 0) →
-      (denseBIEval S denv).payload = (denseBIEval R denv).payload)
-    (_hmidEval : ∀ (denv : VarId → ZMod p), (∀ c ∈ d.algebraicConstraints, c.eval denv = 0) →
-        ∀ m0 ∈ B, (denseBIEval m0 denv).busId = busId →
-        (denseBIEval m0 denv).multiplicity ≠ 0 →
-        shape.address (denseBIEval m0 denv) = shape.address (denseBIEval S denv) → False)
-    (_hpreEval : ∀ (denv : VarId → ZMod p), (∀ c ∈ d.algebraicConstraints, c.eval denv = 0) →
-        ∀ (A_pre : List (BusInteraction (DenseExpr p)))
-        (m0 : BusInteraction (DenseExpr p)) (A_suf : List (BusInteraction (DenseExpr p))),
-        A = A_pre ++ m0 :: A_suf → (denseBIEval m0 denv).busId = busId →
-        (denseBIEval m0 denv).multiplicity ≠ 0 →
-        shape.address (denseBIEval m0 denv) = shape.address (denseBIEval S denv) →
-        (denseBIEval m0 denv).multiplicity = shape.setNewMult →
-        ∃ Rp ∈ A_suf, (denseBIEval Rp denv).busId = busId ∧ (denseBIEval Rp denv).multiplicity ≠ 0 ∧
-          shape.address (denseBIEval Rp denv) = shape.address (denseBIEval S denv) ∧
-          (denseBIEval Rp denv).multiplicity = -shape.setNewMult) :
+      (denseBIEval S denv).payload = (denseBIEval R denv).payload) :
     DensePassCorrect isInput d { d with busInteractions := A ++ B ++ C ++ checks } [] bs := by
   set out : DenseConstraintSystem p := { d with busInteractions := A ++ B ++ C ++ checks } with hout
   have houtb : out.busInteractions = A ++ B ++ C ++ checks := rfl

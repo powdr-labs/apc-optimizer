@@ -7484,3 +7484,60 @@ existed), and migration narration replaced by current-state phrasing per the com
 `admissible_dropPair` needs only payload equality). Dropping the machinery would simplify the
 pass and might cancel non-adjacent pairs (an effectiveness win), at the cost of a larger diff to
 main; unexplored.
+
+### 187. busPairCancel region/shield machinery removed (entry 186's open item); the SP1-vs-main gap root-caused to substitution-order path dependence
+
+**Region gate removed (the entry-186 open item), MEASURED neutral.** `denseDropPair_correct`'s
+unused `_hmidEval`/`_hpreEval` hypotheses are gone, and with them everything that existed only to
+establish them: the `denseRegionTests` engine (`BusPairCancelKeyIdx.lean` + proofs, 1149 lines),
+the prepared-record forms (`AddrDiseqPre.lean` + proofs), the recognizers
+`denseMidRefuted`/`densePreRefuted`/`denseProvRecv`/`denseShieldOk`, `DenseAddrCerts`, and the
+`DenseTwoRootMap.buildFor*` builders (busUnify builds its own map via `denseBUTwoRootMap`).
+`denseFindCancelGoIdx` now accepts any matched live pair on `denseCheckCancel` alone — non-adjacent
+pairs included, since the order-free `admissible_dropPair` needs only the payload equality.
+Net −1800 lines. MEASURED: rsp 3.868×/2.692×, openvm-eth 4.557×/3.557× — byte-identical
+per-case to the branch before the change on both suites (the widened acceptance fires on pairs
+whose payload equality was already derivable, which the region tests apparently never blocked).
+
+**The SP1-vs-main effectiveness gap (rsp 3.930× → 3.868×, sp1:keccak 2657 → 2729 vars) is NOT a
+certificate failure.** Instrumenting the certificates per cycle on regressing cases
+(apc_073, apc_016): `denseBSOrder?` (perm/pairs/gadgets/sendTs) and `denseBUGroupPairs?` all
+certify from cycle 1 on (cycle 0 fails only `denseBUSendTsOk` — the exec-chain equalities are
+emitted by cycle-0 `execChain` but substituted only by cycle-1 `gauss`, so per-instruction clk
+bases haven't merged yet). Dumping the emitted equalities per cycle on apc_073: the branch emits
+the *same access copies* as main, one gauss-cycle later and with both sides already rewritten —
+main's copies land as `prev_value = a__0__k` var↔var while the wires are fresh; the branch's land
+as e.g. `lower_limb__0__k_5 = product_2k + 256·product_2k+1` after gauss has substituted through
+the byte decompositions. Gauss then orients the pivot the other way (`product_8 :=
+lower_limb − 256·product_9` instead of `lower_limb := product_8 + 256·product_9`; the 16-bit limb
+is protected by its bare byte-bus occurrence, the byte var is not), and the byte-shaped passes
+downstream never re-identify the byte variables — the residual is `[3,0, L−256·p9, p9]` U8Range
+checks plus OR lookups with expression operands where main has plain byte vars. Cross-feeding
+confirms the loss is irreversible at the fixpoint: main's binary cannot shrink the branch's
+output either.
+
+**Disproven fixes (A/B, measured).** (1) Inserting a `gaussChain` instance between `execChain`
+and `busUnify` (so the copies land in cycle 0): rsp 3.869× — the copies land earlier but
+post-substitution, same pivot orientation, same fixpoint; not landed (costs a gauss per cycle).
+(2) The widened busPairCancel above: neutral.
+
+**Why busUnify is load-bearing on SP1 (mechanism, sharper than entry 186's).** Re-measured on
+this head: unscheduling busUnify reproduces entry 186 exactly (rsp 3.868× → 2.297×, sp1:keccak
+2729 → 7548 vars; OpenVM n20 byte-identical). The per-cycle certificate dump on a collapsing case
+(apc_015) shows the whole-bus certificate failing on `denseBSGadgetsOk`, not the shared ts base
+(`sendTsOk` holds from cycle 1): one access — the *entry* access of a RAM group, whose previous
+record lives in a different `clk_high` window — has a genuinely uncertifiable low-limb LessThan
+(`setNew.ts − getPrev.ts` picks up the raw `prev_low` witness with coefficient `−1`; SP1's own
+argument for that access is lexicographic on `(high, low)`). busSweep's certificate is
+all-or-nothing per bus, so that one pair kills every group's copies; busUnify certifies per
+address group and keeps all the same-window groups. The two engines are granularity variants of
+one certificate, complementary rather than redundant: on OpenVM (single global timestamp, every
+pair's gadget solvable) the whole-bus form subsumes the per-group form; on SP1 it cannot.
+
+**Open (the actual fix).** The gap is byte-granularity identification lost to substitution-order
+path dependence, not a memory-pass defect. Candidate general fix: a digit-split step — from a
+linear equality between two byte ladders (`Σ 256^i·aᵢ = Σ 256^i·bᵢ`, all digits range-checked),
+emit the per-digit equalities `aᵢ = bᵢ` (`ofAddConstraints` shape; uniqueness of bounded base-256
+representation). It must run on the cycle's fresh copy equalities *before* gauss consumes them,
+i.e. right after `busSweep`. Alternatively a byte-aware gauss pivot preference. sp1-only;
+OpenVM's single-granularity payloads are insensitive to the orientation.

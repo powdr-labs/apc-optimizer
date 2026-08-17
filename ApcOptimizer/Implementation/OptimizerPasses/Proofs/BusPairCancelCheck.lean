@@ -4,12 +4,11 @@ import ApcOptimizer.Implementation.OptimizerPasses.Proofs.BusPairCancelIndex
 
 set_option autoImplicit false
 
-/-! # Soundness of the dense region tests + emit slice for `busPairCancel`
+/-! # Soundness of the dense emit slice for `busPairCancel`
 
-Soundness for the region tests + emitted checks defined in `BusPairCancelCheck.lean`, over
+Soundness for the receive scan + emitted checks defined in `BusPairCancelCheck.lean`, over
 `VarId → ZMod p`. The capstone `denseCheckCancel_sound` discharges the full hypothesis list of
-`denseDropPair_correct`. The region-test lemmas take `reg` + coverage as a proof-side parameter only
-(the address-disequality certs are proved through the registry). -/
+`denseDropPair_correct`. -/
 
 namespace ApcOptimizer.Dense
 
@@ -37,116 +36,6 @@ theorem denseFirstMatchAt_spec (M : Thunk (DenseEqConstraintMap p))
         · exact ih h
       · exact ih h
     · exact ih h
-
-/-- No active same-address message on `busId` survives the between-region test. -/
-theorem denseMidRefuted_sound (reg : VarRegistry) (ops : DenseZModOps p) (shape : MemoryBusShape)
-    {dcs : List (DenseExpr p)} (T : Thunk (DenseAddrCerts p))
-    (hTtworoot : T.get.tworoot.Sound dcs)
-    (hTnonzero : T.get.nonzero = DenseNonzeroWits.build dcs)
-    (hdcov : ∀ c ∈ dcs, c.CoveredBy reg)
-    (busId : Nat) (S m : BusInteraction (DenseExpr p))
-    (hScov : denseBICovered reg S) (hmcov : denseBICovered reg m)
-    (h : denseMidRefuted ops shape T busId S m = true) (denv : VarId → ZMod p)
-    (hcon : ∀ c ∈ dcs, c.eval denv = 0)
-    (hbid : (denseBIEval m denv).busId = busId) (hmne : (denseBIEval m denv).multiplicity ≠ 0)
-    (hmaddr : shape.address (denseBIEval m denv) = shape.address (denseBIEval S denv)) : False := by
-  unfold denseMidRefuted at h
-  rw [ops.zero_eq] at h
-  rw [Bool.or_eq_true, Bool.or_eq_true, Bool.or_eq_true, Bool.or_eq_true, Bool.or_eq_true] at h
-  rcases h with ((((h | h) | h) | h) | h) | h
-  · exact absurd hbid (of_decide_eq_true h)
-  · exact hmne (m.multiplicity.constValue?_sound 0 (of_decide_eq_true h) denv)
-  · exact denseAddrConstsNeq_sound shape S m h denv hmaddr.symm
-  · exact denseAddrAffineNeq_sound reg shape S m hScov hmcov h denv hmaddr.symm
-  · exact denseAddrTwoRootNeq_sound reg shape T.get.tworoot hTtworoot hdcov S m hScov hmcov h denv
-      hcon hmaddr.symm
-  · rw [hTnonzero] at h
-    exact denseAddrNonzeroNeq_sound reg shape dcs hdcov S m hScov hmcov h denv hcon hmaddr.symm
-
-/-- An active same-address message on `busId` not refuted by the before-region test has multiplicity
-    `≠ shape.setNewMult` (it is not a `setNew` send). -/
-theorem densePreRefuted_sound (reg : VarRegistry) (ops : DenseZModOps p) (shape : MemoryBusShape)
-    {dcs : List (DenseExpr p)} (T : Thunk (DenseAddrCerts p))
-    (hTtworoot : T.get.tworoot.Sound dcs)
-    (hTnonzero : T.get.nonzero = DenseNonzeroWits.build dcs)
-    (hdcov : ∀ c ∈ dcs, c.CoveredBy reg)
-    (busId : Nat) (S m : BusInteraction (DenseExpr p))
-    (hScov : denseBICovered reg S) (hmcov : denseBICovered reg m)
-    (h : densePreRefuted ops shape T busId S m = true) (denv : VarId → ZMod p)
-    (hcon : ∀ c ∈ dcs, c.eval denv = 0)
-    (hbid : (denseBIEval m denv).busId = busId) (hmne : (denseBIEval m denv).multiplicity ≠ 0)
-    (hmaddr : shape.address (denseBIEval m denv) = shape.address (denseBIEval S denv)) :
-    (denseBIEval m denv).multiplicity ≠ shape.setNewMult := by
-  unfold densePreRefuted at h
-  rw [denseSetNewMult_eq ops shape] at h
-  rw [Bool.or_eq_true] at h
-  rcases h with h | h
-  · exact (denseMidRefuted_sound reg ops shape T hTtworoot hTnonzero hdcov busId S m hScov hmcov h denv
-      hcon hbid hmne hmaddr).elim
-  · cases hc : denseMultConst m with
-    | none => rw [hc] at h; exact absurd h (by simp)
-    | some c =>
-      rw [hc] at h
-      have heval : (denseBIEval m denv).multiplicity = c := m.multiplicity.constValue?_sound c hc denv
-      rw [heval]
-      exact of_decide_eq_true h
-
-/-- A provable active same-address receive on `busId` really is on-bus, active, same-address, and
-    multiplicity `-shape.setNewMult`. -/
-theorem denseProvRecv_sound (ops : DenseZModOps p) (shape : MemoryBusShape) (busId : Nat)
-    (hp1 : (1 : ZMod p) ≠ 0)
-    (S m : BusInteraction (DenseExpr p)) (h : denseProvRecv ops shape busId S m = true)
-    (denv : VarId → ZMod p) :
-    (denseBIEval m denv).busId = busId ∧ (denseBIEval m denv).multiplicity ≠ 0 ∧
-    shape.address (denseBIEval m denv) = shape.address (denseBIEval S denv) ∧
-      (denseBIEval m denv).multiplicity = -shape.setNewMult := by
-  unfold denseProvRecv at h
-  rw [denseGetPreviousMult_eq ops shape] at h
-  rw [Bool.and_eq_true, Bool.and_eq_true] at h
-  obtain ⟨⟨hbid, haddr⟩, hmult⟩ := h
-  have hmult' : (denseBIEval m denv).multiplicity = -shape.setNewMult :=
-    m.multiplicity.constValue?_sound (-shape.setNewMult) (of_decide_eq_true hmult) denv
-  refine ⟨of_decide_eq_true hbid, ?_, (denseAddrConstsEq_sound shape S m haddr denv).symm, hmult'⟩
-  rw [hmult']; exact neg_ne_zero.mpr (shape.setNewMult_ne_zero hp1)
-
-/-- If the scan's `hasRecv` flag is set, the list contains a provable receive. -/
-theorem denseShieldScan_hasRecv (ops : DenseZModOps p) (shape : MemoryBusShape)
-    (T : Thunk (DenseAddrCerts p)) (busId : Nat)
-    (S : BusInteraction (DenseExpr p)) :
-    ∀ (l : List (BusInteraction (DenseExpr p))), (denseShieldScan ops shape T busId S l).1 = true →
-      ∃ Rp ∈ l, denseProvRecv ops shape busId S Rp = true
-  | [], h => by simp [denseShieldScan] at h
-  | m0 :: rest, h => by
-      rw [denseShieldScan] at h
-      dsimp only at h
-      rcases Bool.or_eq_true _ _ |>.mp h with h1 | h1
-      · obtain ⟨Rp, hRp, hprov⟩ := denseShieldScan_hasRecv ops shape T busId S rest h1
-        exact ⟨Rp, List.mem_cons_of_mem _ hRp, hprov⟩
-      · exact ⟨m0, List.mem_cons_self .., h1⟩
-
-/-- From a passing `denseShieldOk` and a split `A_pre ++ m0 :: A_suf` whose `m0` is not provably
-    excluded (`¬densePreRefuted`), `A_suf` carries a provable active same-address receive. -/
-theorem denseShieldOk_sound (ops : DenseZModOps p) (shape : MemoryBusShape)
-    (T : Thunk (DenseAddrCerts p)) (busId : Nat)
-    (S m0 : BusInteraction (DenseExpr p)) (A_suf : List (BusInteraction (DenseExpr p))) :
-    ∀ (A_pre : List (BusInteraction (DenseExpr p))),
-      denseShieldOk ops shape T busId S (A_pre ++ m0 :: A_suf) = true →
-      densePreRefuted ops shape T busId S m0 = false →
-      ∃ Rp ∈ A_suf, denseProvRecv ops shape busId S Rp = true
-  | [], h, hpre => by
-      unfold denseShieldOk at h
-      rw [List.nil_append, denseShieldScan] at h
-      dsimp only at h
-      rw [Bool.and_eq_true] at h
-      obtain ⟨_, h2⟩ := h
-      rw [hpre, Bool.false_or] at h2
-      exact denseShieldScan_hasRecv ops shape T busId S A_suf h2
-  | a :: A_pre', h, hpre => by
-      unfold denseShieldOk at h
-      rw [List.cons_append, denseShieldScan] at h
-      dsimp only at h
-      rw [Bool.and_eq_true] at h
-      exact denseShieldOk_sound ops shape T busId S m0 A_suf A_pre' h.1 hpre
 
 /-- The evaluation of an emitted single-value byte check. -/
 theorem denseMkByteCheck_eval (spec : ByteXorSpec p) (busId : Nat) (e : DenseExpr p)
@@ -277,19 +166,15 @@ theorem denseEmitOk_sound (ops : DenseZModOps p) (bs : BusSemantics p)
         exact Or.inr (List.mem_flatMap.2 ⟨o1, ho1mem, hvE⟩)
     · exact absurd hrest (by simp)
 
-/-- A passing `denseCheckCancel` — with the split equation, the scan's region hypotheses, the
-    witness/index membership facts, registry coverage, and `Sound` facts for the threaded certs/maps
-    — yields `DensePassCorrect` via `denseDropPair_correct`. -/
+/-- A passing `denseCheckCancel` — with the split equation, the witness/index membership facts,
+    registry coverage, and a `Sound` fact for the threaded equality map — yields `DensePassCorrect`
+    via `denseDropPair_correct`. -/
 theorem denseCheckCancel_sound (isInput : VarId → Bool)
     (d : DenseConstraintSystem p) (bs : BusSemantics p) (facts : BusFacts p bs)
     (hp1 : (1 : ZMod p) ≠ 0) (deep : Bool) (hdeep : deep = true → p.Prime)
     (ops : DenseZModOps p)
-    (reg : VarRegistry) (hcov : d.CoveredBy reg)
     (busId : Nat) (shape : MemoryBusShape) (hshape : facts.memShape busId = some shape)
     (slots : List Nat) (bound : Nat)
-    (T : Thunk (DenseAddrCerts p))
-    (hTtworoot : T.get.tworoot.Sound d.algebraicConstraints)
-    (hTnonzero : T.get.nonzero = DenseNonzeroWits.build d.algebraicConstraints)
     (M : Thunk (DenseEqConstraintMap p)) (hM : M.get.Sound d.algebraicConstraints)
     (domIdx : Std.HashMap VarId (List (DenseExpr p))) (candsOf : VarId → List (DenseExpr p))
     (wits : VarId → List (BusInteraction (DenseExpr p)))
@@ -306,8 +191,6 @@ theorem denseCheckCancel_sound (isInput : VarId → Bool)
     (hfb : ∀ (denv : VarId → ZMod p), (∀ bi ∈ A ++ B ++ C ++ checks,
         (denseBIEval bi denv).multiplicity ≠ 0 → bs.accepts (denseBIEval bi denv)) →
       ∀ v, ∀ LB ∈ fbasis v, (LB.1.eval denv).val < LB.2)
-    (hmid : ∀ m0 ∈ B, denseMidRefuted ops shape T busId S m0 = true)
-    (hshield : denseShieldOk ops shape T busId S A = true)
     (h : denseCheckCancel ops deep bs facts M domIdx candsOf wits fbasis busId shape slots bound S R checks
       = true) :
     DensePassCorrect isInput d { d with busInteractions := A ++ B ++ C ++ checks } [] bs := by
@@ -317,9 +200,6 @@ theorem denseCheckCancel_sound (isInput : VarId → Bool)
   obtain ⟨⟨⟨⟨⟨⟨hSb, hRb⟩, hSm⟩, hRm⟩, hpay⟩, hemit⟩, hjust⟩ := h
   have hRmEv : ∀ denv, (denseBIEval R denv).multiplicity = -shape.setNewMult :=
     fun denv => R.multiplicity.constValue?_sound (-shape.setNewMult) (of_decide_eq_true hRm) denv
-  have hSmem : S ∈ d.busInteractions := by
-    rw [hsplit]; simp only [List.mem_append, List.mem_cons]; tauto
-  have hScov : denseBICovered reg S := hcov.2 S hSmem
   refine denseDropPair_correct isInput d bs facts hp1 A B C S R busId shape hshape
     (R.payload.map DenseExpr.constValue?) slots bound hslots
     (fun denv => denseMatches_evalPattern R.payload denv) checks
@@ -331,27 +211,6 @@ theorem denseCheckCancel_sound (isInput : VarId → Bool)
     hsplit
     (of_decide_eq_true hSb) (of_decide_eq_true hRb)
     (of_decide_eq_true hSm) (of_decide_eq_true hRm)
-    (fun denv hcon => densePayloadEntailedEq_sound M hM S.payload R.payload hpay denv hcon) ?_ ?_
-  ·
-    intro denv hcon m0 hm0 hbid hmne hmaddr
-    have hm0mem : m0 ∈ d.busInteractions := by
-      rw [hsplit]; simp only [List.mem_append, List.mem_cons]; tauto
-    exact denseMidRefuted_sound reg ops shape T hTtworoot hTnonzero hcov.1 busId S m0 hScov
-      (hcov.2 m0 hm0mem) (hmid m0 hm0) denv hcon hbid hmne hmaddr
-  ·
-    intro denv hcon A_pre m0 A_suf hAeq hbid hmne hmaddr hmult
-    have hm0A : m0 ∈ A := by
-      rw [hAeq]; simp only [List.mem_append, List.mem_cons]; tauto
-    have hm0mem : m0 ∈ d.busInteractions := by
-      rw [hsplit]; simp only [List.mem_append, List.mem_cons]; tauto
-    have hm0cov : denseBICovered reg m0 := hcov.2 m0 hm0mem
-    have hnp : densePreRefuted ops shape T busId S m0 = false := by
-      by_contra hp'
-      rw [Bool.not_eq_false] at hp'
-      exact (densePreRefuted_sound reg ops shape T hTtworoot hTnonzero hcov.1 busId S m0 hScov hm0cov
-        hp' denv hcon hbid hmne hmaddr) hmult
-    obtain ⟨Rp, hRpmem, hRpprov⟩ :=
-      denseShieldOk_sound ops shape T busId S m0 A_suf A_pre (hAeq ▸ hshield) hnp
-    exact ⟨Rp, hRpmem, denseProvRecv_sound ops shape busId hp1 S Rp hRpprov denv⟩
+    (fun denv hcon => densePayloadEntailedEq_sound M hM S.payload R.payload hpay denv hcon)
 
 end ApcOptimizer.Dense

@@ -6,7 +6,7 @@ set_option autoImplicit false
 
 /-! # Dense address-disequality certificate library
 
-Certificate-building/checking functions the dense `busUnify` / `busPairCancel` passes consult to
+Certificate-building/checking functions the dense memory passes (`busUnify`, `busSweep`) consult to
 refute a memory-address match. Exports no pass; correctness lives in `Proofs/AddrDiseq.lean`. -/
 
 namespace ApcOptimizer.Dense
@@ -88,94 +88,6 @@ def insertEntry (T : DenseTwoRootMap p) (v : VarId) (k : ZMod p) (A : DenseLinEx
     DenseTwoRootMap p where
   map := T.map.insert v (k, A, δ)
 
-/-- Insert the two-root entry (if any, with a unit coefficient) for each of `c`'s variables. -/
-def addVars (c : DenseExpr p) : DenseTwoRootMap p → List VarId → DenseTwoRootMap p
-  | T, [] => T
-  | T, v :: vs =>
-    match denseTwoRootOf? c v with
-    | some (k, A, δ) =>
-      if k * k⁻¹ = 1 then addVars c (T.insertEntry v k A δ) vs
-      else addVars c T vs
-    | none => addVars c T vs
-
-/-- `addVars` from a product's linearized factors. -/
-def addVarsLins (l1 l2 : DenseLinExpr p) : DenseTwoRootMap p → List VarId → DenseTwoRootMap p
-  | T, [] => T
-  | T, v :: vs =>
-    match denseTwoRootOfLins l1 l2 v with
-    | some (k, A, δ) =>
-      if k * k⁻¹ = 1 then addVarsLins l1 l2 (T.insertEntry v k A δ) vs
-      else addVarsLins l1 l2 T vs
-    | none => addVarsLins l1 l2 T vs
-
-/-- `addVars` with the product's factors linearized once instead of once per variable; the compiled
-    twin of `addVars` (`addVars_eq_fast`). -/
-def addVarsFast (c : DenseExpr p) (T : DenseTwoRootMap p) (vs : List VarId) : DenseTwoRootMap p :=
-  match c with
-  | .mul f1 f2 =>
-    match denseLinearize f1, denseLinearize f2 with
-    | some l1, some l2 => addVarsLins l1 l2 T vs
-    | _, _ => T
-  | _ => T
-
-theorem addVarsLins_eq {f1 f2 : DenseExpr p} {l1 l2 : DenseLinExpr p}
-    (h1 : denseLinearize f1 = some l1) (h2 : denseLinearize f2 = some l2) :
-    ∀ (T : DenseTwoRootMap p) (vs : List VarId),
-      addVarsLins l1 l2 T vs = addVars (.mul f1 f2) T vs := by
-  have hentry : ∀ v, denseTwoRootOf? (.mul f1 f2) v = denseTwoRootOfLins l1 l2 v := by
-    intro v; simp only [denseTwoRootOf?, h1, h2]
-  intro T vs
-  induction vs generalizing T with
-  | nil => rfl
-  | cons v rest ih =>
-      rw [addVarsLins, addVars, hentry v]
-      cases denseTwoRootOfLins l1 l2 v with
-      | none => exact ih T
-      | some kAδ => obtain ⟨k, A, δ⟩ := kAδ; dsimp only; split <;> exact ih _
-
-/-- `addVars` never inserts when no variable has a two-root entry. -/
-theorem addVars_of_none {c : DenseExpr p} (h : ∀ v, denseTwoRootOf? c v = none) :
-    ∀ (T : DenseTwoRootMap p) (vs : List VarId), addVars c T vs = T := by
-  intro T vs
-  induction vs generalizing T with
-  | nil => rfl
-  | cons v rest ih => rw [addVars, h v]; exact ih T
-
-@[csimp] theorem addVars_eq_fast :
-    @DenseTwoRootMap.addVars = @DenseTwoRootMap.addVarsFast := by
-  funext q c T vs
-  cases c with
-  | const n => exact addVars_of_none (fun _ => rfl) T vs
-  | var i => exact addVars_of_none (fun _ => rfl) T vs
-  | add a b => exact addVars_of_none (fun _ => rfl) T vs
-  | mul f1 f2 =>
-      cases h1 : denseLinearize f1 with
-      | none =>
-          rw [addVars_of_none (fun _ => by simp [denseTwoRootOf?, h1]) T vs]
-          simp [addVarsFast, h1]
-      | some l1 =>
-          cases h2 : denseLinearize f2 with
-          | none =>
-              rw [addVars_of_none (fun _ => by simp [denseTwoRootOf?, h1, h2]) T vs]
-              simp [addVarsFast, h1, h2]
-          | some l2 =>
-              rw [← addVarsLins_eq h1 h2 T vs]
-              simp [addVarsFast, h1, h2]
-
-/-- Fold `addVars` over a constraint list, with the candidate variables of each constraint
-    restricted to `vars`: an entry for a variable outside `vars` is never looked up
-    (`buildForAddrs`), and `denseTwoRootOfLins` normalizes both factors per candidate variable, so
-    this is the whole cost of the build. -/
-def addAllFor (vars : Std.HashSet VarId) :
-    DenseTwoRootMap p → (pending : List (DenseExpr p)) → DenseTwoRootMap p
-  | T, [] => T
-  | T, c :: rest => addAllFor vars (addVars c T (c.vars.filter vars.contains).eraseDups) rest
-
-/-- Build the map for a constraint list, indexing only the variables in `vars` (empty on
-    composite `p`). -/
-def buildFor (vars : Std.HashSet VarId) (constraints : List (DenseExpr p)) : DenseTwoRootMap p :=
-  if Nat.Prime p then addAllFor vars empty constraints else empty
-
 end DenseTwoRootMap
 
 /-- All affine two-root reductions of a dense expression `E`: for each variable of the linearized
@@ -216,8 +128,8 @@ def densePtrReductionsFast (T : DenseTwoRootMap p) (E : DenseExpr p) :
 
 Two linear forms differ by a nonzero constant exactly when their *canonical* terms — merged,
 zero-dropped, sorted by variable — agree and their constants do not. A key is derived once per
-expression, so the certificate arms below compare an integer and a list instead of normalizing
-`a − b` per compared pair. Soundness is `denseKeyDiffNZ_sound` (`Proofs/AddrDiseq.lean`). -/
+expression, so the certificate arms compare an integer and a list instead of normalizing
+`a − b` per compared pair. Soundness is `denseKeyNeq_sound` (`Proofs/AddrDiseq.lean`). -/
 
 /-- The canonical form of a linear form's terms: merged, zero-dropped, sorted by variable. -/
 def denseTermKey (l : DenseLinExpr p) : List (VarId × ZMod p) :=
@@ -227,12 +139,6 @@ def denseTermKey (l : DenseLinExpr p) : List (VarId × ZMod p) :=
     that is the common case. -/
 def denseTermKeyHash (k : List (VarId × ZMod p)) : UInt64 :=
   k.foldl (fun h t => mixHash h (mixHash (hash t.1) (hash t.2.val))) 0
-
-/-- The two forms differ by a nonzero field constant. -/
-def denseKeyDiffNZ (a b : DenseLinExpr p) : Bool :=
-  let ka := denseTermKey a
-  let kb := denseTermKey b
-  (denseTermKeyHash ka == denseTermKeyHash kb && decide (ka = kb)) && decide (a.const ≠ b.const)
 
 /-- One two-root reduction, keyed: the canonical key of its branches with that key's hash, plus the
     two branch constants. Both branches differ from each other only by a constant
@@ -248,36 +154,6 @@ def denseRedKeysNeq (r r' : UInt64 × List (VarId × ZMod p) × ZMod p × ZMod p
   ((r.1 == r'.1 && decide (r.2.1 = r'.2.1)) &&
     (decide (r.2.2.1 ≠ r'.2.2.1) && decide (r.2.2.1 ≠ r'.2.2.2))) &&
     (decide (r.2.2.2 ≠ r'.2.2.1) && decide (r.2.2.2 ≠ r'.2.2.2))
-
-/-! ## The expression- and address-level certificates -/
-
-/-- Two dense expressions provably evaluate differently: some two-root reduction of each yields
-    four branch-pair differences that are all nonzero field constants. -/
-def denseExprTwoRootNeq (T : DenseTwoRootMap p) (e e' : DenseExpr p) : Bool :=
-  ((densePtrReductions T e).map denseRedKey).any (fun r =>
-    ((densePtrReductions T e').map denseRedKey).any (denseRedKeysNeq r))
-
-/-- Some address slot of `S` and `bi` provably evaluates differently: the two interactions have
-    different addresses. -/
-def denseAddrTwoRootNeq (shape : MemoryBusShape) (T : DenseTwoRootMap p)
-    (S bi : BusInteraction (DenseExpr p)) : Bool :=
-  shape.addressFields.any (fun slot =>
-    match S.payload[slot]?, bi.payload[slot]? with
-    | some e, some e' => denseExprTwoRootNeq T e e'
-    | _, _ => false)
-
-/-! ## The affine (same-base) address-disequality certificate -/
-
-/-- Some address slot of `S` and `bi` linearizes to two affine forms differing by a nonzero field
-    constant: the two interactions provably have different addresses. -/
-def denseAddrAffineNeq (shape : MemoryBusShape) (S bi : BusInteraction (DenseExpr p)) : Bool :=
-  shape.addressFields.any (fun slot =>
-    match S.payload[slot]?, bi.payload[slot]? with
-    | some e, some e' =>
-      (match denseLinearize e, denseLinearize e' with
-       | some L, some L' => denseKeyDiffNZ L L'
-       | _, _ => false)
-    | _, _ => false)
 
 /-! ## The nonzero-witness (register-vs-RAM) address-disequality certificate -/
 
@@ -373,43 +249,5 @@ def DenseExpr.mentionsAny (s : Std.HashSet VarId) : DenseExpr p → Bool
   | .var i => s.contains i
   | .add a b => a.mentionsAny s || b.mentionsAny s
   | .mul a b => a.mentionsAny s || b.mentionsAny s
-
-/-- The variables a two-root lookup can reach: those of an address-slot expression of an
-    interaction on a memory-shaped bus, at *that bus's own* address fields. Every certificate arm
-    that reads the table is gated on the compared message being on the candidate's bus, and
-    `densePtrReductions` keys on the queried form's own variables, so no other entry is read. -/
-def denseAddrSlotVars (memShape : Nat → Option MemoryBusShape)
-    (bis : List (BusInteraction (DenseExpr p))) : Std.HashSet VarId :=
-  bis.foldl (fun s bi =>
-    match memShape bi.busId with
-    | some shape =>
-      shape.addressFields.foldl (fun s slot =>
-        match bi.payload[slot]? with
-        | some e => e.vars.foldl (fun s v => s.insert v) s
-        | none => s) s
-    | none => s) ∅
-
-/-- The two-root map over just the constraints mentioning an address-slot variable, and only for
-    those variables. Every entry a lookup can reach is unchanged: an entry for `v` is only ever
-    inserted by a constraint mentioning `v` (`addVars` folds over `c.vars`), and only address-slot
-    variables are looked up (`densePtrReductions` keys on the queried form's own variables). -/
-def DenseTwoRootMap.buildForAddrs (memShape : Nat → Option MemoryBusShape)
-    (bis : List (BusInteraction (DenseExpr p))) (constraints : List (DenseExpr p)) :
-    DenseTwoRootMap p :=
-  let vars := denseAddrSlotVars memShape bis
-  DenseTwoRootMap.buildFor vars (constraints.filter (fun c => c.mentionsAny vars))
-
-/-- Both address-disequality certificate tables, bundled so they thread through a pass as one
-    memoized value. -/
-structure DenseAddrCerts (p : ℕ) where
-  tworoot : DenseTwoRootMap p
-  nonzero : DenseNonzeroWits p
-
-/-- Build both certificate tables from the constraint list, the two-root map over the address-slot
-    constraints only (`DenseTwoRootMap.buildForAddrs`). -/
-def DenseAddrCerts.build (memShape : Nat → Option MemoryBusShape)
-    (bis : List (BusInteraction (DenseExpr p))) (constraints : List (DenseExpr p)) :
-    DenseAddrCerts p :=
-  ⟨DenseTwoRootMap.buildForAddrs memShape bis constraints, DenseNonzeroWits.build constraints⟩
 
 end ApcOptimizer.Dense
