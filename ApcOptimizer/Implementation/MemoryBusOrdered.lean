@@ -10,10 +10,9 @@ timestamp — from the order-free rely. This file connects it to a list a pass a
 bus's evaluated messages alternate `recv, send, recv, send, …` and the timestamps increase along
 them, that list *is* the canonical order, so the positional discipline holds of it as a theorem.
 
-That is what lets the consecutive-match sweep (`OptimizerPasses/BusUnify.lean`) run unchanged: it
-walks the list left to right keeping the open sends, and its "nothing at this address in between"
-test is exactly the positional hypothesis. Where the old rely *assumed* left-to-right = time order,
-the pass now checks it — and where the check fails the sweep simply does not fire.
+The consecutive-match sweeps (`OptimizerPasses/BusSweep.lean`, reused by `BusForward.lean`) rest
+on this: their "nothing at this address in between" test is exactly the positional hypothesis,
+checked — never assumed — on the certified order; where the check fails the sweep does not fire.
 
 `pairUp` is the chunking; `pairUp_interleave` identifies the chunked list with `interleaveAccesses`;
 `admissibleMemoryBus_of_pairUp` is the packaged bridge. -/

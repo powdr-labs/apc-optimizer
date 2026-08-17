@@ -9,7 +9,7 @@ set_option autoImplicit false
 Adds the payload-copy equalities a memory bus's discipline entails, justified *order-free*: the
 rely is `admissibleMemoryBusM` (per-address net bus state) plus the TS_BOUND fact
 (`facts.memTsField` — every active message's declared ts-slot value is `< B ≤ 2^29`), consumed
-through `admissibleMemoryBusM_copies_of_ts` (`Implementation/MemoryBusMultiset.lean`). Nothing
+through `admissibleMemoryBusM_copies_of_steps` (`Implementation/MemoryBusMultiset.lean`). Nothing
 about the interaction list's order is trusted.
 
 The engine prepares every memory-bus interaction once (`denseBUPrep` — the address slots' constant
@@ -259,15 +259,9 @@ def denseBUNonzeroNeq (nw : DenseNonzeroWits p) (a b : DenseBUPre p) : Bool :=
 
 /-! ## The timestamp-group engine
 
-The pass certifies one *address group* at a time under the order-free rely: every interaction on
-the bus is classified against a group leader as a member send, a member receive, or certifiably
-outside the group (different address, or a constant multiplicity in neither fiber); any undecided
-interaction aborts the group. The group's send timestamps must share one linear base with strictly
-increasing constant offsets of spread `< B` (the declared TS_BOUND), and each receive's ts slot
-must carry the solved LessThan gadget against its own send (`send_ts − recv_ts = c₀ + Σ coeffᵢ ·
-limbᵢ` with `c₀ ≥ 1` and range-checked limbs). `admissibleMemoryBusM_copies_of_ts`
-(`Implementation/MemoryBusMultiset.lean`) then forces every interior receive to copy the previous
-send's payload. -/
+Certifies one *address group* at a time under the order-free rely: classification against a group
+leader (`denseBUClassify`), one shared send-ts base with increasing offsets, one solved LessThan
+gadget per receive (`denseBUGroupPairs?`), consumed by `admissibleMemoryBusM_copies_of_steps`. -/
 
 /-- The classification of one interaction against a group leader. -/
 inductive DenseBUVerdict where
@@ -576,7 +570,7 @@ def denseBUGroupPairs? (bs : BusSemantics p) (facts : BusFacts p bs) (nw : Dense
     else none
 
 /-- The equalities of one verified group: interior receive `i` copies send `i − 1`
-    (`admissibleMemoryBusM_copies_of_ts`), so pair the sends with the receives shifted by one. -/
+    (`admissibleMemoryBusM_copies_of_steps`), so pair the sends with the receives shifted by one. -/
 def denseBUGroupEqs (shape : MemoryBusShape)
     (sends recvs : List (BusInteraction (DenseExpr p))) : List (DenseExpr p) :=
   (sends.zip recvs.tail).flatMap (fun sr => denseMemEqConstraints shape sr.1 sr.2)
@@ -720,7 +714,7 @@ def denseBusUnifyNewCs (bs : BusSemantics p) (facts : BusFacts p bs)
     `setNew` (send) committed, so this adds the entailed slot equalities `getᵢ = setᵢ` for every
     certified address group's interior receives against the timestamp-previous send, on each
     declared memory / execution-bridge bus with a declared timestamp slot (skipping equations
-    already present or zero). Justified order-free via `admissibleMemoryBusM_copies_of_ts`. -/
+    already present or zero). Justified order-free via `admissibleMemoryBusM_copies_of_steps`. -/
 def denseBusUnifyF (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
     DenseConstraintSystem p :=
   if (1 : ZMod p) ≠ 0 then

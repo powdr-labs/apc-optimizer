@@ -81,16 +81,18 @@ passes usable knowledge:
   its `xorOp`/`pairOp` acceptance semantics — rather than any OpenVM-shaped payload, so the same
   passes fire on both the OpenVM bitwise-lookup bus and the SP1 byte-lookup bus.
 - **`admissible` / `ApcOptimizer/MemoryBus.lean` — audited assumption.** The memory discipline is
-  *order-free*: `admissibleMemoryBusM` asserts, per evaluated address, that the receives' payload
-  multiset exceeds the sends' by at most one element (bus balance + window atomicity), assuming
-  nothing about the interaction list's order; TS_BOUND (`tsBounded`) additionally bounds each
+  *order-free*: `admissibleMemoryBusM` constrains, per evaluated address, the net bus state —
+  the messages balance, except for at most one entry record and one exit record (bus balance +
+  window atomicity) — assuming nothing about the interaction list's order (the count form the
+  passes consume is `excessBounded`, `Implementation/MemoryBusState.lean`); TS_BOUND
+  (`tsBounded`) additionally bounds each
   message's declared timestamp-slot value (below `2^29` for OpenVM). The `setNew`/`getPrevious`
   multiplicities are chosen per bus by `MemoryBusShape.direction` (via `setNewMult`) — `1`/`-1` for
   OpenVM (which sends the new record and receives the previous one), `-1`/`1` for SP1 (which sends the
   previous record and receives the new one). These are completeness-only assumptions about real
   traces (see the README's assumptions). They are consumed by `busPairCancel` (pair dropping) and
   `busUnifyPass`, which recovers timestamp *order* inside an address group from the bounded values
-  and the circuit's own LessThan gadgets (`admissibleMemoryBusM_copies_of_ts`,
+  and the circuit's own LessThan gadgets (`admissibleMemoryBusM_copies_of_steps`,
   `Implementation/MemoryBusMultiset.lean`).
 
 ## OpenVM instantiation

@@ -10,8 +10,7 @@ set_option autoImplicit false
 The certificate of `ExecChain.lean` read semantically: the key-slot constants pin the chain, each
 access steps its own timestamp, and `entryKeyed_chain_copies`
 (`Implementation/MemoryBusChain.lean`) then forces every non-entry receive to copy the previous
-send's payload. The fiber presentations and the classification verdicts are the `busUnify` ones
-(`Proofs/BusUnify.lean`); only the certificate and its consumption are new. -/
+send's payload. The fiber presentations and the classification verdicts come from `Proofs/BusUnify.lean`. -/
 
 namespace ApcOptimizer.Dense
 

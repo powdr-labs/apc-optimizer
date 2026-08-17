@@ -14,7 +14,7 @@ set_option autoImplicit false
 (`DensePassCorrect.denseAddConstraints`); the substance is real-trace completeness — every
 admissible satisfying assignment already fulfils the added slot equalities. The justification is
 *order-free*: `denseBUGroupPairs?_sound` assembles the verifier's certificates into the
-hypotheses of `admissibleMemoryBusM_copies_of_ts` (`Implementation/MemoryBusMultiset.lean`) —
+hypotheses of `admissibleMemoryBusM_copies_of_steps` (`Implementation/MemoryBusMultiset.lean`) —
 fiber presentations from the classification split, send-timestamp structure from the shared
 linear base, and the per-access LessThan bound from the solved gadget plus the TS_BOUND rely
 (`facts.memTsField_sound`).

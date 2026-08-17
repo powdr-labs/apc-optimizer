@@ -27,11 +27,10 @@ set_option autoImplicit false
     count-based form the passes consume and the order-freeness of each rely, lives in
     `Implementation/MemoryBusState.lean`.
 
-    The positional `admissibleMemoryBus` remains temporarily: it additionally trusts that the
-    interaction list is *ordered by time* and asserts payload copying between list-adjacent
-    same-address pairs. It is recoverable from the order-free discipline as a theorem on the
-    canonical access order (`Implementation/MemoryBusMultiset.lean`,
-    `interleaveAccesses_admissibleMemoryBus_of_M`).
+    No ordering of the interaction list is assumed anywhere: the positional discipline the pass
+    proofs consume (`admissibleMemoryBus`, `Implementation/MemoryBusState.lean`) is *derived* on a
+    certified canonical access order (`interleaveAccesses_admissibleMemoryBus_of_M`,
+    `Implementation/MemoryBusMultiset.lean`).
 
     A separate per-message rely, `tsBounded` (TS_BOUND), bounds the value of a declared timestamp
     payload slot; combined with the order-free discipline it lets a pass recover timestamp *order*
@@ -86,19 +85,6 @@ def MemoryBusShape.addressOf (shape : MemoryBusShape) (payload : List (ZMod p)) 
 def MemoryBusShape.address (shape : MemoryBusShape) (m : BusInteraction (ZMod p)) :
     List (Option (ZMod p)) :=
   shape.addressOf m.payload
-
-/-- Given an ordered list of memory bus interaction messages *on the same bus*, decide whether
-    it follows the memory bus discipline: after a `setNew` to a given address (multiplicity
-    `shape.setNewMult`), the next `getPrevious` from the same address (multiplicity
-    `-shape.setNewMult`) observes the same payload, with no intervening active messages to the same
-    address. -/
-def admissibleMemoryBus (shape : MemoryBusShape) (L : List (BusInteraction (ZMod p))) : Prop :=
-  ∀ (pre mid post : List (BusInteraction (ZMod p))) (S R : BusInteraction (ZMod p)),
-    L = pre ++ S :: mid ++ R :: post →
-    S.multiplicity = shape.setNewMult → R.multiplicity = -shape.setNewMult →
-    shape.address S = shape.address R →
-    (∀ m ∈ mid, m.multiplicity ≠ 0 → shape.address m = shape.address S → False) →
-    S.payload = R.payload
 
 def busState (M : List (BusInteraction (ZMod p))) : BusState p := fun message =>
   M.filter (fun m => (m.busId, m.payload) = message) |>.map BusInteraction.multiplicity |>.sum

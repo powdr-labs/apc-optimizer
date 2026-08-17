@@ -13,9 +13,8 @@ The justification is order-free, in two stages. `denseBSOrder?_admissibleMemoryB
 canonical-order certificate into the *positional* discipline for the bus's evaluated interaction
 list, via `admissibleMemoryBus_of_pairUp` (`Implementation/MemoryBusOrdered.lean`) — the fibers come
 from the chunking, the per-access `recv ts < send ts` from the solved gadget plus TS_BOUND, and the
-global send order from the shared linear base with stepping constants. On that discipline the
-consecutive-match sweep's verifier (`denseBSCheckPair_sound`) reads exactly as it did when the
-positional discipline was assumed outright. -/
+global send order from the shared linear base with stepping constants. `denseBSCheckPair_sound`
+consumes that positional discipline directly. -/
 
 namespace ApcOptimizer.Dense
 

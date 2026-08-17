@@ -17,7 +17,7 @@ yields the positional discipline for that list as a theorem
 evaluated-address group is a *subsequence* — so no interaction is ever certified disjoint from
 another and aliasing never enters.
 
-On that list the pre-migration consecutive-match sweep runs unchanged: one left-to-right pass
+The consecutive-match sweep then runs on that list: one left-to-right pass
 maintaining open send windows (`constOpen`, keyed by canonical address; `symOpen`, tested against
 every message), proposing `(sendPos, recvPos)` pairs. The sweep is untrusted — `denseBSCheckPair`
 re-verifies every proposal — so it uses the fingerprint tests while the verifier uses the exact

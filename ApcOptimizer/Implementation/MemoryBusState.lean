@@ -8,7 +8,9 @@ set_option autoImplicit false
 Everything derived from the audited definitions in `ApcOptimizer/MemoryBus.lean`.
 
 `excessBounded` is the count-based form the passes consume; the audited rely is stated on the
-field-valued `busState` instead. On a single bus, and with every multiplicity `±setNewMult`,
+field-valued `busState` instead. `admissibleMemoryBus` is the *positional* form the sweep passes
+consume — not assumed by any VM rely, but derived on a certified canonical access order
+(`interleaveAccesses_admissibleMemoryBus_of_M`, `Implementation/MemoryBusMultiset.lean`). On a single bus, and with every multiplicity `±setNewMult`,
 `busState` at a message is `(sends - receives) * setNewMult` (`busState_eq_counts`), and the rely's
 length bound keeps both counts below `p`, so the field equation pins the counts down — no count can
 wrap. `excessBounded_of_admissibleMemoryBusM` is the bridge; it is applied once per VM, in
@@ -27,6 +29,20 @@ variable {p : ℕ}
     pass never has to establish it. -/
 def excessBounded (shape : MemoryBusShape) (M : Multiset (BusInteraction (ZMod p))) : Prop :=
   ∀ addr : List (Option (ZMod p)), Multiset.card (excessAt shape addr M) ≤ 1
+
+/-! ## The positional form -/
+
+/-- The positional discipline the pass proofs consume — for an *ordered* list of one bus's
+    messages: after a `setNew` to a given address (multiplicity `shape.setNewMult`), the next
+    `getPrevious` from the same address (multiplicity `-shape.setNewMult`) observes the same
+    payload, with no intervening active messages to the same address. -/
+def admissibleMemoryBus (shape : MemoryBusShape) (L : List (BusInteraction (ZMod p))) : Prop :=
+  ∀ (pre mid post : List (BusInteraction (ZMod p))) (S R : BusInteraction (ZMod p)),
+    L = pre ++ S :: mid ++ R :: post →
+    S.multiplicity = shape.setNewMult → R.multiplicity = -shape.setNewMult →
+    shape.address S = shape.address R →
+    (∀ m ∈ mid, m.multiplicity ≠ 0 → shape.address m = shape.address S → False) →
+    S.payload = R.payload
 
 /-! ## Order-freeness -/
 
