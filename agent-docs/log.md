@@ -7521,6 +7521,19 @@ and `busUnify` (so the copies land in cycle 0): rsp 3.869× — the copies land 
 post-substitution, same pivot orientation, same fixpoint; not landed (costs a gauss per cycle).
 (2) The widened busPairCancel above: neutral.
 
+**Why busUnify is load-bearing on SP1 (mechanism, sharper than entry 186's).** Re-measured on
+this head: unscheduling busUnify reproduces entry 186 exactly (rsp 3.868× → 2.297×, sp1:keccak
+2729 → 7548 vars; OpenVM n20 byte-identical). The per-cycle certificate dump on a collapsing case
+(apc_015) shows the whole-bus certificate failing on `denseBSGadgetsOk`, not the shared ts base
+(`sendTsOk` holds from cycle 1): one access — the *entry* access of a RAM group, whose previous
+record lives in a different `clk_high` window — has a genuinely uncertifiable low-limb LessThan
+(`setNew.ts − getPrev.ts` picks up the raw `prev_low` witness with coefficient `−1`; SP1's own
+argument for that access is lexicographic on `(high, low)`). busSweep's certificate is
+all-or-nothing per bus, so that one pair kills every group's copies; busUnify certifies per
+address group and keeps all the same-window groups. The two engines are granularity variants of
+one certificate, complementary rather than redundant: on OpenVM (single global timestamp, every
+pair's gadget solvable) the whole-bus form subsumes the per-group form; on SP1 it cannot.
+
 **Open (the actual fix).** The gap is byte-granularity identification lost to substitution-order
 path dependence, not a memory-pass defect. Candidate general fix: a digit-split step — from a
 linear equality between two byte ladders (`Σ 256^i·aᵢ = Σ 256^i·bᵢ`, all digits range-checked),
