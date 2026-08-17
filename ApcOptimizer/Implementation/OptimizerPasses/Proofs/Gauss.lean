@@ -826,6 +826,22 @@ theorem gPick_solveAt (ops : DenseZModOps p) (occ : Array Nat) (prot : Array Boo
               subst hxy
               exact hs
 
+/-- Whichever phase of the ladder-preferring pick returns, the result came from
+    `denseSparseSolveAt`. -/
+theorem gPickLadder_solveAt (ops : DenseZModOps p) (occ : Array Nat) (prot : Array Bool)
+    (l : DenseLinExpr p) (x : VarId) (t : DenseLinExpr p)
+    (h : gPickLadder ops occ prot l = some (x, t)) :
+    denseSparseSolveAt l x = some (x, t) := by
+  unfold gPickLadder at h
+  split at h
+  · exact gPick_solveAt ops occ prot l _ _ x t h
+  · split at h
+    · rename_i xt heq
+      injection h with hxt
+      subst hxt
+      exact gPick_solveAt ops occ prot l _ _ x t heq
+    · exact gPick_solveAt ops occ prot l _ _ x t h
+
 theorem gTake_inv (ops : DenseZModOps p) (bs : BusSemantics p) (d : DenseConstraintSystem p)
     (occ : Array Nat) (prot : Array Bool) (S : GSt p) (h : GInv bs d S) (i : Nat)
     (l : DenseLinExpr p) (hl : GEnt bs d l ∧ GCl d l) :
@@ -833,12 +849,12 @@ theorem gTake_inv (ops : DenseZModOps p) (bs : BusSemantics p) (d : DenseConstra
   rw [gTake]
   split
   · exact h.setStatus i 2
-  · cases hp : gPick ops occ prot l (l.terms.length + 1) [] with
+  · cases hp : gPickLadder ops occ prot l with
     | none => simpa using h.setPending i l hl
     | some q =>
         obtain ⟨x, t⟩ := q
         dsimp only
-        have hsolve := gPick_solveAt ops occ prot l _ [] x t hp
+        have hsolve := gPickLadder_solveAt ops occ prot l x t hp
         refine gAdopt_inv ops bs d S h i x t ⟨?_, ?_⟩
         · intro denv hsat
           exact denseSparseSolveAt_sound l x x t hsolve denv (hl.1 denv hsat)
