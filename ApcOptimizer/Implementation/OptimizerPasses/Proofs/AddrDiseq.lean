@@ -45,11 +45,6 @@ theorem denseKeyNeq_sound (a b : DenseLinExpr p) (hk : denseTermKey a = denseTer
   rw [denseLin_eval_norm a denv, denseLin_eval_norm b denv, hsum] at heq
   exact hc (add_right_cancel heq)
 
-theorem denseKeyDiffNZ_sound (a b : DenseLinExpr p) (h : denseKeyDiffNZ a b = true)
-    (denv : VarId → ZMod p) : a.eval denv ≠ b.eval denv := by
-  simp only [denseKeyDiffNZ, Bool.and_eq_true, decide_eq_true_eq] at h
-  exact denseKeyNeq_sound a b h.1.2 h.2 denv
-
 /-! ## Address-slot glue: a per-slot value (dis)equality forces an address (dis)equality -/
 
 /-- If some declared address slot of `S` and `bi` evaluates differently under `denv`, the addresses
@@ -91,34 +86,6 @@ theorem denseAddr_eq_slot (shape : MemoryBusShape) (S m : BusInteraction (DenseE
   rw [heq, e2] at e1
   exact (Option.some.inj e1).symm
 
-/-! ## The affine (same-base) certificate -/
-
-/-- Some address slot linearizes to two affine forms a nonzero constant apart, so the addresses
-    differ. -/
-theorem denseAddrAffineNeq_sound (reg : VarRegistry) (shape : MemoryBusShape)
-    (S bi : BusInteraction (DenseExpr p)) (_hS : denseBICovered reg S) (_hbi : denseBICovered reg bi)
-    (h : denseAddrAffineNeq shape S bi = true) (denv : VarId → ZMod p) :
-    shape.address (denseBIEval S denv) ≠ shape.address (denseBIEval bi denv) := by
-  unfold denseAddrAffineNeq at h
-  obtain ⟨slot, hslot, hcond⟩ := List.any_eq_true.1 h
-  cases hSp : S.payload[slot]? with
-  | none => rw [hSp] at hcond; simp at hcond
-  | some e =>
-    cases hbp : bi.payload[slot]? with
-    | none => rw [hSp, hbp] at hcond; simp at hcond
-    | some e' =>
-      simp only [hSp, hbp] at hcond
-      cases hL : denseLinearize e with
-      | none => simp [hL] at hcond
-      | some L =>
-        cases hL' : denseLinearize e' with
-        | none => simp [hL, hL'] at hcond
-        | some L' =>
-          simp only [hL, hL'] at hcond
-          refine denseAddr_slot_neq shape S bi denv hslot hSp hbp ?_
-          rw [denseLinearize_eval e L hL denv, denseLinearize_eval e' L' hL' denv]
-          exact denseKeyDiffNZ_sound L L' hcond denv
-
 /-! ## The two-root map: the lookup-wise soundness invariant -/
 
 /-- The dense soundness invariant: every successful lookup is prime-gated, unit-coefficient, and
@@ -149,60 +116,6 @@ theorem DenseTwoRootMap.Sound.insertEntry {dcs : List (DenseExpr p)} {T : DenseT
     exact hnew
   · rw [if_neg hvw] at hw
     exact hT w k' A' δ' hw
-
-theorem DenseTwoRootMap.Sound.addVars {dcs : List (DenseExpr p)} (hp : Nat.Prime p) {c : DenseExpr p}
-    (hc : c ∈ dcs) : ∀ (T : DenseTwoRootMap p) (vs : List VarId), T.Sound dcs →
-      (DenseTwoRootMap.addVars c T vs).Sound dcs := by
-  intro T vs
-  induction vs generalizing T with
-  | nil => intro hT; exact hT
-  | cons v rest ih =>
-      intro hT
-      rw [DenseTwoRootMap.addVars]
-      cases htr : denseTwoRootOf? c v with
-      | none => exact ih T hT
-      | some kAδ =>
-          obtain ⟨k, A, δ⟩ := kAδ
-          dsimp only
-          by_cases hu : k * k⁻¹ = 1
-          · rw [if_pos hu]; exact ih _ (hT.insertEntry ⟨hp, hu, c, hc, htr⟩)
-          · rw [if_neg hu]; exact ih T hT
-
-theorem DenseTwoRootMap.Sound.addAllFor {dcs : List (DenseExpr p)} (hp : Nat.Prime p)
-    (vars : Std.HashSet VarId) :
-    ∀ (T : DenseTwoRootMap p) (pending : List (DenseExpr p)), (∀ c ∈ pending, c ∈ dcs) →
-      T.Sound dcs → (DenseTwoRootMap.addAllFor vars T pending).Sound dcs := by
-  intro T pending
-  induction pending generalizing T with
-  | nil => intro _ hT; exact hT
-  | cons c rest ih =>
-      intro hmem hT
-      rw [DenseTwoRootMap.addAllFor]
-      exact ih _ (fun c' h => hmem c' (List.mem_cons_of_mem _ h))
-        (DenseTwoRootMap.Sound.addVars hp (hmem c (List.mem_cons_self ..)) T _ hT)
-
-/-- `Sound` only asserts the existence of a witnessing constraint, so it survives passing to a
-    superset of the indexed list. -/
-theorem DenseTwoRootMap.Sound.mono {l1 l2 : List (DenseExpr p)} {T : DenseTwoRootMap p}
-    (hsub : ∀ c ∈ l1, c ∈ l2) (hT : T.Sound l1) : T.Sound l2 := by
-  intro v k A δ h
-  obtain ⟨hp, hu, c, hc, hwit⟩ := hT v k A δ h
-  exact ⟨hp, hu, c, hsub c hc, hwit⟩
-
-theorem DenseTwoRootMap.buildFor_sound (vars : Std.HashSet VarId) (dcs : List (DenseExpr p)) :
-    (DenseTwoRootMap.buildFor vars dcs).Sound dcs := by
-  rw [DenseTwoRootMap.buildFor]
-  by_cases hp : Nat.Prime p
-  · rw [if_pos hp]
-    exact DenseTwoRootMap.Sound.addAllFor hp vars DenseTwoRootMap.empty dcs (fun _ h => h)
-      (DenseTwoRootMap.empty_sound dcs)
-  · rw [if_neg hp]; exact DenseTwoRootMap.empty_sound dcs
-
-/-- The address-restricted build is sound for the whole constraint list. -/
-theorem DenseTwoRootMap.buildForAddrs_sound (memShape : Nat → Option MemoryBusShape)
-    (bis : List (BusInteraction (DenseExpr p))) (dcs : List (DenseExpr p)) :
-    (DenseTwoRootMap.buildForAddrs memShape bis dcs).Sound dcs :=
-  (DenseTwoRootMap.buildFor_sound _ _).mono (fun _ hc => List.mem_of_mem_filter hc)
 
 /-! ## Two-root decomposition soundness (value-level)
 
@@ -338,48 +251,6 @@ theorem densePtrReductions_key {T : DenseTwoRootMap p} {E : DenseExpr p} {b1 b2 
           show b2 = (densePtrBranchesOf k A δ (L.coeff v) (L.others v)).2 from
             (congrArg Prod.snd hmatch).symm]
       exact densePtrBranchesOf_key k A δ (L.coeff v) (L.others v)
-
-theorem denseExprTwoRootNeq_sound {dcs : List (DenseExpr p)}
-    (T : DenseTwoRootMap p) (hT : T.Sound dcs) (e e' : DenseExpr p)
-    (h : denseExprTwoRootNeq T e e' = true) (denv : VarId → ZMod p)
-    (hcon : ∀ c ∈ dcs, c.eval denv = 0) : e.eval denv ≠ e'.eval denv := by
-  unfold denseExprTwoRootNeq at h
-  rw [List.any_map, List.any_eq_true] at h
-  obtain ⟨⟨a1, a2⟩, hred, hinner⟩ := h
-  rw [Function.comp_apply, List.any_map, List.any_eq_true] at hinner
-  obtain ⟨⟨b1, b2⟩, hred', hchk⟩ := hinner
-  simp only [Function.comp_apply, denseRedKeysNeq, denseRedKey, Bool.and_eq_true, beq_iff_eq,
-    decide_eq_true_eq] at hchk
-  obtain ⟨⟨⟨_, hkeq⟩, h11, h12⟩, h21, h22⟩ := hchk
-  have hka : denseTermKey a2 = denseTermKey a1 := densePtrReductions_key hred
-  have hkb : denseTermKey b2 = denseTermKey b1 := densePtrReductions_key hred'
-  have hev := densePtrReductions_sound T hT e a1 a2 hred denv hcon
-  have hev' := densePtrReductions_sound T hT e' b1 b2 hred' denv hcon
-  rcases hev with ha | ha <;> rcases hev' with hb | hb <;> rw [ha, hb]
-  · exact denseKeyNeq_sound a1 b1 hkeq h11 denv
-  · exact denseKeyNeq_sound a1 b2 (by rw [hkeq, ← hkb]) h12 denv
-  · exact denseKeyNeq_sound a2 b1 (by rw [hka, hkeq]) h21 denv
-  · exact denseKeyNeq_sound a2 b2 (by rw [hka, hkeq, ← hkb]) h22 denv
-
-/-- Some address slot's two interactions provably differ, so the addresses differ. -/
-theorem denseAddrTwoRootNeq_sound (reg : VarRegistry) (shape : MemoryBusShape)
-    {dcs : List (DenseExpr p)} (T : DenseTwoRootMap p) (hT : T.Sound dcs)
-    (_hdcov : ∀ c ∈ dcs, c.CoveredBy reg) (S bi : BusInteraction (DenseExpr p))
-    (_hS : denseBICovered reg S) (_hbi : denseBICovered reg bi)
-    (h : denseAddrTwoRootNeq shape T S bi = true) (denv : VarId → ZMod p)
-    (hcon : ∀ c ∈ dcs, c.eval denv = 0) :
-    shape.address (denseBIEval S denv) ≠ shape.address (denseBIEval bi denv) := by
-  unfold denseAddrTwoRootNeq at h
-  obtain ⟨slot, hslot, hcond⟩ := List.any_eq_true.1 h
-  cases hSp : S.payload[slot]? with
-  | none => rw [hSp] at hcond; simp at hcond
-  | some e =>
-    cases hbp : bi.payload[slot]? with
-    | none => rw [hSp, hbp] at hcond; simp at hcond
-    | some e' =>
-      rw [hSp, hbp] at hcond
-      have hne := denseExprTwoRootNeq_sound T hT e e' hcond denv hcon
-      exact denseAddr_slot_neq shape S bi denv hslot hSp hbp hne
 
 /-! ## The nonzero-witness (register-vs-RAM) certificate -/
 

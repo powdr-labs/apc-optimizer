@@ -3,12 +3,11 @@ import ApcOptimizer.Implementation.OptimizerPasses.BusPairCancelLive
 
 set_option autoImplicit false
 
-/-! # Dense region tests + emitted-check acceptance for `busPairCancel`
+/-! # Dense emitted-check acceptance for `busPairCancel`
 
-The receive scan (`denseFirstMatchAt`), address-disequality refutation
-(`denseMidRefuted`/`densePreRefuted`/`denseProvRecv`), the shield scan (`denseShieldOk`), emitted
-byte checks (`denseMkByteCheck`/`denseMkBytePair`), and the per-candidate acceptance test
-(`denseCheckCancel`). Impl-only; soundness in `Proofs/BusPairCancelCheck.lean`. -/
+The receive scan (`denseFirstMatchAt`), emitted byte checks (`denseMkByteCheck`/`denseMkBytePair`),
+and the per-candidate acceptance test (`denseCheckCancel`). Impl-only; soundness in
+`Proofs/BusPairCancelCheck.lean`. -/
 
 namespace ApcOptimizer.Dense
 
@@ -28,113 +27,6 @@ def denseFirstMatchAt (M : Thunk (DenseEqConstraintMap p)) (arr : Array (BusInte
         else denseFirstMatchAt M arr alive busId S i rest
       | none => denseFirstMatchAt M arr alive busId S i rest
     else denseFirstMatchAt M arr alive busId S i rest
-
-/-- Refute `m` as an active same-address message on `busId` (the "between" region test). The two-root
-    disequality (`denseAddrTwoRootNeq`) lets it step over interleaved accesses whose addresses are
-    pointer expressions rather than constants. -/
-def denseMidRefuted (ops : DenseZModOps p) (shape : MemoryBusShape)
-    (T : Thunk (DenseAddrCerts p)) (busId : Nat)
-    (S m : BusInteraction (DenseExpr p)) : Bool :=
-  decide (m.busId ≠ busId) || decide (denseMultConst m = some ops.zero) || denseAddrConstsNeq shape S m
-    || denseAddrAffineNeq shape S m || denseAddrTwoRootNeq shape T.get.tworoot S m
-    || denseAddrNonzeroNeq shape T.get.nonzero S m
-
-/-- Refute `m` as an active same-address *send* on `busId` (the "before" region test:
-    earliest-send). -/
-def densePreRefuted (ops : DenseZModOps p) (shape : MemoryBusShape)
-    (T : Thunk (DenseAddrCerts p)) (busId : Nat)
-    (S m : BusInteraction (DenseExpr p)) : Bool :=
-  denseMidRefuted ops shape T busId S m ||
-    (match denseMultConst m with
-     | some c => decide (c ≠ denseSetNewMult ops shape)
-     | none => false)
-
-/-- `m` is a *provable* active same-address receive on `busId`: on-bus, constant `-1`
-    multiplicity, and a constant address equal to `S`'s. -/
-def denseProvRecv (ops : DenseZModOps p) (shape : MemoryBusShape) (busId : Nat)
-    (S m : BusInteraction (DenseExpr p)) : Bool :=
-  decide (m.busId = busId) && denseAddrConstsEq shape S m &&
-    decide (denseMultConst m = some (denseGetPreviousMult ops shape))
-
-/-- Single right-to-left pass returning `(hasRecvSoFar, ok)`: `hasRecvSoFar` is whether the tail
-    processed so far (everything to the right) contains a provable active same-address receive; `ok`
-    is whether every not-`densePreRefuted` message so far is followed by such a receive. O(n). -/
-def denseShieldScan (ops : DenseZModOps p) (shape : MemoryBusShape)
-    (T : Thunk (DenseAddrCerts p)) (busId : Nat)
-    (S : BusInteraction (DenseExpr p)) :
-    List (BusInteraction (DenseExpr p)) → Bool × Bool
-  | [] => (false, true)
-  | m0 :: rest =>
-    let r := denseShieldScan ops shape T busId S rest
-    (r.1 || denseProvRecv ops shape busId S m0,
-      r.2 && (densePreRefuted ops shape T busId S m0 || r.1))
-
-/-- The *shield* check on the before-region: every message that is **not** provably a
-    non-(active-same-address-send) (`¬densePreRefuted`) is followed by a provable active
-    same-address receive (`denseProvRecv`). Computed in one O(n) pass (`denseShieldScan`). -/
-def denseShieldOk (ops : DenseZModOps p) (shape : MemoryBusShape)
-    (T : Thunk (DenseAddrCerts p)) (busId : Nat)
-    (S : BusInteraction (DenseExpr p)) (l : List (BusInteraction (DenseExpr p))) : Bool :=
-  (denseShieldScan ops shape T busId S l).2
-
-/-- `denseShieldScan` with the two per-message tests abstracted. -/
-def denseShieldScanW {α : Type} (P Q : α → Bool) : List α → Bool × Bool
-  | [] => (false, true)
-  | m0 :: rest =>
-    let r := denseShieldScanW P Q rest
-    (r.1 || Q m0, r.2 && (P m0 || r.1))
-
-theorem denseShieldScanW_eq (ops : DenseZModOps p) (shape : MemoryBusShape)
-    (T : Thunk (DenseAddrCerts p)) (busId : Nat) (S : BusInteraction (DenseExpr p)) :
-    ∀ l, denseShieldScanW (densePreRefuted ops shape T busId S)
-        (denseProvRecv ops shape busId S) l = denseShieldScan ops shape T busId S l := by
-  intro l
-  induction l with
-  | nil => rfl
-  | cons m0 rest ih => rw [denseShieldScanW, denseShieldScan, ih]
-
-/-- `denseShieldScanW` over a derived per-position array (prepared certificate records), reading
-    the prepared record at each live position. -/
-def denseShieldScanSegP {α : Type} (P Q : α → Bool) (preArr : Array α) (alive : Array Bool) :
-    (lo n : Nat) → Bool × Bool
-  | _, 0 => (false, true)
-  | lo, n + 1 =>
-    let r := denseShieldScanSegP P Q preArr alive (lo + 1) n
-    if alive[lo]?.getD false then
-      match preArr[lo]? with
-      | some m0 => (r.1 || Q m0, r.2 && (P m0 || r.1))
-      | none => r
-    else r
-
-/-- `denseShieldScanSegP` is `denseShieldScanW` over the live segment, given per-position agreement
-    of both tests (see `denseLiveAllSegP_eqOf`). -/
-theorem denseShieldScanSegP_eqOf {α : Type} (P Q : α → Bool)
-    (P' Q' : BusInteraction (DenseExpr p) → Bool)
-    (arr : Array (BusInteraction (DenseExpr p))) (alive : Array Bool) (preArr : Array α)
-    (hsz : preArr.size = arr.size)
-    (hpt : ∀ (q : Nat) (m0 : BusInteraction (DenseExpr p)), arr[q]? = some m0 →
-      ∃ m, preArr[q]? = some m ∧ P m = P' m0 ∧ Q m = Q' m0) :
-    ∀ (lo n : Nat),
-      denseShieldScanSegP P Q preArr alive lo n
-        = denseShieldScanW P' Q' (denseLiveSeg arr alive lo n) := by
-  intro lo n
-  induction n generalizing lo with
-  | zero => rfl
-  | succ n ih =>
-      rw [denseShieldScanSegP, ih (lo + 1)]
-      cases halive : alive[lo]?.getD false with
-      | false => rw [denseLiveSeg_skip arr alive lo n halive, if_neg (by simp)]
-      | true =>
-          rw [if_pos rfl]
-          cases harr : arr[lo]? with
-          | some m0 =>
-              obtain ⟨m, hm, hP, hQ⟩ := hpt lo m0 harr
-              rw [denseLiveSeg_peel arr alive lo n m0 halive harr, hm, denseShieldScanW]
-              simp only [hP, hQ]
-          | none =>
-              rw [Array.getElem?_eq_none (by rw [hsz]; exact Array.getElem?_eq_none_iff.1 harr),
-                denseLiveSeg, halive, harr, if_pos rfl]
-              simp
 
 /-- Single-value byte check on `e`, emitted through `spec` (multiplicity `1`). -/
 def denseMkByteCheck (spec : ByteXorSpec p) (busId : Nat) (e : DenseExpr p) :
