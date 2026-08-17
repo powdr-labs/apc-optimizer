@@ -7440,3 +7440,45 @@ untrusted-hint/verified-consumption shape fits), which is the obvious next runti
 sp1:keccak −8 vars). Unexamined: either the order certificate does not land on SP1's memory bus,
 or `busUnify`'s timestamp-group engine already captures those slots. Joins the branch's existing
 SP1 residual item (rsp 3.868× vs main's 3.930×).
+
+### 186. Diff-reduction review: the lost MemoryBusState.lean restored, busUnify ⊄ busSweep measured, busForward merged into busSweep (one certification per bus)
+
+**State.** The branch's tip refactor ("Refactor admissibleMemoryBusM" — the audited rely restated
+on the net bus state, the same currency as `Circuit.sideEffects`) initially imported
+`Implementation/MemoryBusState.lean` without committing it, so the branch did not build. An
+independent reconstruction of the file (same public API: `excessBounded`,
+`excessBounded_of_admissibleMemoryBusM`, the `_perm` order-freeness theorems) built and measured
+identical to entry 185 on all six suites; the original file was then recovered and the refactor
+commit amended to include it, superseding the reconstruction.
+
+**busUnify is not subsumed by busSweep (A/B, measured).** The question entry 185 left open. With
+`busUnify` unscheduled: all four OpenVM suites byte-identical (keccak 14.981×, sha256 14.430×,
+openvm-eth n40 4.604×, wasm-eth n40 7.641×) — on OpenVM the group engine is fully subsumed by the
+sweep. On SP1 it is load-bearing: sp1:keccak 5.042× → 1.823× variables, rsp 3.868× → 2.297×
+(0 wins / 71 losses vs powdr). busSweep's certificate needs the *whole bus* on one shared
+timestamp base; the group engine certifies per-group bases, which SP1 still needs. Both stay.
+
+**busForward merged into busSweep.** Entry 185's standing runtime item: both passes certified the
+*same* canonical order per bus per cleanup cycle. Now one pass (`busSweep`) certifies once
+(`denseBSOrder?`) and runs both engines on the shared order — the consecutive-match sweep and the
+value-forwarding engine — appending both equality sets (deduplicated: with no intervening
+accesses the two engines emit the same equality). Both engines' verification lemmas untouched;
+only the per-invocation scaffolding merged (`denseBSForBus`, `BusForward.lean`, with the wired
+pass in `Proofs/BusForward.lean`). MEASURED: effectiveness byte-identical on all six suites
+(sizes deterministic); profile on one machine, paired runs — OpenVM keccak busSweep 730 ms vs
+667 + 623 ms for the two passes before (−43 %), end-to-end 4262 → 3759 ms; sp1:keccak
+131 ms vs 133 + 127 ms (total flat at ~5.3 s — busUnify's 3.6 s dominates there, the branch's
+known runtime item).
+
+**Diff reduction.** `admissibleMemoryBus` (positional) moved off the audited surface into
+`Implementation/MemoryBusState.lean` — no VM rely consumes it; it is derived on the certified
+canonical order. Ignore entries that are in fact proof-reachable (through
+`admissibleMemoryBus_of_pairUp`) dropped from `Scripts/unused-theorems.txt`. Comment fixes: the
+referenced consumption theorem is `admissibleMemoryBusM_copies_of_steps` (the `_of_ts` name never
+existed), and migration narration replaced by current-state phrasing per the comment guidelines.
+
+**Open.** busPairCancel's mid-region/shield machinery establishes hypotheses
+`denseDropPair_correct` no longer consumes (`_hmidEval`/`_hpreEval` — the order-free
+`admissible_dropPair` needs only payload equality). Dropping the machinery would simplify the
+pass and might cancel non-adjacent pairs (an effectiveness win), at the cost of a larger diff to
+main; unexplored.

@@ -3,10 +3,10 @@ import ApcOptimizer.Implementation.OptimizerPasses.BusUnify
 
 set_option autoImplicit false
 
-/-! # Dense consecutive-match bus unification (runtime transform for `busSweep`)
+/-! # Dense consecutive-match bus unification (the `busSweep` pass's certificate and sweep engine)
 
-Impl-only (no soundness lemma). `denseBusSweepF` matches the `denseF` shape `DenseVerifiedPassW.of`
-(`Bridge.lean`) wraps directly.
+Impl-only (no soundness lemma). The wired pass runs this engine and the value-forwarding engine on
+one shared canonical-order certificate per bus — see `denseBusSweepF` (`BusForward.lean`).
 
 Where the timestamp-group engine (`BusUnify.lean`) certifies one *address group* at a time — and so
 needs every other interaction on the bus certified disjoint from it, which symbolic pointers deny —
@@ -287,68 +287,5 @@ def denseBSCollect (ops : DenseZModOps p) (nw : DenseNonzeroWits p) (setMult pre
       | some S, some R => denseMemEqConstraints shape S R ++ acc
       | _, _ => acc
     else acc
-
-/-! ## Per-invocation scaffolding -/
-
-/-- The entailed equalities of one bus with a declared ts slot: prepare, certify a pairing into
-    canonical access order, sweep that order, verify. A bus whose interactions do not certify
-    contributes nothing. -/
-def denseBSForBus (bs : BusSemantics p) (facts : BusFacts p bs) (ops : DenseZModOps p)
-    (T : DenseTwoRootMap p) (nw : DenseNonzeroWits p) (shape : MemoryBusShape) (tsField B : Nat)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
-    (bisL : List (BusInteraction (DenseExpr p))) : List (DenseExpr p) :=
-  let setMult := denseSetNewMult ops shape
-  let prevMult := denseGetPreviousMult ops shape
-  let zipped := bisL.map (fun bi => (bi, denseBUPrep shape T bi))
-  match denseBSOrder? bs facts shape T setMult prevMult tsField B allBis idx zipped with
-  | none => []
-  | some ps =>
-    let canon := denseBSCanon shape T bisL ps
-    let arr := (canon.map (denseBUPrep shape T)).toArray
-    let pairs := denseBSSweep ops nw setMult prevMult arr arr.size 0 ∅ [] []
-    let out := denseBSScatter arr.size pairs
-    denseBSCollect ops nw setMult prevMult shape canon.toArray arr
-      (denseBSCands out out.size [])
-
-/-- The equalities every bus contributes, before the zero / already-present filter. A bus without
-    a declared ts slot (`facts.memTsField`) contributes nothing. -/
-def denseBSEqsOf (bs : BusSemantics p) (facts : BusFacts p bs)
-    (busLists : List (Nat × MemoryBusShape × List (BusInteraction (DenseExpr p))))
-    (d : DenseConstraintSystem p) : List (DenseExpr p) :=
-  let T := denseBUTable busLists d
-  let nw := denseBUWits d
-  let idx := denseBUBuildIdx bs facts d.busInteractions
-  (busLists.map (fun sl =>
-    match facts.memTsField sl.1 with
-    | some (tsField, B) =>
-      denseBSForBus bs facts denseZModOps T nw sl.2.1 tsField B d.busInteractions idx sl.2.2
-    | none => [])).flatten
-
-def denseBSEqs (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
-    List (DenseExpr p) :=
-  let busLists := denseBUBusLists facts.memShape d.busInteractions
-  if busLists.isEmpty then [] else denseBSEqsOf bs facts busLists d
-
-/-- The constraints `denseBusSweepF` appends: the entailed slot equalities of every verified
-    consecutive send→receive pair, minus those that are identically zero or already present. -/
-def denseBusSweepNewCs (bs : BusSemantics p) (facts : BusFacts p bs)
-    (d : DenseConstraintSystem p) : List (DenseExpr p) :=
-  let eqs := denseBSEqs bs facts d
-  if eqs.isEmpty then [] else denseBUFilterNew d eqs
-
-/-- For a memory bus, a `setNew` (send) at address `a` followed by a matching `getPrevious`
-    (receive) at the same address with nothing at that address in between must carry the same
-    payload, so this adds the entailed slot equalities `getᵢ = setᵢ` for every provably-matched
-    such pair on each declared memory / execution-bridge bus whose interaction list is certified to
-    be in canonical access order (skipping equations already present or zero).
-
-    No-new-variable side condition holds by construction (`denseMemEqConstraints_vars`). -/
-def denseBusSweepF (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
-    DenseConstraintSystem p :=
-  if (1 : ZMod p) ≠ 0 then
-    let new := denseBusSweepNewCs bs facts d
-    if new.isEmpty then d
-    else { d with algebraicConstraints := d.algebraicConstraints ++ new }
-  else d
 
 end ApcOptimizer.Dense
