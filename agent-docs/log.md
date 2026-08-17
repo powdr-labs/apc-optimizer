@@ -7448,8 +7448,10 @@ on the net bus state, the same currency as `Circuit.sideEffects`) initially impo
 `Implementation/MemoryBusState.lean` without committing it, so the branch did not build. An
 independent reconstruction of the file (same public API: `excessBounded`,
 `excessBounded_of_admissibleMemoryBusM`, the `_perm` order-freeness theorems) built and measured
-identical to entry 185 on all six suites; the original file was then recovered and the refactor
-commit amended to include it, superseding the reconstruction.
+identical to entry 185 on all six suites. The original file was then recovered and the refactor
+commit amended to include it; the reconstruction — 79 lines shorter at the same API, stating the
+count workhorse directly on the goal's multiset counts instead of through a `recvCount`/
+`sendCount` bridging layer — was adopted over it afterwards, re-validated on both keccak suites.
 
 **busUnify is not subsumed by busSweep (A/B, measured).** The question entry 185 left open. With
 `busUnify` unscheduled: all four OpenVM suites byte-identical (keccak 14.981×, sha256 14.430×,

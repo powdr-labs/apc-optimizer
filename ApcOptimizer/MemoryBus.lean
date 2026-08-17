@@ -97,7 +97,7 @@ def admissibleMemoryBusM (shape : MemoryBusShape) (M : List (BusInteraction (ZMo
     let state := busState (M.filter (fun m => shape.address m = addr))
     -- Case 1: everything balances (no entry or exit)
     state = (fun _ => 0) ∨
-    -- Case 2: exactly one record enters and one exists
+    -- Case 2: exactly one record enters and one exits
     ∃ entryRecord exitRecord : BusMessage p,
       state = fun message =>
         if message = entryRecord then -shape.setNewMult

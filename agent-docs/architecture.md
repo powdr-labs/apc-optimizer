@@ -90,10 +90,15 @@ passes usable knowledge:
   multiplicities are chosen per bus by `MemoryBusShape.direction` (via `setNewMult`) — `1`/`-1` for
   OpenVM (which sends the new record and receives the previous one), `-1`/`1` for SP1 (which sends the
   previous record and receives the new one). These are completeness-only assumptions about real
-  traces (see the README's assumptions). They are consumed by `busPairCancel` (pair dropping) and
-  `busUnifyPass`, which recovers timestamp *order* inside an address group from the bounded values
+  traces (see the README's assumptions). They are consumed by `busPairCancel` (pair dropping);
+  `busUnify`, which recovers timestamp *order* inside an address group from the bounded values
   and the circuit's own LessThan gadgets (`admissibleMemoryBusM_copies_of_steps`,
-  `Implementation/MemoryBusMultiset.lean`).
+  `Implementation/MemoryBusMultiset.lean`); `busSweep`, which certifies a whole bus into canonical
+  access order and runs the consecutive-match sweep and the value-forwarding engine on it
+  (`admissibleMemoryBus_of_pairUp`, `Implementation/MemoryBusOrdered.lean`); and `execChain`,
+  which chains the execution bridge from ENTRY_KEY (`entryKeyed` — the caller-declared entry pc,
+  opt-in and completeness-only) plus per-access timestamp certificates
+  (`entryKeyed_chain_copies`, `Implementation/MemoryBusChain.lean`).
 
 ## OpenVM instantiation
 

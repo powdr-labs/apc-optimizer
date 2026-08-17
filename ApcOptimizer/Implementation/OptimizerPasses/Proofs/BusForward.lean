@@ -603,35 +603,31 @@ theorem denseBusSweepNewCs_sound (bs : BusSemantics p) (facts : BusFacts p bs) (
 theorem denseBusSweepF_eq (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) :
     denseBusSweepF bs facts d =
-      (if (1 : ZMod p) ≠ 0 then
-        (if (denseBusSweepNewCs bs facts d).isEmpty then d
-         else { d with algebraicConstraints :=
-                  d.algebraicConstraints ++ denseBusSweepNewCs bs facts d })
-       else d) := rfl
+      (if (denseBusSweepNewCs bs facts d).isEmpty then d
+       else { d with algebraicConstraints :=
+                d.algebraicConstraints ++ denseBusSweepNewCs bs facts d }) := rfl
 
 theorem denseBusSweepF_covered (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) (hcov : d.CoveredBy reg) :
     (denseBusSweepF bs facts d).CoveredBy reg := by
   rw [denseBusSweepF_eq]
-  split_ifs with hp1 _hempty
+  split_ifs with _hempty
   · exact hcov
   · refine ⟨fun e he => ?_, hcov.2⟩
     rcases List.mem_append.1 he with h | h
     · exact hcov.1 e h
     · intro i hi
       exact DenseConstraintSystem.occ_valid hcov i (denseBusSweepNewCs_vars bs facts d e h i hi)
-  · exact hcov
 
 theorem denseBusSweepF_correct (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) (hcov : d.CoveredBy reg) :
     DensePassCorrect reg.isInput d (denseBusSweepF bs facts d) [] bs := by
   rw [denseBusSweepF_eq]
-  split_ifs with hp1 _hempty
+  split_ifs with _hempty
   · exact DensePassCorrect.refl reg.isInput d bs
   · exact DensePassCorrect.denseAddConstraints d bs (denseBusSweepNewCs bs facts d)
       (denseBusSweepNewCs_vars bs facts d)
       (fun denv hadm hsat => denseBusSweepNewCs_sound bs facts reg d hcov denv hadm hsat)
-  · exact DensePassCorrect.refl reg.isInput d bs
 
 /-! ## The dense `busSweep` pass -/
 

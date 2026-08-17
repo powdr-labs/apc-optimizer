@@ -50,7 +50,10 @@ def denseECStepOk (tsField B : Nat) (S R : BusInteraction (DenseExpr p)) : Bool 
 /-- The chain certificate on the key slot: the receives carry constant keys that strictly increase
     (hence are pairwise distinct — only the *first* can be the entry key), the first is the declared
     entry key, and send `i` carries receive `i + 1`'s key. The last send is unconstrained: its key
-    is the block's exit target, which need not be a constant. -/
+    is the block's exit target, which need not be a constant. Strict increase is required in
+    *source order* — sound regardless, but only an already-sorted export certifies. On SP1 the key
+    is the pc's low limb (`pc mod 2^16`), so a block spanning a 64 KiB pc boundary wraps the key
+    sequence and the certificate fails (completeness-only: the chain then emits nothing). -/
 def denseECKeysOk (slot : Nat) (key : ZMod p)
     (sends recvs : List (BusInteraction (DenseExpr p))) : Bool :=
   match denseECKeys slot recvs with

@@ -350,10 +350,8 @@ def denseBusSweepNewCs (bs : BusSemantics p) (facts : BusFacts p bs)
     `denseBFEmit_vars`). -/
 def denseBusSweepF (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
     DenseConstraintSystem p :=
-  if (1 : ZMod p) ≠ 0 then
-    let new := denseBusSweepNewCs bs facts d
-    if new.isEmpty then d
-    else { d with algebraicConstraints := d.algebraicConstraints ++ new }
-  else d
+  let new := denseBusSweepNewCs bs facts d
+  if new.isEmpty then d
+  else { d with algebraicConstraints := d.algebraicConstraints ++ new }
 
 end ApcOptimizer.Dense

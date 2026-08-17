@@ -5,7 +5,7 @@ set_option autoImplicit false
 
 /-! # Order-free memory-bus discipline: consumption and canonical order
 
-Consequences of `excessBounded` (`ApcOptimizer/MemoryBus.lean`, the count-based shadow of the
+Consequences of `excessBounded` (`Implementation/MemoryBusState.lean`, the count-based shadow of the
 order-free `admissibleMemoryBusM`). `admissibleMemoryBusM_copies` is the
 consumption form: presenting one address group as `k` accesses with strictly increasing send
 timestamps and the per-access LessThan bound, every interior receive is forced to copy the

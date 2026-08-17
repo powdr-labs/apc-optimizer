@@ -39,7 +39,12 @@ timestamps share one linear base whose constants step by `[1, B)` along the prop
 Pairing by *matching* rather than by list adjacency is what keeps the pass alive after
 `busPairCancel` has removed matched pairs: a receive whose own send is gone is still certifiable
 against a later same-address send, because its ts slot is still the lt-aux decomposition of the
-shared base and `denseBUGadgetOk` recognizes the difference. -/
+shared base and `denseBUGadgetOk` recognizes the difference. The buckets stay balanced because
+`busPairCancel` removes a send and its receive *together*; the permutation certificate rejects the
+rearrangement otherwise. The certificate is all-or-nothing per bus — one uncertifiable interaction
+(symbolic or zero multiplicity, unbalanced bucket, unsolved gadget) zeroes the whole bus's
+contribution, so the pass depends on `zeroMultBus`/`tautoBus` having dropped inactive
+interactions earlier in the cycle. -/
 
 /-- One access of the pairing: its receive and send, each with its prepared record. -/
 abbrev DenseBSPair (p : ℕ) :=
