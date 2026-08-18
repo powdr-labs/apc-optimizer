@@ -138,14 +138,14 @@ private theorem breaksInvariant_eq_false_iff (busMap : BusMap)
 
 /-- The `BusFacts` interface speaks the audited `accepts`; the lemmas here speak `violates`. Marked
 `@[simp]` so field proofs translate without restating each one. -/
-@[simp] private theorem openVm_accepts_iff (busMap : BusMap)
+@[simp] private theorem openVm_accepts_iff (busMap : BusMap) {entryPc : Option Nat}
     (m : BusInteraction (ZMod p)) :
-    (openVmBusSemantics p busMap).accepts m ↔ violates busMap m = false :=
+    (openVmBusSemantics p busMap entryPc).accepts m ↔ violates busMap m = false :=
   (violates_eq_false_iff busMap m).symm
 
-@[simp] private theorem openVm_maintains_iff (busMap : BusMap)
+@[simp] private theorem openVm_maintains_iff (busMap : BusMap) {entryPc : Option Nat}
     (m : BusInteraction (ZMod p)) :
-    (openVmBusSemantics p busMap).maintainsInvariants m ↔ breaksInvariant busMap m = false :=
+    (openVmBusSemantics p busMap entryPc).maintainsInvariants m ↔ breaksInvariant busMap m = false :=
   (breaksInvariant_eq_false_iff busMap m).symm
 
 
@@ -284,9 +284,9 @@ private theorem payload_seven {payload : List (ZMod p)}
   | [a0, a1, d0, d1, d2, d3, t], _ => exact ⟨a0, a1, d0, d1, d2, d3, t, rfl⟩
 
 /-- An execution-bridge message never violates. -/
-private theorem execBridge_ok (busMap : BusMap)
+private theorem execBridge_ok (busMap : BusMap) {entryPc : Option Nat}
     (m : BusInteraction (ZMod p)) (hbus : busMap m.busId = some .executionBridge) :
-    (openVmBusSemantics p busMap).accepts m := by
+    (openVmBusSemantics p busMap entryPc).accepts m := by
   rw [openVm_accepts_iff]
   unfold violates
   rw [hbus]
@@ -318,9 +318,9 @@ private theorem memory_recv_bytes (busMap : BusMap)
   exact ⟨hok 0 (by omega), hok 1 (by omega), hok 2 (by omega), hok 3 (by omega)⟩
 
 /-- A memory message that is not a receive (multiplicity ≠ -1) never violates. -/
-private theorem memory_nonRecv_ok (busMap : BusMap)
+private theorem memory_nonRecv_ok (busMap : BusMap) {entryPc : Option Nat}
     (m : BusInteraction (ZMod p)) (hbus : busMap m.busId = some .memory)
-    (hm : m.multiplicity ≠ -1) : (openVmBusSemantics p busMap).accepts m := by
+    (hm : m.multiplicity ≠ -1) : (openVmBusSemantics p busMap entryPc).accepts m := by
   rw [openVm_accepts_iff]
   obtain ⟨bid, mult, payload⟩ := m
   simp only at hbus hm
@@ -331,9 +331,9 @@ private theorem memory_nonRecv_ok (busMap : BusMap)
 
 /-- A memory *send* (multiplicity 1) never violates: either the characteristic is > 2 and a
     send is not a receive, or `p ∣ 2` and every value is trivially a byte. -/
-private theorem memory_send_ok [NeZero p] (busMap : BusMap)
+private theorem memory_send_ok [NeZero p] (busMap : BusMap) {entryPc : Option Nat}
     (m : BusInteraction (ZMod p)) (hbus : busMap m.busId = some .memory)
-    (hm : m.multiplicity = 1) : (openVmBusSemantics p busMap).accepts m := by
+    (hm : m.multiplicity = 1) : (openVmBusSemantics p busMap entryPc).accepts m := by
   rw [openVm_accepts_iff]
   by_cases hc : (1 : ZMod p) = -1
   · -- `p ∣ 2`: every value is `< 2 ≤ 256`, so the byte test never fails.
@@ -351,15 +351,16 @@ private theorem memory_send_ok [NeZero p] (busMap : BusMap)
     rw [hbus]
     rcases payload with _ | ⟨a0, _ | ⟨a1, _ | ⟨d0, _ | ⟨d1, _ | ⟨d2, _ | ⟨d3, rest⟩⟩⟩⟩⟩⟩ <;>
       simp [memoryPayload?, isByteCheckedB, isByteB, hbyte]
-  · exact (openVm_accepts_iff busMap m).mp (memory_nonRecv_ok busMap m hbus (by rw [hm]; exact hc))
+  · exact (openVm_accepts_iff busMap m).mp
+      (memory_nonRecv_ok busMap (entryPc := entryPc) m hbus (by rw [hm]; exact hc))
 
 /-- A memory *receive* (multiplicity -1) with byte data limbs (payload slots 2–5, where
     present) never violates. -/
-private theorem memory_recv_ok (busMap : BusMap)
+private theorem memory_recv_ok (busMap : BusMap) {entryPc : Option Nat}
     (m : BusInteraction (ZMod p)) (hbus : busMap m.busId = some .memory)
     (hm : m.multiplicity = -1)
     (hslots : ∀ slot ∈ [2, 3, 4, 5], ∀ x : ZMod p, m.payload[slot]? = some x → x.val < 256) :
-    (openVmBusSemantics p busMap).accepts m := by
+    (openVmBusSemantics p busMap entryPc).accepts m := by
   rw [openVm_accepts_iff]
   obtain ⟨bid, mult, payload⟩ := m
   simp only at hbus hm hslots
@@ -375,10 +376,10 @@ private theorem memory_recv_ok (busMap : BusMap)
 
 /-- A memory message whose address-space slot (slot 0) is a constant ∉ {1, 2} never violates:
     `violates` only rejects non-byte data on address spaces 1 and 2. -/
-private theorem memory_recv_nonByte_ok (busMap : BusMap)
+private theorem memory_recv_nonByte_ok (busMap : BusMap) {entryPc : Option Nat}
     (m : BusInteraction (ZMod p)) (hbus : busMap m.busId = some .memory)
     (as : ZMod p) (hasval : ¬ (as.val = 1 ∨ as.val = 2)) (has : m.payload[0]? = some as) :
-    (openVmBusSemantics p busMap).accepts m := by
+    (openVmBusSemantics p busMap entryPc).accepts m := by
   rw [openVm_accepts_iff]
   obtain ⟨bid, mult, payload⟩ := m
   simp only at hbus has
@@ -396,20 +397,24 @@ private theorem memory_recv_nonByte_ok (busMap : BusMap)
     exact ⟨hne1, hne2⟩
   simp only [memoryPayload?, isByteCheckedB, hmid, Bool.and_false, Bool.false_and]
 
-/-- A bus with a declared last-write-wins shape (memory or execution bridge) is stateful. -/
-theorem openVm_isStateful_of_memShape {p : ℕ} (busMap : BusMap)
-    (busId : Nat) (shape : MemoryBusShape) (h : memShapeOf busMap busId = some shape) :
-    (openVmBusSemantics p busMap).isStateful busId = true := by
-  show (match busMap busId with | some t => t.isStateful | none => false) = true
-  unfold memShapeOf at h
-  generalize busMap busId = o at h ⊢
-  cases o with
-  | none => simp at h
-  | some t => cases t <;> simp_all [OpenVmBusType.isStateful]
+/-- The OpenVM shape lookup with what `openVmBusSemantics.admissible` supplies about it: its first
+    conjunct is exactly the per-declared-bus `MemoryBusShape.rely`. -/
+def openVmShapes {p : ℕ} (busMap : BusMap) (entryPc : Option Nat) :
+    MemoryShapes (openVmBusSemantics p busMap entryPc) where
+  shape := memShapeOf busMap entryPc
+  stateful := by
+    intro busId shape h
+    show (match busMap busId with | some t => t.isStateful | none => false) = true
+    unfold memShapeOf at h
+    generalize busMap busId = o at h ⊢
+    cases o with
+    | none => simp at h
+    | some t => cases t <;> simp_all [OpenVmBusType.isStateful]
+  rely := fun _ hadm busId shape hshape => hadm.1 busId shape hshape
 
 /-- Every OpenVM shape uses `direction := .receiveThenSend`, so `setNewMult` reduces to `1`. -/
-private theorem memShapeOf_setNewMult_eq_one {p : ℕ} (busMap : BusMap)
-    (busId : Nat) (shape : MemoryBusShape) (h : memShapeOf busMap busId = some shape) :
+private theorem memShapeOf_setNewMult_eq_one {p : ℕ} (busMap : BusMap) (entryPc : Option Nat)
+    (busId : Nat) (shape : MemoryBusShape) (h : memShapeOf busMap entryPc busId = some shape) :
     (shape.setNewMult : ZMod p) = 1 := by
   unfold memShapeOf at h
   split at h
@@ -419,8 +424,9 @@ private theorem memShapeOf_setNewMult_eq_one {p : ℕ} (busMap : BusMap)
 
 /-- The proven facts about `openVmBusSemantics`, for any bus map. -/
 def openVmFacts (p : ℕ) [NeZero p]
-    (busMap : BusMap := defaultBusMap) :
-    BusFacts p (openVmBusSemantics p busMap) where
+    (busMap : BusMap := defaultBusMap)
+    (entryPc : Option Nat := none) :
+    BusFacts p (openVmBusSemantics p busMap entryPc) where
   acceptsDec m := !violates busMap m
   acceptsDec_iff m := by
     rw [Bool.not_eq_true']
@@ -631,7 +637,7 @@ def openVmFacts (p : ℕ) [NeZero p]
   recvByteSlots_sound := by
     intro busId shape hmemshape pattern slots bound hfact m hbusId
     have hw : (shape.setNewMult : ZMod p) = 1 :=
-      memShapeOf_setNewMult_eq_one busMap busId shape hmemshape
+      memShapeOf_setNewMult_eq_one busMap entryPc busId shape hmemshape
     simp only [hw]
     subst hbusId
     unfold recvByteSlotsImpl at hfact
@@ -673,80 +679,24 @@ def openVmFacts (p : ℕ) [NeZero p]
       | variableRangeChecker => rw [hbus] at hfact; simp at hfact
       | bitwiseLookup => rw [hbus] at hfact; simp at hfact
       | tupleRangeChecker s1 s2 => rw [hbus] at hfact; simp at hfact
-  memShape := memShapeOf busMap
-  memShape_stateful := fun busId shape hshape =>
-    openVm_isStateful_of_memShape busMap busId shape hshape
-  admissible_sound := by
-    intro msgs hadm busId shape hshape
-    have hstateful : (openVmBusSemantics p busMap).isStateful busId = true :=
-      openVm_isStateful_of_memShape busMap busId shape hshape
-    -- `openVmBusSemantics.admissible` is the per-bus `admissibleMemoryBus` conjunction, `.1`
-    have hd := hadm.1 busId shape hshape
-    -- the active∧stateful-then-busId list equals the busId-then-active list (busId is stateful)
-    have hlist : (msgs.filter (fun m => decide (m.multiplicity ≠ 0) &&
-          (openVmBusSemantics p busMap).isStateful m.busId)).filter (fun m => m.busId = busId)
-        = (msgs.filter (fun m => m.busId = busId)).filter
-          (fun m => decide (m.multiplicity ≠ 0)) := by
-      rw [List.filter_filter, List.filter_filter]
-      apply List.filter_congr
-      intro m _
-      by_cases hb : m.busId = busId
-      · rw [hb, hstateful]; simp
-      · simp [hb]
-    rwa [hlist] at hd
+  memShape := (openVmShapes busMap entryPc).shape
+  memShape_stateful := (openVmShapes busMap entryPc).stateful
+  admissible_sound := (openVmShapes busMap entryPc).excessBounded_of_rely
+  memTsField := (openVmShapes busMap entryPc).tsField
+  memTsField_sound := (openVmShapes busMap entryPc).tsBounded_of_rely
+  memEntryKey := (openVmShapes busMap entryPc).entryKey
+  memEntryKey_sound := fun msgs hadm busId slot key shape hshape hkey =>
+    (openVmShapes busMap entryPc).excessKeyed_of_rely msgs hadm busId slot key shape hshape hkey
   admissible_dropPair := by
-    -- `openVmBusSemantics.admissible` is the per-declared-bus `admissibleMemoryBus` conjunction
-    -- (`.1`) together with the `zeroRegisterReads` clause (`.2`).
-    intro hp1 busId shape hshape A B C S R hSbus hRbus hSm hRm haddrEq hcons hshield hadm_full
-    obtain ⟨hdisc, hzero⟩ := hadm_full
-    refine ⟨fun busId' shape' hshape' => ?_, ?_⟩
-    · -- memory discipline conjunct
-      by_cases hbb : busId' = busId
-      · subst busId'
-        obtain rfl : shape = shape' := Option.some.inj (hshape.symm.trans hshape')
-        have hgoal : (A ++ B ++ C).filter (fun m => m.busId = busId)
-            = A.filter (fun m => m.busId = busId) ++ B.filter (fun m => m.busId = busId)
-              ++ C.filter (fun m => m.busId = busId) := by
-          simp only [List.filter_append]
-        rw [hgoal]
-        have hfull := hdisc busId shape hshape
-        have hfiltFull : (A ++ S :: B ++ R :: C).filter (fun m => m.busId = busId)
-            = A.filter (fun m => m.busId = busId) ++ S :: B.filter (fun m => m.busId = busId)
-              ++ R :: C.filter (fun m => m.busId = busId) := by
-          simp only [List.filter_append, List.filter_cons, hSbus, hRbus, decide_true, if_true]
-        rw [hfiltFull] at hfull
-        refine admissibleMemoryBus_dropPair shape hp1 _ _ _ S R hfull ?_ ?_ haddrEq
-        · intro m hm hmne hmaddr
-          rw [List.mem_filter] at hm
-          exact hcons m hm.1 (of_decide_eq_true hm.2) hmne hmaddr
-        · -- shield over the filtered `A`: lift the split to raw `A`, apply the abstract shield,
-          -- then push the resulting receive back into the filtered suffix.
-          intro A₁' Sx A₂' hAsplit hSxne hSxaddr hSxmult
-          obtain ⟨A₁, A₂, hAeq, _, hA₂filt⟩ :=
-            filter_split (fun m => m.busId = busId) Sx A A₁' A₂' hAsplit
-          -- `Sx` is in the filtered list, so it carries `busId`.
-          have hSxbus : Sx.busId = busId := by
-            have : Sx ∈ A.filter (fun m => m.busId = busId) := by
-              rw [hAsplit]; exact List.mem_append_right A₁' (List.mem_cons_self ..)
-            exact of_decide_eq_true (List.mem_filter.mp this).2
-          obtain ⟨m, hmem, hmbus, hmne, hmaddr, hmmult⟩ :=
-            hshield A₁ Sx A₂ hAeq hSxbus hSxne hSxaddr hSxmult
-          refine ⟨m, ?_, hmne, hmaddr, hmmult⟩
-          rw [← hA₂filt]; exact List.mem_filter.mpr ⟨hmem, by simp [hmbus]⟩
-      · -- `busId' ≠ busId`: `S`, `R` are on `busId`, so they drop out and the filter is unchanged.
-        have hne : busId ≠ busId' := fun h => hbb h.symm
-        have heq : (A ++ B ++ C).filter (fun m => m.busId = busId')
-            = (A ++ S :: B ++ R :: C).filter (fun m => m.busId = busId') := by
-          simp only [List.filter_append, List.filter_cons, hSbus, hRbus,
-            decide_eq_false hne, Bool.false_eq_true, if_false]
-        rw [heq]
-        exact hdisc busId' shape' hshape'
-    · -- `zeroRegisterReads` conjunct: `A ++ B ++ C`'s members are all members of the full list.
-      intro m hm hbus h0 h1
-      have hmem : m ∈ A ++ S :: B ++ R :: C := by
-        simp only [List.mem_append, List.mem_cons] at hm ⊢
-        tauto
-      exact hzero m hmem hbus h0 h1
+    -- `openVmBusSemantics.admissible` is the per-declared-bus `MemoryBusShape.rely` (`.1`) together
+    -- with the `zeroRegisterReads` clause (`.2`).
+    intro busId shape hshape A B C S R hSbus hRbus hSm hRm hpay hadm_full
+    obtain ⟨hmem, hzero⟩ := hadm_full
+    refine ⟨(openVmShapes busMap entryPc).rely_dropPair hshape hSbus hRbus hSm hRm hpay hmem, ?_⟩
+    intro m hm hbus h0 h1
+    refine hzero m ?_ hbus h0 h1
+    simp only [List.mem_append, List.mem_cons] at hm ⊢
+    tauto
   zeroRangeEq busId := match busMap busId with
     | some .variableRangeChecker => true
     | _ => false
@@ -819,12 +769,12 @@ def openVmFacts (p : ℕ) [NeZero p]
       simp only [Option.some.injEq, Prod.mk.injEq] at hfact
       obtain ⟨rfl, rfl⟩ := hfact
       -- `m` survives the active∧stateful filter, so the `zeroRegisterReads` clause applies to it.
-      have hstateful : (openVmBusSemantics p busMap).isStateful m.busId = true := by
+      have hstateful : (openVmBusSemantics p busMap entryPc).isStateful m.busId = true := by
         show (match busMap m.busId with | some t => t.isStateful | none => false) = true
         rw [hbusId, hbus]; rfl
       have hmemBus : busMap m.busId = some .memory := by rw [hbusId]; exact hbus
       have hmfilt : m ∈ msgs.filter
-          (fun m => decide (m.multiplicity ≠ 0) && (openVmBusSemantics p busMap).isStateful m.busId) := by
+          (fun m => decide (m.multiplicity ≠ 0) && (openVmBusSemantics p busMap entryPc).isStateful m.busId) := by
         rw [List.mem_filter]
         exact ⟨hm, by rw [hstateful, decide_eq_true hmne]; rfl⟩
       have h0 : m.payload[0]? = some 1 := haddr (0, 1) (by simp)
@@ -907,5 +857,16 @@ def openVmFacts (p : ℕ) [NeZero p]
   -- `rangeCheckAt` is only needed for SP1's op-6 byte-bus range check.
   rangeCheckAt _ _ := none
   rangeCheckAt_sound := by intro _ _ _ _ h; exact absurd h (by simp)
+
+/-- Auditor sanity: the whole OpenVM rely (`openVmBusSemantics.admissible`) is order-free — it is
+    invariant under reordering the interaction list. -/
+theorem openVmAdmissible_perm (busMap : BusMap) (entryPc : Option Nat)
+    {msgs msgs' : List (BusInteraction (ZMod p))} (h : msgs.Perm msgs') :
+    (openVmBusSemantics p busMap entryPc).admissible msgs ↔
+      (openVmBusSemantics p busMap entryPc).admissible msgs' := by
+  unfold openVmBusSemantics x0ReturnsZero
+  refine and_congr ?_ (forall_congr' fun m => imp_congr h.mem_iff Iff.rfl)
+  refine forall_congr' fun busId => forall_congr' fun shape => imp_congr Iff.rfl ?_
+  exact shape.rely_perm (h.filter _)
 
 end ApcOptimizer.OpenVM

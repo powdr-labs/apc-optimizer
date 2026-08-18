@@ -214,46 +214,6 @@ theorem denseLiveArr_eq (arr : Array (BusInteraction (DenseExpr p))) (alive : Ar
     denseLiveArr arr alive halive lo n hb = denseLiveSeg arr alive lo n := by
   rw [denseLiveArr, denseLiveArrGo_eq]; simp
 
-/-- `(denseLiveSeg ..).all` over a derived per-position array (e.g. prepared certificate
-    records), with neither the segment list nor the per-position derivation materialized. -/
-def denseLiveAllSegP {α : Type} (preArr : Array α) (alive : Array Bool)
-    (P : α → Bool) : (lo n : Nat) → Bool
-  | _, 0 => true
-  | lo, n + 1 =>
-    (if alive[lo]?.getD false then (preArr[lo]?).elim true P else true)
-      && denseLiveAllSegP preArr alive P (lo + 1) n
-
-/-- `(denseLiveSeg ..).all` on a derived per-position array, without requiring the array to *be*
-    a map of it: a per-position agreement
-    between `P` on the derived record and `Q` on the interaction suffices. What the caller gains is
-    the freedom to derive nothing at positions where `Q` holds anyway (`denseAddrPrepAll`'s off-bus
-    stubs). -/
-theorem denseLiveAllSegP_eqOf {α : Type} (arr : Array (BusInteraction (DenseExpr p)))
-    (alive : Array Bool) (preArr : Array α) (P : α → Bool)
-    (Q : BusInteraction (DenseExpr p) → Bool) (hsz : preArr.size = arr.size)
-    (hpt : ∀ (q : Nat) (m0 : BusInteraction (DenseExpr p)), arr[q]? = some m0 →
-      ∃ m, preArr[q]? = some m ∧ P m = Q m0) :
-    ∀ (lo n : Nat),
-      denseLiveAllSegP preArr alive P lo n = (denseLiveSeg arr alive lo n).all Q := by
-  intro lo n
-  induction n generalizing lo with
-  | zero => rfl
-  | succ n ih =>
-      rw [denseLiveAllSegP, denseLiveSeg, ih (lo + 1), List.all_append]
-      cases halive : alive[lo]?.getD false
-      · simp
-      · cases harr : arr[lo]? with
-        | none =>
-            rw [Array.getElem?_eq_none (by rw [hsz]; exact Array.getElem?_eq_none_iff.1 harr)]
-            simp
-        | some m0 =>
-            obtain ⟨m, hm, hPQ⟩ := hpt lo m0 harr
-            rw [hm]
-            simp only [Option.elim, hPQ]
-            simp
-
-/-- The logical constraint system at a point in the loop: the original system with its interactions
-    replaced by the live projection followed by the checks emitted so far. -/
 def denseMkCs (cs0 : DenseConstraintSystem p) (arr : Array (BusInteraction (DenseExpr p)))
     (alive : Array Bool) (checks : List (BusInteraction (DenseExpr p))) : DenseConstraintSystem p :=
   { cs0 with busInteractions := denseLiveSeg arr alive 0 arr.size ++ checks }

@@ -54,34 +54,35 @@ def readInput (fileName : String) : IO String := do
     Rejects systems with bus ids missing from the map: an unmapped bus would be modeled as a
     no-op bus (stateless, never violating), silently licensing unsound optimizations. -/
 def parseFileWith {p : ℕ} {τ : Type}
-    (parse : String → Except String (Circuit p × (Nat → Option τ)))
-    (fileName : String) : IO (Circuit p × (Nat → Option τ)) := do
+    (parse : String → Except String (Circuit p × (Nat → Option τ) × Option Nat))
+    (fileName : String) : IO (Circuit p × (Nat → Option τ) × Option Nat) := do
   let contents ← readInput fileName
   match parse contents with
   | .error err =>
     IO.eprintln s!"Error parsing {fileName}: {err}"
     IO.Process.exit 1
-  | .ok (system, busMap) =>
+  | .ok (system, busMap, entryPc?) =>
     let unmapped :=
       ((system.busInteractions.map (·.busId)).eraseDups).filter
         (fun busId => (busMap busId).isNone)
     unless unmapped.isEmpty do
       IO.eprintln s!"Error: {fileName} uses bus ids {unmapped} that are not in its bus_map"
       IO.Process.exit 1
-    pure (system, busMap)
+    pure (system, busMap, entryPc?)
 
-/-- The OpenVM (BabyBear) file parser: resolve the `BusMapList` to a lookup, dropping `next_free_id`
-    (the CLI does not need powdr's column cursor). -/
+/-- The OpenVM (BabyBear) file parser: resolve the `BusMapList` to a lookup and keep the block's
+    entry pc, dropping `next_free_id` (the CLI does not need powdr's column cursor). -/
 def parseOpenVm (contents : String) :
-    Except String (Circuit babyBear × BusMap) :=
-  (parseJsonSystem (p := babyBear) contents).map (fun (s, bm, _) => (s, bm.toBusMap))
+    Except String (Circuit babyBear × BusMap × Option Nat) :=
+  (parseJsonSystem (p := babyBear) contents).map
+    (fun (s, bm, _, epc) => (s, bm.toBusMap, epc))
 
 /-- The SP1 (KoalaBear) file parser. -/
 def parseSp1 (contents : String) :
     Except String (Circuit ApcOptimizer.SP1.koalaBear ×
-      ApcOptimizer.SP1.BusMap) :=
+      ApcOptimizer.SP1.BusMap × Option Nat) :=
   (parseJsonSystemSp1 (p := ApcOptimizer.SP1.koalaBear) contents).map
-    (fun (s, bm, _) => (s, bm.toBusMap))
+    (fun (s, bm, _, epc) => (s, bm.toBusMap, epc))
 
 /-- Size measures of a constraint system, as reported by the CLI. -/
 structure Stats where
@@ -138,19 +139,19 @@ def printEffectiveness (label : String) (before after : Stats) : IO Unit := do
     its fact-aware optimizer, and its degree bound (reported by `run`). All three are threaded
     through the generic `cmd*Impl` bodies so a single implementation serves both OpenVM and SP1. -/
 structure VmBackend (p : ℕ) (τ : Type) where
-  parse : String → Except String (Circuit p × (Nat → Option τ))
-  optimize : (Nat → Option τ) → Optimizer p
+  parse : String → Except String (Circuit p × (Nat → Option τ) × Option Nat)
+  optimize : (Nat → Option τ) → Option Nat → Optimizer p
   degreeBound : DegreeBound
 
 def cmdRunImpl {p : ℕ} {τ : Type} (be : VmBackend p τ) (fileName : String) : IO Unit := do
-  let (cs, busMap) ← parseFileWith be.parse fileName
+  let (cs, busMap, entryPc?) ← parseFileWith be.parse fileName
   IO.println s!"Parsed {cs.algebraicConstraints.length} constraints, \
     {cs.busInteractions.length} bus interactions"
   let before := statsOf cs
   let t0 ← IO.monoMsNow
   -- IO.lazyPure sequences the pure optimizer run between the clock reads (the compiler is
   -- free to float a plain `let` across IO actions, which breaks the measurement).
-  let optimized ← IO.lazyPure (fun _ => (be.optimize busMap cs).1)
+  let optimized ← IO.lazyPure (fun _ => (be.optimize busMap entryPc? cs).1)
   let after ← IO.lazyPure (fun _ => statsOf optimized)
   let t1 ← IO.monoMsNow
   printStats (label := "before       ") (stats := before)
@@ -165,8 +166,8 @@ def cmdRunImpl {p : ℕ} {τ : Type} (be : VmBackend p τ) (fileName : String) :
 def cmdCompareImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
     (unoptFile optFile : String) : IO Unit := do
   cmdRunImpl be unoptFile
-  let (csBefore, _) ← parseFileWith be.parse unoptFile
-  let (csAfter, _) ← parseFileWith be.parse optFile
+  let (csBefore, _, _) ← parseFileWith be.parse unoptFile
+  let (csAfter, _, _) ← parseFileWith be.parse optFile
   printStats (label := "powdr        ") (stats := statsOf csAfter)
   printEffectiveness (label := "powdr") (before := statsOf csBefore) (after := statsOf csAfter)
 
@@ -177,7 +178,7 @@ def cmdCompareImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
     optimizer-introduced witness columns). -/
 def cmdOptExportImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
     (inFile outFile : String) : IO Unit := do
-  let (cs, busMap) ← parseFileWith be.parse inFile
+  let (cs, busMap, entryPc?) ← parseFileWith be.parse inFile
   let rawJson ← readInput inFile
   let busMapJson ← do
     match Lean.Json.parse rawJson >>= (·.getObjVal? "bus_map") with
@@ -185,7 +186,7 @@ def cmdOptExportImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
       IO.eprintln s!"Error: cannot extract bus_map from {inFile}: {err}"
       IO.Process.exit 1
     | .ok j => pure j
-  let (optimized, ds) ← IO.lazyPure (fun _ => be.optimize busMap cs)
+  let (optimized, ds) ← IO.lazyPure (fun _ => be.optimize busMap entryPc? cs)
   let machineStr ← IO.lazyPure (fun _ => ApcOptimizer.Serialize.serializeSystem optimized ds)
   let machineJson ← do
     match Lean.Json.parse machineStr with
@@ -219,9 +220,9 @@ def circuitJson {p : ℕ} (cs : Circuit p) : String :=
     benchmark HTML report (`Benchmarks/benchmark.py --report`). -/
 def cmdReportImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
     (unoptFile optFile : String) : IO Unit := do
-  let (cs, busMap) ← parseFileWith be.parse unoptFile
-  let (csPowdr, _) ← parseFileWith be.parse optFile
-  let optimized := (be.optimize busMap cs).1
+  let (cs, busMap, entryPc?) ← parseFileWith be.parse unoptFile
+  let (csPowdr, _, _) ← parseFileWith be.parse optFile
+  let optimized := (be.optimize busMap entryPc? cs).1
   IO.println ("{\"original\":" ++ circuitJson cs ++
     ",\"powdr\":" ++ circuitJson csPowdr ++
     ",\"apc-optimizer\":" ++ circuitJson optimized ++ "}")
@@ -230,13 +231,13 @@ def cmdReportImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
     optimizer is eta-expanded so its default `busMap` argument stays open. -/
 def openVmBackend : VmBackend babyBear OpenVmBusType where
   parse := parseOpenVm
-  optimize := fun bm => openVmOptimizer bm
+  optimize := fun bm epc => openVmOptimizer bm epc
   degreeBound := defaultDegreeBound
 
 /-- The SP1 backend: KoalaBear field, SP1 bus semantics, `sp1Optimizer`. -/
 def sp1Backend : VmBackend ApcOptimizer.SP1.koalaBear ApcOptimizer.SP1.Sp1BusType where
   parse := parseSp1
-  optimize := fun bm => ApcOptimizer.SP1.sp1Optimizer bm
+  optimize := fun bm epc => ApcOptimizer.SP1.sp1Optimizer bm epc
   degreeBound := ApcOptimizer.SP1.defaultDegreeBound
 
 /-- Whether a token names the SP1 VM (`sp1`); anything else defaults to OpenVM. -/
@@ -376,14 +377,15 @@ def profileRun {p : ℕ} (b : DegreeBound) (fileName : String) (cs : Circuit p)
 /-- `profile [vm] <file>`: per-pass optimizer timing for the selected VM. -/
 def cmdProfile (vm fileName : String) (verbose : Bool := false) : IO Unit := do
   if isSp1 vm then
-    let (cs, busMap) ← parseFileWith parseSp1 fileName
+    let (cs, busMap, entryPc?) ← parseFileWith parseSp1 fileName
     profileRun ApcOptimizer.SP1.defaultDegreeBound fileName cs
-      (ApcOptimizer.SP1.sp1BusSemantics ApcOptimizer.SP1.koalaBear busMap)
-      (ApcOptimizer.SP1.sp1Facts ApcOptimizer.SP1.koalaBear busMap) verbose
+      (ApcOptimizer.SP1.sp1BusSemantics ApcOptimizer.SP1.koalaBear busMap entryPc?)
+      (ApcOptimizer.SP1.sp1Facts ApcOptimizer.SP1.koalaBear busMap entryPc?) verbose
   else
-    let (cs, busMap) ← parseFileWith parseOpenVm fileName
+    let (cs, busMap, entryPc?) ← parseFileWith parseOpenVm fileName
     profileRun defaultDegreeBound fileName cs
-      (openVmBusSemantics babyBear busMap) (openVmFacts babyBear busMap) verbose
+      (openVmBusSemantics babyBear busMap entryPc?)
+      (openVmFacts babyBear busMap entryPc?) verbose
 
 def usage : String :=
   "usage: apc-optimizer run [vm] <file.json[.gz]>\n" ++

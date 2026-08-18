@@ -165,20 +165,33 @@ def x0ReturnsZero (busMap : BusMap) (msgs : List (BusInteraction (ZMod p))) : Pr
       m.payload[2]? = some 0 ∧ m.payload[3]? = some 0 ∧
         m.payload[4]? = some 0 ∧ m.payload[5]? = some 0
 
-/-- Maps a bus ID to its memory bus shape, if applicable. -/
-def memShapeOf (busMap : BusMap) (busId : Nat) : Option MemoryBusShape :=
+/-- Maps a bus ID to its memory bus shape, if applicable, given the block's entry pc where the
+    optimizer was told it.
+
+    The `tsField` bound is OpenVM's global timestamp argument: every timestamp in the whole trace
+    stays below `2^29`. The bridge's `entryKey` designates the record entering the block from
+    outside (ENTRY_KEY, `ApcOptimizer/MemoryBus.lean`) as the one at the block's entry pc, since
+    the block is entered at its first instruction; without an entry pc nothing is assumed. -/
+def memShapeOf (busMap : BusMap) (entryPc : Option Nat) (busId : Nat) : Option MemoryBusShape :=
   match busMap busId with
-  -- The *actual* memory bus, with address (address space, pointer) in payload slots 0 and 1.
-  | some .memory => some { addressFields := [0, 1], direction := .receiveThenSend }
-  -- The execution bridge can also be viewed as a memory bus with a single global cell (address `[]`).
+  -- The *actual* memory bus, payload `(address_space, pointer, data… (4 limbs), timestamp)`, so
+  -- address in slots 0 and 1 and the timestamp in slot 6.
+  | some .memory => some
+      { addressFields := [0, 1], direction := .receiveThenSend, tsField := some (6, 2 ^ 29) }
+  -- The execution bridge can also be viewed as a memory bus with a single global cell (address `[]`),
+  -- payload `(pc, timestamp)`.
   -- Note that in this bus, the memory discipline (for any consecutive send/receive pair, the values
   -- must match) is *not* enforced by the bus itself. By adding the execution bridge here, we make
   -- completeness partial: we assume the prover will always *choose* to prove consecutive cycles.
-  | some .executionBridge => some { addressFields := [], direction := .receiveThenSend }
+  | some .executionBridge => some
+      { addressFields := [], direction := .receiveThenSend, tsField := some (1, 2 ^ 29),
+        entryKey := entryPc.map (fun pc => (0, pc)) }
   | _ => none
 
-/-- The OpenVM bus semantics for a given bus map (default: the hard-coded default bus map). -/
-def openVmBusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap) :
+/-- The OpenVM bus semantics for a given bus map (default: the hard-coded default bus map) and, if
+    the optimizer was told it, the block's entry pc (see `memShapeOf`). -/
+def openVmBusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap)
+    (entryPc : Option Nat := none) :
     BusSemantics p where
   isStateful busId :=
     match busMap busId with
@@ -187,8 +200,8 @@ def openVmBusSemantics (p : ℕ) (busMap : BusMap := defaultBusMap) :
   accepts := accepts busMap
   maintainsInvariants := maintainsInvariants busMap
   admissible msgs :=
-    (∀ (busId : Nat) (shape : MemoryBusShape), memShapeOf busMap busId = some shape →
-      admissibleMemoryBus shape (msgs.filter (fun m => m.busId = busId)))
+    (∀ (busId : Nat) (shape : MemoryBusShape), memShapeOf busMap entryPc busId = some shape →
+      shape.rely (msgs.filter (fun m => m.busId = busId)))
     ∧ x0ReturnsZero busMap msgs
 
 /-- OpenVM's proving-backend degree bound (powdr's `DEFAULT_DEGREE_BOUND`), used when the optimizer

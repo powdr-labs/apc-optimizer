@@ -26,4 +26,10 @@ ApcOptimizer.Dense.get_spawn
 # leaf child *without* unfolding the walk on a compound one; both rewrite by `rfl`.
 ApcOptimizer.Dense.denseNrmGo_const
 ApcOptimizer.Dense.denseNrmGo_var
-
+# Auditor-facing sanity theorems: both VM relies are order-free (invariant under reordering the
+# interaction list). Consumed by auditors, not by the proof.
+tsBounded_perm
+entryKeyed_perm
+MemoryBusShape.rely_perm
+ApcOptimizer.OpenVM.openVmAdmissible_perm
+ApcOptimizer.SP1.sp1Admissible_perm

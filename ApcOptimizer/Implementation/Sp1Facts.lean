@@ -123,19 +123,19 @@ private theorem breaksInvariant_eq_false_iff (busMap : BusMap)
         | some f => simp [forall_is16BitB_iff, or_iff_not_imp_left]
 
 /-- `accepts` is decidable, via the Bool procedure above; `BusFacts.trivial` needs this. -/
-instance instDecidableSp1Accepts (busMap : BusMap) :
-    DecidablePred (sp1BusSemantics p busMap).accepts := fun m =>
+instance instDecidableSp1Accepts (busMap : BusMap) (entryPc : Option Nat) :
+    DecidablePred (sp1BusSemantics p busMap entryPc).accepts := fun m =>
   decidable_of_iff (violates busMap m = false) (violates_eq_false_iff busMap m)
 
 /-- The `BusFacts` interface speaks the audited `accepts`; the lemmas here speak `violates`. -/
-@[simp] private theorem sp1_accepts_iff (busMap : BusMap)
+@[simp] private theorem sp1_accepts_iff (busMap : BusMap) (entryPc : Option Nat)
     (m : BusInteraction (ZMod p)) :
-    (sp1BusSemantics p busMap).accepts m ↔ violates busMap m = false :=
+    (sp1BusSemantics p busMap entryPc).accepts m ↔ violates busMap m = false :=
   (violates_eq_false_iff busMap m).symm
 
-@[simp] private theorem sp1_maintains_iff (busMap : BusMap)
+@[simp] private theorem sp1_maintains_iff (busMap : BusMap) (entryPc : Option Nat)
     (m : BusInteraction (ZMod p)) :
-    (sp1BusSemantics p busMap).maintainsInvariants m ↔ breaksInvariant busMap m = false :=
+    (sp1BusSemantics p busMap entryPc).maintainsInvariants m ↔ breaksInvariant busMap m = false :=
   (breaksInvariant_eq_false_iff busMap m).symm
 
 
@@ -367,9 +367,9 @@ theorem sp1ByteEncode_mem {α : Type} (op o1 o2 r x : α)
   simp only [sp1ByteEncode, List.mem_cons, List.not_mem_nil, or_false] at h; tauto
 
 /-- An execution-bridge message never violates. -/
-private theorem execBridge_ok (busMap : BusMap)
+private theorem execBridge_ok (busMap : BusMap) (entryPc : Option Nat)
     (m : BusInteraction (ZMod p)) (hbus : busMap m.busId = some .executionBridge) :
-    (sp1BusSemantics p busMap).accepts m := by
+    (sp1BusSemantics p busMap entryPc).accepts m := by
   rw [sp1_accepts_iff]
   unfold violates
   rw [hbus]
@@ -401,31 +401,35 @@ private theorem pageProt_ok (busMap : BusMap)
   rw [hbus]
   simp [harity]
 
-/-- A bus with a declared last-write-wins shape (memory or execution bridge) is stateful. -/
-theorem sp1_isStateful_of_memShape {p : ℕ} (busMap : BusMap)
-    (busId : Nat) (shape : MemoryBusShape) (h : memShapeOf busMap busId = some shape) :
-    (sp1BusSemantics p busMap).isStateful busId = true := by
-  show (match busMap busId with | some t => t.isStateful | none => false) = true
-  unfold memShapeOf at h
-  generalize busMap busId = o at h ⊢
-  cases o with
-  | none => simp at h
-  | some t => cases t <;> simp_all [Sp1BusType.isStateful]
+/-- The SP1 shape lookup with what `sp1BusSemantics.admissible` supplies about it: its first
+    conjunct is exactly the per-declared-bus `MemoryBusShape.rely`. -/
+def sp1Shapes {p : ℕ} (busMap : BusMap) (entryPc : Option Nat) :
+    MemoryShapes (sp1BusSemantics p busMap entryPc) where
+  shape := memShapeOf busMap entryPc
+  stateful := by
+    intro busId shape h
+    show (match busMap busId with | some t => t.isStateful | none => false) = true
+    unfold memShapeOf at h
+    generalize busMap busId = o at h ⊢
+    cases o with
+    | none => simp at h
+    | some t => cases t <;> simp_all [Sp1BusType.isStateful]
+  rely := fun _ hadm busId shape hshape => hadm.1 busId shape hshape
 
 /-- The SP1 memory bus uses `direction := .sendThenReceive`, so its `setNewMult` reduces to `-1`
     (the reverse of OpenVM; the execution bridge instead uses `1`). -/
-private theorem memShapeOf_memory_setNewMult {p : ℕ} (busMap : BusMap)
+private theorem memShapeOf_memory_setNewMult {p : ℕ} (busMap : BusMap) (entryPc : Option Nat)
     (busId : Nat) (shape : MemoryBusShape) (hbus : busMap busId = some .memory)
-    (h : memShapeOf busMap busId = some shape) :
+    (h : memShapeOf busMap entryPc busId = some shape) :
     (shape.setNewMult : ZMod p) = -1 := by
   unfold memShapeOf at h
   rw [hbus] at h
   obtain rfl := Option.some.inj h; rfl
 
 /-- A memory message that is not a `getPrevious` (multiplicity ≠ 1) never violates. -/
-private theorem memory_nonGetPrev_ok (busMap : BusMap)
+private theorem memory_nonGetPrev_ok (busMap : BusMap) (entryPc : Option Nat)
     (m : BusInteraction (ZMod p)) (hbus : busMap m.busId = some .memory)
-    (hm : m.multiplicity ≠ 1) : (sp1BusSemantics p busMap).accepts m := by
+    (hm : m.multiplicity ≠ 1) : (sp1BusSemantics p busMap entryPc).accepts m := by
   rw [sp1_accepts_iff]
   obtain ⟨bid, mult, payload⟩ := m
   simp only at hbus hm
@@ -435,11 +439,11 @@ private theorem memory_nonGetPrev_ok (busMap : BusMap)
     _ | ⟨d3, rest⟩⟩⟩⟩⟩⟩⟩⟩⟩ <;> simp [memoryPayload?, hm]
 
 /-- A memory `getPrevious` (multiplicity 1) with 16-bit data limbs (slots 5–8) never violates. -/
-private theorem memory_getPrev_ok (busMap : BusMap)
+private theorem memory_getPrev_ok (busMap : BusMap) (entryPc : Option Nat)
     (m : BusInteraction (ZMod p)) (hbus : busMap m.busId = some .memory)
     (hm : m.multiplicity = 1)
     (hslots : ∀ slot ∈ [5, 6, 7, 8], ∀ x : ZMod p, m.payload[slot]? = some x → x.val < 2 ^ 16) :
-    (sp1BusSemantics p busMap).accepts m := by
+    (sp1BusSemantics p busMap entryPc).accepts m := by
   rw [sp1_accepts_iff]
   obtain ⟨bid, mult, payload⟩ := m
   simp only at hbus hm hslots
@@ -469,9 +473,9 @@ private theorem memory_read_data (busMap : BusMap)
       _ | ⟨d3, rest⟩⟩⟩⟩⟩⟩⟩⟩⟩ <;> simp_all [memoryPayload?, is16BitB, List.all_cons, List.all_nil])
 
 /-- A memory `setNew` (multiplicity -1) never violates. -/
-private theorem memory_setNew_ok [NeZero p] (busMap : BusMap)
+private theorem memory_setNew_ok [NeZero p] (busMap : BusMap) (entryPc : Option Nat)
     (m : BusInteraction (ZMod p)) (hbus : busMap m.busId = some .memory)
-    (hm : m.multiplicity = -1) : (sp1BusSemantics p busMap).accepts m := by
+    (hm : m.multiplicity = -1) : (sp1BusSemantics p busMap entryPc).accepts m := by
   rw [sp1_accepts_iff]
   by_cases hc : (1 : ZMod p) = -1
   · -- `p ∣ 2`: every value is `< 2 ≤ 2^16`, so the 16-bit test never fails.
@@ -488,14 +492,14 @@ private theorem memory_setNew_ok [NeZero p] (busMap : BusMap)
     rw [hbus]
     rcases payload with _ | ⟨c0, _ | ⟨c1, _ | ⟨a0, _ | ⟨a1, _ | ⟨a2, _ | ⟨d0, _ | ⟨d1, _ | ⟨d2,
       _ | ⟨d3, rest⟩⟩⟩⟩⟩⟩⟩⟩⟩ <;> simp [memoryPayload?, is16BitB, h16]
-  · exact (sp1_accepts_iff busMap m).mp
-      (memory_nonGetPrev_ok busMap m hbus (by rw [hm]; exact fun h => hc h.symm))
+  · exact (sp1_accepts_iff busMap entryPc m).mp
+      (memory_nonGetPrev_ok busMap entryPc m hbus (by rw [hm]; exact fun h => hc h.symm))
 
 /-- The proven facts about `sp1BusSemantics`, for any bus map. -/
 def sp1Facts (p : ℕ) [NeZero p]
-    (busMap : BusMap := defaultBusMap) :
-    BusFacts p (sp1BusSemantics p busMap) :=
-  { BusFacts.trivial (sp1BusSemantics p busMap) with
+    (busMap : BusMap := defaultBusMap) (entryPc : Option Nat := none) :
+    BusFacts p (sp1BusSemantics p busMap entryPc) :=
+  { BusFacts.trivial (sp1BusSemantics p busMap entryPc) with
     acceptsDec := fun m => !violates busMap m
     acceptsDec_iff := by
       intro m
@@ -504,7 +508,7 @@ def sp1Facts (p : ℕ) [NeZero p]
     slotBound := fun busId mult pattern slot => slotBoundImpl busMap busId mult pattern slot
     slotBound_sound := by
       intro m pattern slot bound x hfact hmatch hok hget
-      have hok' : violates busMap m = false := (sp1_accepts_iff busMap m).mp hok
+      have hok' : violates busMap m = false := (sp1_accepts_iff busMap entryPc m).mp hok
       unfold slotBoundImpl at hfact
       split at hfact
       · rename_i hbus
@@ -582,7 +586,7 @@ def sp1Facts (p : ℕ) [NeZero p]
     slotFun := slotFunImpl busMap
     slotFun_sound := by
       intro m pattern outSlot f z hfact hmatch hok hget
-      have hok' : violates busMap m = false := (sp1_accepts_iff busMap m).mp hok
+      have hok' : violates busMap m = false := (sp1_accepts_iff busMap entryPc m).mp hok
       unfold slotFunImpl at hfact
       split at hfact
       · rename_i op w1 w2 w3 hbus
@@ -610,7 +614,7 @@ def sp1Facts (p : ℕ) [NeZero p]
       intro m h
       unfold neverViolatesImpl at h
       split at h
-      · rename_i hbus; exact execBridge_ok busMap m hbus
+      · rename_i hbus; exact execBridge_ok busMap entryPc m hbus
       · exact absurd h (by simp)
     neverViolatesArity := neverViolatesArityImpl busMap
     neverViolatesArity_sound := by
@@ -618,12 +622,12 @@ def sp1Facts (p : ℕ) [NeZero p]
       unfold neverViolatesArityImpl at h
       split at h
       · rename_i hbus
-        exact (sp1_accepts_iff busMap m).mpr (pcLookup_ok busMap m hbus (by simpa using h))
+        exact (sp1_accepts_iff busMap entryPc m).mpr (pcLookup_ok busMap m hbus (by simpa using h))
       · rename_i hbus
-        exact (sp1_accepts_iff busMap m).mpr
+        exact (sp1_accepts_iff busMap entryPc m).mpr
           (instructionFetch_ok busMap m hbus (by simpa using h))
       · rename_i hbus
-        exact (sp1_accepts_iff busMap m).mpr (pageProt_ok busMap m hbus (by simpa using h))
+        exact (sp1_accepts_iff busMap entryPc m).mpr (pageProt_ok busMap m hbus (by simpa using h))
       · exact absurd h (by simp)
     zeroCell := zeroCellImpl busMap
     zeroCell_sound := by
@@ -633,12 +637,12 @@ def sp1Facts (p : ℕ) [NeZero p]
       · rename_i hbus
         simp only [Option.some.injEq, Prod.mk.injEq] at hfact
         obtain ⟨rfl, rfl⟩ := hfact
-        have hstateful : (sp1BusSemantics p busMap).isStateful m.busId = true := by
+        have hstateful : (sp1BusSemantics p busMap entryPc).isStateful m.busId = true := by
           show (match busMap m.busId with | some t => t.isStateful | none => false) = true
           rw [hbusId, hbus]; rfl
         have hmemBus : busMap m.busId = some .memory := by rw [hbusId]; exact hbus
         have hmfilt : m ∈ msgs.filter
-            (fun m => decide (m.multiplicity ≠ 0) && (sp1BusSemantics p busMap).isStateful m.busId) := by
+            (fun m => decide (m.multiplicity ≠ 0) && (sp1BusSemantics p busMap entryPc).isStateful m.busId) := by
           rw [List.mem_filter]
           exact ⟨hm, by rw [hstateful, decide_eq_true hmne]; rfl⟩
         have h2 : m.payload[2]? = some 0 := haddr (2, 0) (by simp)
@@ -652,73 +656,24 @@ def sp1Facts (p : ℕ) [NeZero p]
         · rw [hget] at hz; exact Option.some.inj hz.2.2.1
         · rw [hget] at hz; exact Option.some.inj hz.2.2.2
       · exact absurd hfact (by simp)
-    memShape := memShapeOf busMap
-    memShape_stateful := fun busId shape hshape =>
-      sp1_isStateful_of_memShape busMap busId shape hshape
-    admissible_sound := by
-      intro msgs hadm busId shape hshape
-      have hstateful : (sp1BusSemantics p busMap).isStateful busId = true :=
-        sp1_isStateful_of_memShape busMap busId shape hshape
-      have hd := hadm.1 busId shape hshape
-      have hlist : (msgs.filter (fun m => decide (m.multiplicity ≠ 0) &&
-            (sp1BusSemantics p busMap).isStateful m.busId)).filter (fun m => m.busId = busId)
-          = (msgs.filter (fun m => m.busId = busId)).filter
-            (fun m => decide (m.multiplicity ≠ 0)) := by
-        rw [List.filter_filter, List.filter_filter]
-        apply List.filter_congr
-        intro m _
-        by_cases hb : m.busId = busId
-        · rw [hb, hstateful]; simp
-        · simp [hb]
-      rwa [hlist] at hd
+    memShape := (sp1Shapes busMap entryPc).shape
+    memShape_stateful := (sp1Shapes busMap entryPc).stateful
+    admissible_sound := (sp1Shapes busMap entryPc).excessBounded_of_rely
+    memTsField := (sp1Shapes busMap entryPc).tsField
+    memTsField_sound := (sp1Shapes busMap entryPc).tsBounded_of_rely
+    memEntryKey := (sp1Shapes busMap entryPc).entryKey
+    memEntryKey_sound := fun msgs hadm busId slot key shape hshape hkey =>
+      (sp1Shapes busMap entryPc).excessKeyed_of_rely msgs hadm busId slot key shape hshape hkey
     admissible_dropPair := by
-      intro hp1 busId shape hshape A B C S R hSbus hRbus _hSm _hRm haddrEq hcons hshield hadm_full
-      obtain ⟨hdisc, hzero⟩ := hadm_full
-      refine ⟨fun busId' shape' hshape' => ?_, ?_⟩
-      · by_cases hbb : busId' = busId
-        · subst busId'
-          obtain rfl : shape = shape' := Option.some.inj (hshape.symm.trans hshape')
-          have hgoal : (A ++ B ++ C).filter (fun m => m.busId = busId)
-              = A.filter (fun m => m.busId = busId) ++ B.filter (fun m => m.busId = busId)
-                ++ C.filter (fun m => m.busId = busId) := by
-            simp only [List.filter_append]
-          rw [hgoal]
-          have hfull := hdisc busId shape hshape
-          have hfiltFull : (A ++ S :: B ++ R :: C).filter (fun m => m.busId = busId)
-              = A.filter (fun m => m.busId = busId) ++ S :: B.filter (fun m => m.busId = busId)
-                ++ R :: C.filter (fun m => m.busId = busId) := by
-            simp only [List.filter_append, List.filter_cons, hSbus, hRbus, decide_true, if_true]
-          rw [hfiltFull] at hfull
-          refine admissibleMemoryBus_dropPair shape hp1 _ _ _ S R hfull ?_ ?_ haddrEq
-          · intro m hm hmne hmaddr
-            rw [List.mem_filter] at hm
-            exact hcons m hm.1 (of_decide_eq_true hm.2) hmne hmaddr
-          · intro A₁' Sx A₂' hAsplit hSxne hSxaddr hSxmult
-            obtain ⟨A₁, A₂, hAeq, _, hA₂filt⟩ :=
-              filter_split (fun m => m.busId = busId) Sx A A₁' A₂' hAsplit
-            have hSxbus : Sx.busId = busId := by
-              have : Sx ∈ A.filter (fun m => m.busId = busId) := by
-                rw [hAsplit]; exact List.mem_append_right A₁' (List.mem_cons_self ..)
-              exact of_decide_eq_true (List.mem_filter.mp this).2
-            obtain ⟨m, hmem, hmbus, hmne, hmaddr, hmmult⟩ :=
-              hshield A₁ Sx A₂ hAeq hSxbus hSxne hSxaddr hSxmult
-            refine ⟨m, ?_, hmne, hmaddr, hmmult⟩
-            rw [← hA₂filt]; exact List.mem_filter.mpr ⟨hmem, by simp [hmbus]⟩
-        · have hne : busId ≠ busId' := fun h => hbb h.symm
-          have heq : (A ++ B ++ C).filter (fun m => m.busId = busId')
-              = (A ++ S :: B ++ R :: C).filter (fun m => m.busId = busId') := by
-            simp only [List.filter_append, List.filter_cons, hSbus, hRbus,
-              decide_eq_false hne, Bool.false_eq_true, if_false]
-          rw [heq]
-          exact hdisc busId' shape' hshape'
-      · intro m hm hbus hp2 hp3 hp4
-        have hmem : m ∈ A ++ S :: B ++ R :: C := by
-          rcases List.mem_append.mp hm with hAB | hC
-          · rcases List.mem_append.mp hAB with hA | hB
-            · exact List.mem_append_left _ (List.mem_append_left _ hA)
-            · exact List.mem_append_left _ (List.mem_append_right _ (List.mem_cons_of_mem _ hB))
-          · exact List.mem_append_right _ (List.mem_cons_of_mem _ hC)
-        exact hzero m hmem hbus hp2 hp3 hp4
+      -- `sp1BusSemantics.admissible` is the per-declared-bus `MemoryBusShape.rely` (`.1`) together
+      -- with the `zeroRegisterReads` clause (`.2`).
+      intro busId shape hshape A B C S R hSbus hRbus hSm hRm hpay hadm_full
+      obtain ⟨hmem, hzero⟩ := hadm_full
+      refine ⟨(sp1Shapes busMap entryPc).rely_dropPair hshape hSbus hRbus hSm hRm hpay hmem, ?_⟩
+      intro m hm hbus hp2 hp3 hp4
+      refine hzero m ?_ hbus hp2 hp3 hp4
+      simp only [List.mem_append, List.mem_cons] at hm ⊢
+      tauto
     -- SP1 memory limbs are 16-bit at slots 5–8; the execution bridge never violates.
     recvByteSlots := recvByteSlotsImpl busMap
     recvByteSlots_sound := by
@@ -734,16 +689,16 @@ def sp1Facts (p : ℕ) [NeZero p]
           rw [hbus] at hfact
           simp only [Option.some.injEq, Prod.mk.injEq] at hfact
           obtain ⟨rfl, rfl⟩ := hfact
-          exact ⟨fun _ => execBridge_ok busMap m hbus, fun _ _ _ => execBridge_ok busMap m hbus⟩
+          exact ⟨fun _ => execBridge_ok busMap entryPc m hbus, fun _ _ _ => execBridge_ok busMap entryPc m hbus⟩
         | memory =>
           have hw : (shape.setNewMult : ZMod p) = -1 :=
-            memShapeOf_memory_setNewMult busMap m.busId shape hbus hmemshape
+            memShapeOf_memory_setNewMult busMap entryPc m.busId shape hbus hmemshape
           simp only [hw, neg_neg]
           rw [hbus] at hfact
           simp only [Option.some.injEq, Prod.mk.injEq] at hfact
           obtain ⟨rfl, rfl⟩ := hfact
-          exact ⟨fun hm => memory_setNew_ok busMap m hbus hm,
-                 fun hm _ hbytes => memory_getPrev_ok busMap m hbus hm hbytes⟩
+          exact ⟨fun hm => memory_setNew_ok busMap entryPc m hbus hm,
+                 fun hm _ hbytes => memory_getPrev_ok busMap entryPc m hbus hm hbytes⟩
         | pcLookup => rw [hbus] at hfact; simp at hfact
         | byteLookup => rw [hbus] at hfact; simp at hfact
         | instructionFetch => rw [hbus] at hfact; simp at hfact
@@ -859,13 +814,24 @@ def sp1Facts (p : ℕ) [NeZero p]
           have hq3 : q3 = c := by
             have := hmatch.2 3 c (by simp); rw [hpe] at this; simpa using this
           rw [hq0, hq2, hq3] at hpe
-          have hbreak : (sp1BusSemantics p busMap).maintainsInvariants m := by
+          have hbreak : (sp1BusSemantics p busMap entryPc).maintainsInvariants m := by
             rw [sp1_maintains_iff]
             unfold breaksInvariant; simp [hmbus, hmult]
           refine ⟨hbreak, fun x hx => ?_⟩
           have hxq : q1 = x := by rw [hpe] at hx; simpa using hx
           rw [← hxq]
-          exact (sp1_accepts_iff busMap m).trans (byte_op6_iff busMap m hmbus op q1 w c hpe hop hw hc)
+          exact (sp1_accepts_iff busMap entryPc m).trans (byte_op6_iff busMap m hmbus op q1 w c hpe hop hw hc)
       · exact absurd hfact (by simp) }
+
+/-- Auditor sanity: the whole SP1 rely (`sp1BusSemantics.admissible`) is order-free — it is
+    invariant under reordering the interaction list. -/
+theorem sp1Admissible_perm (busMap : BusMap) (entryPc : Option Nat)
+    {msgs msgs' : List (BusInteraction (ZMod p))} (h : msgs.Perm msgs') :
+    (sp1BusSemantics p busMap entryPc).admissible msgs ↔
+      (sp1BusSemantics p busMap entryPc).admissible msgs' := by
+  unfold sp1BusSemantics x0ReturnsZero
+  refine and_congr ?_ (forall_congr' fun m => imp_congr h.mem_iff Iff.rfl)
+  refine forall_congr' fun busId => forall_congr' fun shape => imp_congr Iff.rfl ?_
+  exact shape.rely_perm (h.filter _)
 
 end ApcOptimizer.SP1

@@ -1,12 +1,15 @@
 import ApcOptimizer.Implementation.OptimizerPasses.BusForward
-import ApcOptimizer.Implementation.OptimizerPasses.Proofs.BusUnify
+import ApcOptimizer.Implementation.OptimizerPasses.Proofs.BusSweep
 
 set_option autoImplicit false
 
-/-! # Soundness for the dense `busForward` pass
+/-! # Soundness for the dense `busSweep` pass (both engines)
 
-`DensePassCorrect` for `denseBusForwardF` (`BusForward.lean`). The pass only adds constraints, so
-soundness is a constraint superset (`DensePassCorrect.denseAddConstraints`); the substance is the
+`DensePassCorrect` for `denseBusSweepF` (`BusForward.lean`), which runs the consecutive-match
+sweep and the value-forwarding engine on one shared canonical-order certificate per bus. The pass
+only adds constraints, so soundness is a constraint superset
+(`DensePassCorrect.denseAddConstraints`); the sweep side is `denseBSCheckPair_sound`
+(`Proofs/BusSweep.lean`), and the forwarding side's substance is the
 chain lemma `memFwdChain`: through strictly-ordered, internally same-address receive→send pairs, a
 payload slot preserved by every pair is forwarded from the send to the receive whatever the pairs'
 aliasing. Per assignment, a pair either aliases the window address — then the discipline routes
@@ -16,7 +19,12 @@ different-address message; the syntactic certificate never decides which.
 The strict ordering of the pairs is load-bearing. With interleaved pairs `r_A r_B s_A s_B` the
 both-alias case only forces `S = r_A` and `s_B = R`, leaving `r_B` (hence `R`) unconstrained, so
 an assignment exploiting that satisfies `admissibleMemoryBus` while violating the would-be
-equality. `denseBFCheckPairs` verifies the ordering positionally. -/
+equality. `denseBFCheckPairs` verifies the ordering positionally.
+
+The chain lemma consumes the *positional* discipline, which the order-free rely grants only for a
+list certified to be in canonical access order — so the positions are those of `denseBSCanon`, and
+`hAdm` is supplied by the caller from `denseBSOrder?_admissibleMemoryBus`
+(`Proofs/BusSweep.lean`). -/
 
 namespace ApcOptimizer.Dense
 
@@ -62,6 +70,24 @@ private theorem bf_seg_split {γ : Type} (l : List γ) (q k j : Nat) (x : γ)
   rw [show j - q = (k - q) + (j - k) by omega, List.take_add, List.drop_drop,
     show q + (k - q) = k by omega, List.drop_eq_getElem_cons hklen, hx,
     show j - k = (j - (k + 1)) + 1 by omega, List.take_succ_cons]
+
+/-- The two endpoint splits, combined: the send at `i`, the receive at `j > i`, and between them
+    exactly the segment `(i, j)`. -/
+private theorem bf_split_of_positions
+    {L pre restAfter seen post : List (BusInteraction (DenseExpr p))}
+    {S R : BusInteraction (DenseExpr p)} {i j : Nat}
+    (hi : pre.length = i) (hsplit : L = pre ++ S :: restAfter)
+    (hj : seen.length = j) (hnow : L = seen ++ R :: post) (hlt : i < j) :
+    L = pre ++ S :: restAfter.take (j - i - 1) ++ R :: post := by
+  have hRA : restAfter = L.drop (i + 1) := by
+    have h1 : L = (pre ++ [S]) ++ restAfter := by rw [hsplit]; simp
+    rw [h1, List.drop_left' (by simp [hi])]
+  have hRp : R :: post = L.drop j := by rw [hnow, List.drop_left' (by simp [hj])]
+  have hdrop : restAfter.drop (j - i - 1) = R :: post := by
+    rw [hRA, List.drop_drop, hRp]; congr 1; omega
+  have hn : L = pre ++ S :: (restAfter.take (j - i - 1) ++ R :: post) := by
+    rw [← hdrop, List.take_append_drop]; exact hsplit
+  simpa [List.append_assoc] using hn
 
 private theorem bf_mem_seg {γ : Type} {l : List γ} {a n : Nat} {x : γ}
     (h : x ∈ (l.drop a).take n) : ∃ r, a ≤ r ∧ r < a + n ∧ l[r]? = some x := by
@@ -150,9 +176,9 @@ theorem MemFwdMid.prepend_excl {shape : MemoryBusShape} {av : List (Option (ZMod
     reaches `R` from `S`: per assignment, the head pair either aliases `av` — the discipline pairs
     `S` with its receive, preservation carries the slot to its send, and the recursion continues
     from that send — or it does not alias and joins the excluded set (`prepend_excl`). -/
-theorem memFwdChain (shape : MemoryBusShape) (hp1 : (1 : ZMod p) ≠ 0)
+theorem memFwdChain (shape : MemoryBusShape)
     (Lraw : List (BusInteraction (ZMod p)))
-    (hadm : admissibleMemoryBus shape (Lraw.filter (fun m => decide (m.multiplicity ≠ 0))))
+    (hadm : admissibleMemoryBus shape Lraw)
     (av : List (Option (ZMod p))) :
     ∀ (pairs : List (BusInteraction (ZMod p) × BusInteraction (ZMod p)))
       (mid : List (BusInteraction (ZMod p))), MemFwdMid shape av pairs mid →
@@ -166,8 +192,8 @@ theorem memFwdChain (shape : MemoryBusShape) (hp1 : (1 : ZMod p) ≠ 0)
     cases hmid with
     | nil _ hexcl =>
       have hpay : S.payload = R.payload :=
-        admissibleMemoryBus.consecutive shape Lraw hp1 hadm pre mid post S R hL hS hR
-          (hSav.trans hRav.symm) (fun m hm hne haddr => hexcl m hm hne (haddr.trans hSav))
+        hadm pre mid post S R hL hS hR (hSav.trans hRav.symm)
+          (fun m hm hne haddr => hexcl m hm hne (haddr.trans hSav))
       exact congrArg (fun P => P[t]?) hpay
   | (r, s) :: rest, mid, hmid, pre, post, S, R, hL, hS, hR, hSav, hRav, t, hpres => by
     cases hmid with
@@ -175,12 +201,11 @@ theorem memFwdChain (shape : MemoryBusShape) (hp1 : (1 : ZMod p) ≠ 0)
       by_cases hral : shape.address r = av
       · -- the pair aliases: `S` pairs with `r`; preservation carries the slot to `s`; recurse.
         have hSr : S.payload = r.payload :=
-          admissibleMemoryBus.consecutive shape Lraw hp1 hadm pre excl0
-            (excl1 ++ s :: mid2 ++ R :: post) S r
+          hadm pre excl0 (excl1 ++ s :: mid2 ++ R :: post) S r
             (by rw [hL]; simp) hS hr (hSav.trans hral.symm)
             (fun m hm hne haddr => hexcl0 m hm hne (haddr.trans hSav))
         have hsR : s.payload[t]? = R.payload[t]? :=
-          memFwdChain shape hp1 Lraw hadm av rest mid2 hrest
+          memFwdChain shape Lraw hadm av rest mid2 hrest
             (pre ++ S :: excl0 ++ r :: excl1) post s R
             (by rw [hL]; simp) hs hR (hrs.symm.trans hral) hRav t
             (fun pr hpr => hpres pr (List.mem_cons_of_mem _ hpr))
@@ -202,12 +227,12 @@ theorem memFwdChain (shape : MemoryBusShape) (hp1 : (1 : ZMod p) ≠ 0)
                 · exact hral haddr
                 · exact hexcl1 m hm1' hne haddr) h1
           simpa using h2
-        exact memFwdChain shape hp1 Lraw hadm av rest _ hmid' pre post S R hL hS hR hSav hRav t
+        exact memFwdChain shape Lraw hadm av rest _ hmid' pre post S R hL hS hR hSav hRav t
           (fun pr hpr => hpres pr (List.mem_cons_of_mem _ hpr))
 
 /-! ## The verifier: from the certificate to `MemFwdMid` -/
 
-/-- A `denseBUMidScan`-cleared range `[a, b)` of the bus list is excluded, message-wise. -/
+/-- A `denseBSMidScan`-cleared range `[a, b)` of the bus list is excluded, message-wise. -/
 private theorem bf_seg_excl (d : DenseConstraintSystem p) (reg : VarRegistry)
     (hcov : d.CoveredBy reg) (shape : MemoryBusShape) (T : DenseTwoRootMap p)
     (hT : T.Sound d.algebraicConstraints)
@@ -216,18 +241,18 @@ private theorem bf_seg_excl (d : DenseConstraintSystem p) (reg : VarRegistry)
     (S : BusInteraction (DenseExpr p)) (hScov : denseBICovered reg S)
     (denv : VarId → ZMod p) (hcon : ∀ c ∈ d.algebraicConstraints, c.eval denv = 0)
     (a b : Nat)
-    (hscan : denseBUMidScan denseZModOps (denseBUWits d)
+    (hscan : denseBSMidScan denseZModOps (denseBUWits d)
         (bisL.toArray.map (denseBUPrep shape T)) (denseBUPrep shape T S) b (b - a) a = true) :
     ∀ m ∈ ((bisL.drop a).take (b - a)).map (fun bi => denseBIEval bi denv),
       m.multiplicity ≠ 0 → shape.address m = shape.address (denseBIEval S denv) → False := by
   intro m hm
   obtain ⟨m0, hm0, rfl⟩ := List.mem_map.1 hm
   obtain ⟨r, har, hrb, hr⟩ := bf_mem_seg hm0
-  have hok := denseBUMidScan_sound denseZModOps (denseBUWits d)
+  have hok := denseBSMidScan_sound denseZModOps (denseBUWits d)
     (bisL.toArray.map (denseBUPrep shape T)) (denseBUPrep shape T S) b (b - a) a hscan
     r (denseBUPrep shape T m0) har (by omega) (by omega)
     (bf_arr_get bisL (denseBUPrep shape T) hr)
-  exact denseBUMidOk_sound d reg hcov shape T hT S m0 hScov
+  exact denseBSMidOk_sound d reg hcov shape T hT S m0 hScov
     (hcov.2 m0 (hsub m0 (List.mem_of_getElem? hr))) hok denv hcon
 
 /-- A verified pair list yields the evaluated `MemFwdMid` decomposition of the segment `[q, j)`,
@@ -304,19 +329,23 @@ private theorem denseBFCheckPairs_sound (d : DenseConstraintSystem p) (reg : Var
           · exact hpresRest t hpt.2 pr hpr'
 
 /-- The engine's verifier entails the chain lemma's conclusion: every slot equality it emits
-    vanishes on every admissible satisfying assignment. -/
+    vanishes on every admissible satisfying assignment.
+
+    The positional discipline is supplied by the caller (`denseBSOrder?_admissibleMemoryBus`), so
+    `bisL` is the bus's interactions in certified canonical access order. -/
 theorem denseBFCheckCert_sound (d : DenseConstraintSystem p) (bs : BusSemantics p)
-    (facts : BusFacts p bs) (hp1 : (1 : ZMod p) ≠ 0) (reg : VarRegistry) (hcov : d.CoveredBy reg)
+    (reg : VarRegistry) (hcov : d.CoveredBy reg)
     (T : DenseTwoRootMap p) (hT : T.Sound d.algebraicConstraints)
-    (busId : Nat) (shape : MemoryBusShape) (hshape : facts.memShape busId = some shape)
+    (shape : MemoryBusShape)
     (bisL : List (BusInteraction (DenseExpr p)))
-    (hbis : bisL = d.busInteractions.filter (fun bi => bi.busId = busId))
+    (hsub : ∀ m ∈ bisL, m ∈ d.busInteractions)
     (i : Nat) (pairs : List (Nat × Nat)) (j : Nat) (S R : BusInteraction (DenseExpr p))
     (hS : bisL[i]? = some S) (hR : bisL[j]? = some R)
     (hchk : denseBFCheckCert denseZModOps (denseBUWits d) (denseSetNewMult denseZModOps shape)
         (denseGetPreviousMult denseZModOps shape) (bisL.toArray.map (denseBUPrep shape T))
         i pairs j = true)
-    (denv : VarId → ZMod p) (hadm : d.admissible bs denv) (hsat : d.satisfies bs denv) :
+    (denv : VarId → ZMod p) (hsat : d.satisfies bs denv)
+    (hAdm : admissibleMemoryBus shape (bisL.map (fun bi => denseBIEval bi denv))) :
     ∀ c ∈ denseBFEmit shape bisL.toArray pairs S R, c.eval denv = 0 := by
   have hai := bf_arr_get bisL (denseBUPrep shape T) hS
   have haj := bf_arr_get bisL (denseBUPrep shape T) hR
@@ -326,9 +355,6 @@ theorem denseBFCheckCert_sound (d : DenseConstraintSystem p) (bs : BusSemantics 
   obtain ⟨⟨⟨⟨⟨hij, hSm⟩, hRm⟩, haddrEq⟩, -⟩, hpairs⟩ := hchk
   rw [denseBUPrep_mult, denseSetNewMult_eq] at hSm
   rw [denseBUPrep_mult, denseGetPreviousMult_eq] at hRm
-  subst hbis
-  set bisL := d.busInteractions.filter (fun bi => bi.busId = busId) with hbisL
-  have hsub : ∀ m ∈ bisL, m ∈ d.busInteractions := fun m hm => List.mem_of_mem_filter hm
   have hScov : denseBICovered reg S := hcov.2 S (hsub S (List.mem_of_getElem? hS))
   have hcon : ∀ c ∈ d.algebraicConstraints, c.eval denv = 0 := hsat.1
   have hSev : (denseBIEval S denv).multiplicity = shape.setNewMult :=
@@ -338,18 +364,12 @@ theorem denseBFCheckCert_sound (d : DenseConstraintSystem p) (bs : BusSemantics 
   have haddrSR : shape.address (denseBIEval S denv) = shape.address (denseBIEval R denv) :=
     denseAddrConstsEq_sound shape S R
       (by rw [← denseBUConstsEq_eq shape T S R]; exact haddrEq) denv
-  -- the evaluated-list admissibility (as in `denseConsecutivePayloadEq`)
-  have hadm' : bs.admissible ((d.busInteractions.map (fun bi => denseBIEval bi denv)).filter
-      (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)) := hadm
-  have hb := facts.admissible_sound (d.busInteractions.map (fun bi => denseBIEval bi denv)) hadm'
-    busId shape hshape
-  rw [dense_map_eval_filter_busId] at hb
   -- the split at the endpoints
   obtain ⟨hsplitS, hlenS⟩ := bf_list_at hS
   obtain ⟨hsplitR, hlenR⟩ := bf_list_at hR
   have hsplit : bisL = bisL.take i ++ S :: (bisL.drop (i + 1)).take (j - i - 1)
       ++ R :: bisL.drop (j + 1) :=
-    dense_split_of_positions hlenS hsplitS hlenR hsplitR hij
+    bf_split_of_positions hlenS hsplitS hlenR hsplitR hij
   -- the pairs
   obtain ⟨evPairs, hmid, hpres⟩ := denseBFCheckPairs_sound d reg hcov shape T hT bisL hsub S
     hScov denv hcon pairs (i + 1) j hpairs
@@ -358,7 +378,7 @@ theorem denseBFCheckCert_sound (d : DenseConstraintSystem p) (bs : BusSemantics 
   have hchain : ∀ t : Nat, denseBFPairsPreserve bisL.toArray pairs t = true →
       (denseBIEval S denv).payload[t]? = (denseBIEval R denv).payload[t]? := by
     intro t hpt
-    exact memFwdChain shape hp1 (bisL.map (fun bi => denseBIEval bi denv)) hb
+    exact memFwdChain shape (bisL.map (fun bi => denseBIEval bi denv)) hAdm
       (shape.address (denseBIEval S denv)) evPairs _ hmid
       ((bisL.take i).map (fun bi => denseBIEval bi denv))
       ((bisL.drop (j + 1)).map (fun bi => denseBIEval bi denv))
@@ -397,50 +417,130 @@ theorem denseBFCollect_mem (ops : DenseZModOps p) (nw : DenseNonzeroWits p)
         · exact denseBFCollect_mem ops nw setMult prevMult shape bis arr rest c hc
       · exact denseBFCollect_mem ops nw setMult prevMult shape bis arr rest c hc
 
-theorem denseBFForBus_mem (ops : DenseZModOps p) (T : DenseTwoRootMap p)
-    (nw : DenseNonzeroWits p) (shape : MemoryBusShape)
-    (bisL : List (BusInteraction (DenseExpr p))) (c : DenseExpr p)
-    (hc : c ∈ denseBFForBus ops T nw shape bisL) :
-    ∃ i pairs j S R,
-      denseBFCheckCert ops nw (denseSetNewMult ops shape) (denseGetPreviousMult ops shape)
-        (bisL.toArray.map (denseBUPrep shape T)) i pairs j = true ∧
-      bisL[i]? = some S ∧ bisL[j]? = some R ∧ c ∈ denseBFEmit shape bisL.toArray pairs S R := by
-  obtain ⟨i, pairs, j, S, R, hchk, hSi, hRj, hmem⟩ :=
-    denseBFCollect_mem ops nw _ _ shape bisL.toArray _ _ c hc
-  exact ⟨i, pairs, j, S, R, hchk, by simpa using hSi, by simpa using hRj, hmem⟩
+/-! ## The merged pass scaffolding: one certificate, two engines -/
 
-/-- The structure of an emitted equality: a declared bus, positions in that bus's interaction
-    list, and the verifier's verdict on the certificate. -/
-theorem denseBFEqs_mem (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p)
-    {c : DenseExpr p} (hc : c ∈ denseBFEqs facts.memShape d) :
-    ∃ busId shape i pairs j S R,
-      facts.memShape busId = some shape ∧
-      (d.busInteractions.filter (fun bi => bi.busId = busId))[i]? = some S ∧
-      (d.busInteractions.filter (fun bi => bi.busId = busId))[j]? = some R ∧
-      denseBFCheckCert denseZModOps (denseBUWits d) (denseSetNewMult denseZModOps shape)
-        (denseGetPreviousMult denseZModOps shape)
-        ((d.busInteractions.filter (fun bi => bi.busId = busId)).toArray.map
-          (denseBUPrep shape (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)))
-        i pairs j = true ∧
-      c ∈ denseBFEmit shape (d.busInteractions.filter (fun bi => bi.busId = busId)).toArray
-        pairs S R := by
-  rw [show denseBFEqs facts.memShape d
-      = (if (denseBUBusLists facts.memShape d.busInteractions).isEmpty then []
-         else denseBFEqsOf (denseBUBusLists facts.memShape d.busInteractions) d) from rfl] at hc
+theorem denseBSForBus_mem (bs : BusSemantics p) (facts : BusFacts p bs) (T : DenseTwoRootMap p)
+    (nw : DenseNonzeroWits p) (shape : MemoryBusShape) (tsField B : Nat)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (bisL : List (BusInteraction (DenseExpr p))) (c : DenseExpr p)
+    (hc : c ∈ denseBSForBus bs facts denseZModOps T nw shape tsField B allArr idx bisL) :
+    ∃ ps,
+      denseBSOrder? bs facts shape T (denseSetNewMult denseZModOps shape)
+        (denseGetPreviousMult denseZModOps shape) tsField B allArr idx
+        (bisL.map (fun bi => (bi, denseBUPrep shape T bi))) = some ps ∧
+      ((∃ i j S R,
+          denseBSCheckPair denseZModOps nw (denseSetNewMult denseZModOps shape)
+            (denseGetPreviousMult denseZModOps shape)
+            (((denseBSCanon shape T bisL ps).map (denseBUPrep shape T)).toArray) i j = true ∧
+          (denseBSCanon shape T bisL ps)[i]? = some S ∧
+          (denseBSCanon shape T bisL ps)[j]? = some R ∧
+          c ∈ denseMemEqConstraints shape S R) ∨
+       (∃ i pairs j S R,
+          denseBFCheckCert denseZModOps nw (denseSetNewMult denseZModOps shape)
+            (denseGetPreviousMult denseZModOps shape)
+            ((denseBSCanon shape T bisL ps).toArray.map (denseBUPrep shape T)) i pairs j = true ∧
+          (denseBSCanon shape T bisL ps)[i]? = some S ∧
+          (denseBSCanon shape T bisL ps)[j]? = some R ∧
+          c ∈ denseBFEmit shape (denseBSCanon shape T bisL ps).toArray pairs S R)) := by
+  unfold denseBSForBus at hc
+  simp only at hc
   split at hc
   · simp at hc
-  · rw [show denseBFEqsOf (denseBUBusLists facts.memShape d.busInteractions) d
-        = ((denseBUBusLists facts.memShape d.busInteractions).map (fun sl =>
-            denseBFForBus denseZModOps
+  · rename_i ps hord
+    refine ⟨ps, hord, ?_⟩
+    have harr : ((denseBSCanon shape T bisL ps).map (denseBUPrep shape T)).toArray
+        = (denseBSCanon shape T bisL ps).toArray.map (denseBUPrep shape T) := by
+      simp
+    rcases List.mem_append.1 hc with h | h
+    · obtain ⟨i, j, S, R, hchk, hSi, hRj, hmem⟩ :=
+        denseBSCollect_mem _ nw _ _ shape (denseBSCanon shape T bisL ps).toArray _ _ c h
+      exact Or.inl ⟨i, j, S, R, hchk, by simpa using hSi, by simpa using hRj, hmem⟩
+    · obtain ⟨i, pairs, j, S, R, hchk, hSi, hRj, hmem⟩ :=
+        denseBFCollect_mem _ nw _ _ shape (denseBSCanon shape T bisL ps).toArray _ _ c h
+      exact Or.inr ⟨i, pairs, j, S, R, by rw [← harr]; exact hchk,
+        by simpa using hSi, by simpa using hRj, hmem⟩
+
+/-- The structure of an emitted equality: a declared bus with a declared ts slot, the
+    canonical-order certificate for a pairing of its interactions, and the verifier's verdict on
+    the pair — the sweep's (`denseBSCheckPair`) or the forwarding engine's (`denseBFCheckCert`) —
+    with both endpoints read off the *rearranged* list the engines ran on. -/
+theorem denseBSEqs_mem (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p)
+    {c : DenseExpr p} (hc : c ∈ denseBSEqs bs facts d) :
+    ∃ busId shape tsField B ps,
+      facts.memShape busId = some shape ∧
+      facts.memTsField busId = some (tsField, B) ∧
+      denseBSOrder? bs facts shape
+        (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
+        (denseSetNewMult denseZModOps shape)
+        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions.toArray
+        (denseBUBuildIdx bs facts d.busInteractions)
+        ((d.busInteractions.filter (fun bi => bi.busId = busId)).map
+          (fun bi => (bi, denseBUPrep shape
+            (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d) bi))) = some ps ∧
+      ((∃ i j S R,
+          denseBSCheckPair denseZModOps (denseBUWits d) (denseSetNewMult denseZModOps shape)
+            (denseGetPreviousMult denseZModOps shape)
+            (((denseBSCanon shape
+                (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
+                (d.busInteractions.filter (fun bi => bi.busId = busId)) ps).map
+              (denseBUPrep shape
+                (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d))).toArray)
+            i j = true ∧
+          (denseBSCanon shape (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
+            (d.busInteractions.filter (fun bi => bi.busId = busId)) ps)[i]? = some S ∧
+          (denseBSCanon shape (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
+            (d.busInteractions.filter (fun bi => bi.busId = busId)) ps)[j]? = some R ∧
+          c ∈ denseMemEqConstraints shape S R) ∨
+       (∃ i pairs j S R,
+          denseBFCheckCert denseZModOps (denseBUWits d) (denseSetNewMult denseZModOps shape)
+            (denseGetPreviousMult denseZModOps shape)
+            ((denseBSCanon shape
+                (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
+                (d.busInteractions.filter (fun bi => bi.busId = busId)) ps).toArray.map
+              (denseBUPrep shape
+                (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)))
+            i pairs j = true ∧
+          (denseBSCanon shape (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
+            (d.busInteractions.filter (fun bi => bi.busId = busId)) ps)[i]? = some S ∧
+          (denseBSCanon shape (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
+            (d.busInteractions.filter (fun bi => bi.busId = busId)) ps)[j]? = some R ∧
+          c ∈ denseBFEmit shape
+            (denseBSCanon shape
               (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
-              (denseBUWits d) sl.2.1 sl.2.2)).flatten from rfl,
+              (d.busInteractions.filter (fun bi => bi.busId = busId)) ps).toArray pairs S R)) := by
+  rw [show denseBSEqs bs facts d
+      = (if (denseBUBusLists facts.memShape d.busInteractions).isEmpty then []
+         else denseBSEqsOf bs facts (denseBUBusLists facts.memShape d.busInteractions) d)
+      from rfl] at hc
+  split at hc
+  · simp at hc
+  · rw [show denseBSEqsOf bs facts (denseBUBusLists facts.memShape d.busInteractions) d
+        = ((denseBUBusLists facts.memShape d.busInteractions).map (fun sl =>
+            match facts.memTsField sl.1 with
+            | some (tsField, B) =>
+              denseBSForBus bs facts denseZModOps
+                (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
+                (denseBUWits d) sl.2.1 tsField B d.busInteractions.toArray
+                (denseBUBuildIdx bs facts d.busInteractions) sl.2.2
+            | none => [])).flatten from rfl,
       List.mem_flatten] at hc
     obtain ⟨l, hl, hcl⟩ := hc
     obtain ⟨e, he, rfl⟩ := List.mem_map.1 hl
     obtain ⟨hms, hfilter⟩ := denseBUBusLists_mem he
-    obtain ⟨i, pairs, j, S, R, hchk, hSi, hRj, hmem⟩ := denseBFForBus_mem _ _ _ _ _ c hcl
-    rw [hfilter] at hSi hRj hchk hmem
-    exact ⟨e.1, e.2.1, i, pairs, j, S, R, hms, hSi, hRj, hchk, hmem⟩
+    cases htsf : facts.memTsField e.1 with
+    | none => rw [htsf] at hcl; simp at hcl
+    | some tb =>
+      obtain ⟨tsField, B⟩ := tb
+      rw [htsf] at hcl
+      obtain ⟨ps, hord, hrest⟩ := denseBSForBus_mem bs facts _ _ _ _ _ _ _ _ c hcl
+      rw [hfilter] at hord
+      refine ⟨e.1, e.2.1, tsField, B, ps, hms, htsf, hord, ?_⟩
+      rcases hrest with ⟨i, j, S, R, hchk, hSi, hRj, hmem⟩ |
+        ⟨i, pairs, j, S, R, hchk, hSi, hRj, hmem⟩
+      · rw [hfilter] at hchk hSi hRj
+        exact Or.inl ⟨i, j, S, R, hchk, hSi, hRj, hmem⟩
+      · rw [hfilter] at hchk hSi hRj hmem
+        exact Or.inr ⟨i, pairs, j, S, R, hchk, hSi, hRj, hmem⟩
 
 /-! ## The appended constraints -/
 
@@ -451,80 +551,91 @@ theorem denseBFEmit_vars (shape : MemoryBusShape) (bis : Array (BusInteraction (
     (∃ e ∈ Rt.payload, z ∈ e.vars) ∨ (∃ e ∈ S.payload, z ∈ e.vars) := by
   grind [denseBFEmit, denseEqExpr, DenseExpr.vars, List.mem_of_getElem?]
 
-theorem denseBusForwardNewCs_subset (bs : BusSemantics p) (facts : BusFacts p bs)
-    (d : DenseConstraintSystem p) {c : DenseExpr p} (h : c ∈ denseBusForwardNewCs bs facts d) :
-    c ∈ denseBFEqs facts.memShape d := by
-  rw [show denseBusForwardNewCs bs facts d
-      = (if (denseBFEqs facts.memShape d).isEmpty then []
-         else denseBUFilterNew d (denseBFEqs facts.memShape d)) from rfl] at h
+theorem denseBusSweepNewCs_subset (bs : BusSemantics p) (facts : BusFacts p bs)
+    (d : DenseConstraintSystem p) {c : DenseExpr p} (h : c ∈ denseBusSweepNewCs bs facts d) :
+    c ∈ denseBSEqs bs facts d := by
+  rw [show denseBusSweepNewCs bs facts d
+      = (if (denseBSEqs bs facts d).isEmpty then []
+         else (denseBUFilterNew d (denseBSEqs bs facts d)).eraseDups) from rfl] at h
   split at h
   · simp at h
-  · exact denseBUFilterNew_subset d _ h
+  · exact denseBUFilterNew_subset d _ (List.mem_eraseDups.mp h)
 
-theorem denseBusForwardNewCs_vars (bs : BusSemantics p) (facts : BusFacts p bs)
+theorem denseBusSweepNewCs_vars (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) :
-    ∀ c ∈ denseBusForwardNewCs bs facts d, ∀ z ∈ c.vars, z ∈ d.occ := by
+    ∀ c ∈ denseBusSweepNewCs bs facts d, ∀ z ∈ c.vars, z ∈ d.occ := by
   intro c hc z hz
-  obtain ⟨busId, shape, i, pairs, j, S, R, _, hSi, hRj, _, hmem⟩ :=
-    denseBFEqs_mem bs facts d (denseBusForwardNewCs_subset bs facts d hc)
-  rcases denseBFEmit_vars shape _ pairs S R hmem hz with ⟨e, he, hze⟩ | ⟨e, he, hze⟩
-  · exact DenseConstraintSystem.mem_occ_of_payload (bf_mem_of_filter_get hRj) he hze
-  · exact DenseConstraintSystem.mem_occ_of_payload (bf_mem_of_filter_get hSi) he hze
+  obtain ⟨busId, shape, tsField, B, ps, hms, htsf, hord, hrest⟩ :=
+    denseBSEqs_mem bs facts d (denseBusSweepNewCs_subset bs facts d hc)
+  have hcm := denseBSCanon_mem bs facts d busId shape _ ps hord
+  rcases hrest with ⟨i, j, S, R, hchk, hSi, hRj, hmem⟩ |
+    ⟨i, pairs, j, S, R, hchk, hSi, hRj, hmem⟩
+  · rcases denseMemEqConstraints_vars shape S R hmem hz with ⟨e, he, hze⟩ | ⟨e, he, hze⟩
+    · exact DenseConstraintSystem.mem_occ_of_payload (hcm R (List.mem_of_getElem? hRj)) he hze
+    · exact DenseConstraintSystem.mem_occ_of_payload (hcm S (List.mem_of_getElem? hSi)) he hze
+  · rcases denseBFEmit_vars shape _ pairs S R hmem hz with ⟨e, he, hze⟩ | ⟨e, he, hze⟩
+    · exact DenseConstraintSystem.mem_occ_of_payload (hcm R (List.mem_of_getElem? hRj)) he hze
+    · exact DenseConstraintSystem.mem_occ_of_payload (hcm S (List.mem_of_getElem? hSi)) he hze
 
-theorem denseBusForwardNewCs_sound (bs : BusSemantics p) (facts : BusFacts p bs)
-    (reg : VarRegistry) (d : DenseConstraintSystem p) (hcov : d.CoveredBy reg)
-    (hp1 : (1 : ZMod p) ≠ 0) (denv : VarId → ZMod p) (hadm : d.admissible bs denv)
-    (hsat : d.satisfies bs denv) :
-    ∀ c ∈ denseBusForwardNewCs bs facts d, c.eval denv = 0 := by
+theorem denseBusSweepNewCs_sound (bs : BusSemantics p) (facts : BusFacts p bs) (reg : VarRegistry)
+    (d : DenseConstraintSystem p) (hcov : d.CoveredBy reg)
+    (denv : VarId → ZMod p) (hadm : d.admissible bs denv) (hsat : d.satisfies bs denv) :
+    ∀ c ∈ denseBusSweepNewCs bs facts d, c.eval denv = 0 := by
   intro c hc
-  obtain ⟨busId, shape, i, pairs, j, S, R, hms, hSi, hRj, hchk, hmem⟩ :=
-    denseBFEqs_mem bs facts d (denseBusForwardNewCs_subset bs facts d hc)
-  exact denseBFCheckCert_sound d bs facts hp1 reg hcov _
-    (denseBUTable_sound (denseBUBusLists facts.memShape d.busInteractions) d) busId shape hms
-    _ rfl i pairs j S R hSi hRj hchk denv hadm hsat c hmem
+  obtain ⟨busId, shape, tsField, B, ps, hms, htsf, hord, hrest⟩ :=
+    denseBSEqs_mem bs facts d (denseBusSweepNewCs_subset bs facts d hc)
+  rcases hrest with ⟨i, j, S, R, hchk, hSi, hRj, hmem⟩ |
+    ⟨i, pairs, j, S, R, hchk, hSi, hRj, hmem⟩
+  · exact denseBSCheckPair_sound d bs reg hcov _
+      (denseBUTable_sound (denseBUBusLists facts.memShape d.busInteractions) d) shape
+      _ (denseBSCanon_mem bs facts d busId shape _ ps hord) i j S R hSi hRj hchk denv hsat
+      (denseBSOrder?_admissibleMemoryBus bs facts d busId shape hms tsField B htsf _ ps
+        (denseBUBuildIdx bs facts d.busInteractions) hord denv hadm hsat) c hmem
+  · exact denseBFCheckCert_sound d bs reg hcov _
+      (denseBUTable_sound (denseBUBusLists facts.memShape d.busInteractions) d) shape
+      _ (denseBSCanon_mem bs facts d busId shape _ ps hord) i pairs j S R hSi hRj hchk denv hsat
+      (denseBSOrder?_admissibleMemoryBus bs facts d busId shape hms tsField B htsf _ ps
+        (denseBUBuildIdx bs facts d.busInteractions) hord denv hadm hsat) c hmem
 
-/-! ## The pass -/
+/-! ## The pass transform: correctness and coverage -/
 
 /-- The `let`-bound body, unfolded (definitionally). -/
-theorem denseBusForwardF_eq (bs : BusSemantics p) (facts : BusFacts p bs)
+theorem denseBusSweepF_eq (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) :
-    denseBusForwardF bs facts d =
-      (if (1 : ZMod p) ≠ 0 then
-        (if (denseBusForwardNewCs bs facts d).isEmpty then d
-         else { d with algebraicConstraints :=
-                  d.algebraicConstraints ++ denseBusForwardNewCs bs facts d })
-       else d) := rfl
+    denseBusSweepF bs facts d =
+      (if (denseBusSweepNewCs bs facts d).isEmpty then d
+       else { d with algebraicConstraints :=
+                d.algebraicConstraints ++ denseBusSweepNewCs bs facts d }) := rfl
 
-theorem denseBusForwardF_covered (reg : VarRegistry) (bs : BusSemantics p)
-    (facts : BusFacts p bs) (d : DenseConstraintSystem p) (hcov : d.CoveredBy reg) :
-    (denseBusForwardF bs facts d).CoveredBy reg := by
-  rw [denseBusForwardF_eq]
-  split_ifs with hp1 _hempty
+theorem denseBusSweepF_covered (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
+    (d : DenseConstraintSystem p) (hcov : d.CoveredBy reg) :
+    (denseBusSweepF bs facts d).CoveredBy reg := by
+  rw [denseBusSweepF_eq]
+  split_ifs with _hempty
   · exact hcov
   · refine ⟨fun e he => ?_, hcov.2⟩
     rcases List.mem_append.1 he with h | h
     · exact hcov.1 e h
     · intro i hi
-      exact DenseConstraintSystem.occ_valid hcov i
-        (denseBusForwardNewCs_vars bs facts d e h i hi)
-  · exact hcov
+      exact DenseConstraintSystem.occ_valid hcov i (denseBusSweepNewCs_vars bs facts d e h i hi)
 
-theorem denseBusForwardF_correct (reg : VarRegistry) (bs : BusSemantics p)
-    (facts : BusFacts p bs) (d : DenseConstraintSystem p) (hcov : d.CoveredBy reg) :
-    DensePassCorrect reg.isInput d (denseBusForwardF bs facts d) [] bs := by
-  rw [denseBusForwardF_eq]
-  split_ifs with hp1 _hempty
+theorem denseBusSweepF_correct (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
+    (d : DenseConstraintSystem p) (hcov : d.CoveredBy reg) :
+    DensePassCorrect reg.isInput d (denseBusSweepF bs facts d) [] bs := by
+  rw [denseBusSweepF_eq]
+  split_ifs with _hempty
   · exact DensePassCorrect.refl reg.isInput d bs
-  · exact DensePassCorrect.denseAddConstraints d bs (denseBusForwardNewCs bs facts d)
-      (denseBusForwardNewCs_vars bs facts d)
-      (fun denv hadm hsat => denseBusForwardNewCs_sound bs facts reg d hcov hp1 denv hadm hsat)
-  · exact DensePassCorrect.refl reg.isInput d bs
+  · exact DensePassCorrect.denseAddConstraints d bs (denseBusSweepNewCs bs facts d)
+      (denseBusSweepNewCs_vars bs facts d)
+      (fun denv hadm hsat => denseBusSweepNewCs_sound bs facts reg d hcov denv hadm hsat)
 
-/-- The dense `busForward` pass (see `denseBusForwardF`). -/
-def denseBusForwardPass : DenseVerifiedPassW p :=
-  DenseVerifiedPassW.of denseBusForwardF (fun _ _ _ => [])
-    (fun reg bs facts d hcov => denseBusForwardF_covered reg bs facts d hcov)
+/-! ## The dense `busSweep` pass -/
+
+/-- The dense `busSweep` pass (see `denseBusSweepF`). -/
+def denseBusSweepPass : DenseVerifiedPassW p :=
+  DenseVerifiedPassW.of denseBusSweepF (fun _ _ _ => [])
+    (fun reg bs facts d hcov => denseBusSweepF_covered reg bs facts d hcov)
     (fun _ _ _ _ _ => by intro x hx; simp at hx)
-    (fun reg bs facts d hcov => denseBusForwardF_correct reg bs facts d hcov)
+    (fun reg bs facts d hcov => denseBusSweepF_correct reg bs facts d hcov)
 
 end ApcOptimizer.Dense

@@ -138,6 +138,28 @@ def denseAffineJustified (bound : Nat) (bnd : VarId → Option Nat) (e : DenseEx
     | none => false
   | none => false
 
+/-- Worst-case subtracted total of a term list read as `− Σ (−cᵥ)·v`: `Σ (−cᵥ).val·(bnd v − 1)`;
+    `none` if any variable is unbounded. A genuinely positive coefficient makes `(−c).val` huge and
+    the budget test below fail, so no sign analysis is needed. -/
+def denseLinTermsNegBound (bnd : VarId → Option Nat) : List (VarId × ZMod p) → Option Nat
+  | [] => some 0
+  | (v, c) :: rest =>
+    match bnd v, denseLinTermsNegBound bnd rest with
+    | some b, some acc => some ((-c).val * (b - 1) + acc)
+    | _, _ => none
+
+/-- Subtractive affine justification: `e` linearizes to `c₀ − Σ cᵥ·v` with every variable bounded
+    and the worst-case subtraction inside `[0, c₀]`, so the value never wraps and is
+    `≤ c₀ < bound` — e.g. `255 − a` with `a` byte-checked. -/
+def denseNegAffineJustified (bound : Nat) (bnd : VarId → Option Nat) (e : DenseExpr p) : Bool :=
+  match denseLinearize e with
+  | some L =>
+    match denseLinTermsNegBound bnd L.terms with
+    | some M => decide (M ≤ L.const.val) && decide (L.const.val < bound)
+        && decide (L.const.val < p)
+    | none => false
+  | none => false
+
 /-! ## Basis justification -/
 
 def denseFormBoundAtImpl {bs : BusSemantics p} (facts : BusFacts p bs)
@@ -241,6 +263,7 @@ def denseByteJustifiedW (bound : Nat) (deep : Bool)
      | _ => false) ||
     (deep && decide (256 ≤ bound) && denseDomainByteJustified domIdx e) ||
     denseAffineJustified bound (fun x => denseFindVarBound bs facts (wits x) x) e ||
+    denseNegAffineJustified bound (fun x => denseFindVarBound bs facts (wits x) x) e ||
     denseBasisJustified bound (fun x => denseFindVarBound bs facts (wits x) x) fbasis e
 
 /-- Are all of `R`'s payload entries at the declared byte slots justified (through the witness

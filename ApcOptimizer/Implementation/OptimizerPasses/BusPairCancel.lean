@@ -1,8 +1,6 @@
 import ApcOptimizer.Implementation.OptimizerPasses.Proofs.BusPairCancelCheck
 import ApcOptimizer.Implementation.OptimizerPasses.BusPairCancelWits
-import ApcOptimizer.Implementation.OptimizerPasses.Proofs.BusPairCancelKeyIdx
 import ApcOptimizer.Implementation.OptimizerPasses.Proofs.BusPairCancelIndex
-import ApcOptimizer.Implementation.OptimizerPasses.Proofs.AddrDiseq
 
 set_option autoImplicit false
 
@@ -74,6 +72,34 @@ theorem denseDropFormBasis_bound {bs : BusSemantics p} (facts : BusFacts p bs)
         (Array.getElem?_eq_getElem hk))
       (fun he => by simp [he] at hnS) (fun he => by simp [he] at hnR))))
 
+/-- `denseDropFormBasis_bound` for the extended basis: the emitted checks' forms are bounded
+    because the checks themselves are in the remaining system (`hbus` covers them). -/
+theorem denseDropFormBasisE_bound {bs : BusSemantics p} (facts : BusFacts p bs)
+    (fidx : Array (List Nat)) (arr : Array (BusInteraction (DenseExpr p))) (alive : Array Bool)
+    (S R : BusInteraction (DenseExpr p))
+    {A B C : List (BusInteraction (DenseExpr p))}
+    (horig : ∀ bi ∈ denseLiveSeg arr alive 0 arr.size, bi ≠ S → bi ≠ R → bi ∈ A ++ B ++ C)
+    (checksOld emitted : List (BusInteraction (DenseExpr p)))
+    (hchecksOld : ∀ bi ∈ checksOld, bi ∈ A ++ B ++ C)
+    (denv : VarId → ZMod p)
+    (hbus : ∀ bi ∈ A ++ B ++ C ++ emitted,
+      (denseBIEval bi denv).multiplicity ≠ 0 → bs.accepts (denseBIEval bi denv)) :
+    ∀ v, ∀ LB ∈ denseDropFormBasisE facts fidx (denseBuildFormBounds bs facts arr) arr alive S R
+        checksOld emitted v,
+      (LB.1.eval denv).val < LB.2 := by
+  intro v LB hLB
+  rw [denseDropFormBasisE, List.mem_append] at hLB
+  rcases hLB with hLB | hLB
+  · exact denseDropFormBasis_bound facts fidx arr alive S R horig emitted denv hbus v LB hLB
+  · rw [List.mem_flatMap] at hLB
+    obtain ⟨ck, hck, hmem⟩ := hLB
+    rw [denseFormBoundsOf, List.mem_filterMap] at hmem
+    obtain ⟨i, -, hfb⟩ := hmem
+    refine denseFormBoundAt_sound facts ck i LB.1 LB.2 hfb denv (hbus ck ?_)
+    rcases List.mem_append.1 hck with h | h
+    · exact List.mem_append_left _ (hchecksOld ck h)
+    · exact List.mem_append_right _ h
+
 /-! One accepted drop, consumed by `denseCancelLoop`. The erased proof fields `step`/`covNew` are
 quantified over `isInput`/`reg` with the current system's coverage as hypothesis, so the loop stays
 `reg`-free at the data level. -/
@@ -104,9 +130,6 @@ def denseMkDropResult (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (fac
     (hp1 : (1 : ZMod p) ≠ 0) (deep : Bool) (hdeep : deep = true → p.Prime)
     (ops : DenseZModOps p) (busId : Nat) (shape : MemoryBusShape)
     (hshape : facts.memShape busId = some shape)
-    (T : Thunk (DenseAddrCerts p))
-    (hTtworoot : T.get.tworoot.Sound cs0.algebraicConstraints)
-    (hTnonzero : T.get.nonzero = DenseNonzeroWits.build cs0.algebraicConstraints)
     (M : Thunk (DenseEqConstraintMap p)) (hM : M.get.Sound cs0.algebraicConstraints)
     (domIdx : Std.HashMap VarId (List (DenseExpr p)))
     (hdomIdx : ∀ v, ∀ c ∈ denseVarBucketLookup domIdx v, c ∈ cs0.algebraicConstraints)
@@ -127,12 +150,9 @@ def denseMkDropResult (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (fac
     (hSget : arr[iP]? = some S) (hRget : arr[jP]? = some R)
     (hSalive : alive[iP]?.getD false = true) (hRalive : alive[jP]?.getD false = true)
     (hslots : facts.recvByteSlots busId (R.payload.map DenseExpr.constValue?) = some (slots, bound))
-    (hmid : ∀ m0 ∈ denseLiveSeg arr alive (iP + 1) (jP - iP - 1),
-      denseMidRefuted ops shape T busId S m0 = true)
-    (hshield : denseShieldOk ops shape T busId S (denseLiveSeg arr alive 0 iP) = true)
     (hchk : denseCheckCancel ops deep bs facts M domIdx candsOf
       (denseDropWits facts bidxT.get arr alive S R checksOld checks)
-      (denseDropFormBasis fidxT.get fbndT.get arr alive S R)
+      (denseDropFormBasisE facts fidxT.get fbndT.get arr alive S R checksOld checks)
       busId shape slots bound S R checks = true) :
     DenseDropResult cs0 bs arr alive checksOld := by
   let A := denseLiveSeg arr alive 0 iP
@@ -170,16 +190,16 @@ def denseMkDropResult (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (fac
     dropIdx := dropIdx
     dropPos := dropPos
     sizeNew := by simp only [denseTombstone, Array.size_setIfInBounds]; exact hsz
-    step := fun isInput reg hsys => heq ▸
+    step := fun isInput _reg _hsys => heq ▸
       denseCheckCancel_sound isInput (denseMkCs cs0 arr alive checksOld) bs facts hp1 deep hdeep ops
-        reg hsys busId shape hshape slots bound T hTtworoot hTnonzero M hM domIdx candsOf
+        busId shape hshape slots bound M hM domIdx candsOf
         (denseDropWits facts bidxT.get arr alive S R checksOld checks)
-        (denseDropFormBasis fidxT.get fbndT.get arr alive S R)
+        (denseDropFormBasisE facts fidxT.get fbndT.get arr alive S R checksOld checks)
         A S B R (C' ++ checksOld) hslots checks hsplit hdomIdx hcands
         (denseDropWits_mem facts bidxT.get arr alive S R checksOld checks horig hchecks)
-        (fun denv hbus => hfbnd ▸ denseDropFormBasis_bound facts fidxT.get arr alive S R horig
-          checks denv hbus)
-        hmid hshield hchk
+        (fun denv hbus => hfbnd ▸ denseDropFormBasisE_bound facts fidxT.get arr alive S R horig
+          checksOld checks hchecks denv hbus)
+        hchk
     decreases := ?_
     covNew := fun reg hsys => by
       refine ⟨hsys.1, ?_⟩
@@ -205,16 +225,14 @@ def denseMkDropResult (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (fac
 
 /-- Scans left-to-right for the first cancellable pair on `busId`: a live send `S` and a later live
     receive `R` with equal payload and opposite multiplicities annihilate (zero net bus effect), so
-    both drop — e.g. a memory write and the matching read of the same cell. `next` is thunked so the
-    scan stops once a pair is accepted. -/
+    both drop — e.g. a memory write and the matching read of the same cell, anywhere later on the
+    bus (the order-free rely needs only the payload equality, no between-region tests). `next` is
+    thunked so the scan stops once a pair is accepted. -/
 def denseFindCancelGoIdx (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (facts : BusFacts p bs)
     (hp1 : (1 : ZMod p) ≠ 0) (deep : Bool) (hdeep : deep = true → p.Prime)
     (aggressive : Bool) (ops : DenseZModOps p)
     (busId : Nat) (shape : MemoryBusShape)
     (hshape : facts.memShape busId = some shape)
-    (T : Thunk (DenseAddrCerts p))
-    (hTtworoot : T.get.tworoot.Sound cs0.algebraicConstraints)
-    (hTnonzero : T.get.nonzero = DenseNonzeroWits.build cs0.algebraicConstraints)
     (M : Thunk (DenseEqConstraintMap p)) (hM : M.get.Sound cs0.algebraicConstraints)
     (domIdxT : Thunk { m : Std.HashMap VarId (List (DenseExpr p)) //
       ∀ v, ∀ c ∈ denseVarBucketLookup m v, c ∈ cs0.algebraicConstraints })
@@ -227,18 +245,14 @@ def denseFindCancelGoIdx (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (
     (checksOld : List (BusInteraction (DenseExpr p))) (hsz : alive.size = arr.size)
     (hfbnd : fbndT.get = denseBuildFormBounds bs facts arr)
     (idx : Std.HashMap UInt64 (List Nat))
-    (preT : Thunk (Array (DenseAddrPre p)))
-    (hpreT : DensePreArrOk shape T busId arr preT.get)
-    (kT : Thunk (DenseKeyIdx p))
-    (hkT : kT.get = denseKeyIdxBuild shape busId arr)
     (i : Nat) : Option (DenseDropResult cs0 bs arr alive checksOld) :=
   if hi : i < arr.size then
     let S := arr[i]
     let next := fun (_ : Unit) => denseFindCancelGoIdx cs0 bs facts hp1 deep hdeep aggressive ops busId
-      shape hshape T hTtworoot hTnonzero M hM domIdxT candsT hcands bcBus? fidxT bidxT fbndT arr alive
-      checksOld hsz hfbnd idx preT hpreT kT hkT (i + 1)
+      shape hshape M hM domIdxT candsT hcands bcBus? fidxT bidxT fbndT arr alive
+      checksOld hsz hfbnd idx (i + 1)
     if haliveS : alive[i]?.getD false = true then
-    if hSguard : decide (S.busId = busId) &&
+    if decide (S.busId = busId) &&
         decide (denseMultConst S = some (denseSetNewMult ops shape)) then
       match hfm : denseFirstMatchAt M arr alive busId S i (idx.getD
           (mixHash (hash busId)
@@ -253,40 +267,22 @@ def denseFindCancelGoIdx (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (
             by_contra hc
             rw [Array.getElem?_eq_none (Nat.le_of_not_lt hc)] at hR; simp at hR
           have hSget : arr[i]? = some S := Array.getElem?_eq_getElem hi
-          match hps : preT.get[i]? with
-          | none => next ()
-          | some preS =>
-          have hpreS : preS = denseAddrPrep shape T.get.tworoot S := by
-            obtain ⟨m, hm, _, hex⟩ := hpreT.2 i S hSget
-            rw [Option.some.inj (hps.symm.trans hm)]
-            refine hex (of_decide_eq_true ?_)
-            rw [Bool.and_eq_true] at hSguard
-            exact hSguard.1
-          if hRT : (denseRegionTests ops shape T busId arr alive preT.get hpreT kT.get hkT
-              S preS hpreS i j hij).val = true then
-          have hmid : ∀ m0 ∈ denseLiveSeg arr alive (i + 1) (j - i - 1),
-              denseMidRefuted ops shape T busId S m0 = true :=
-            ((denseRegionTests ops shape T busId arr alive preT.get hpreT kT.get hkT
-              S preS hpreS i j hij).property hRT).1
-          have hshield : denseShieldOk ops shape T busId S (denseLiveSeg arr alive 0 i) = true :=
-            ((denseRegionTests ops shape T busId arr alive preT.get hpreT kT.get hkT
-              S preS hpreS i j hij).property hRT).2
           match hslots : facts.recvByteSlots busId (R.payload.map DenseExpr.constValue?) with
           | none => next ()
           | some (slots, bound) =>
           if hchk0 : denseCheckCancel ops deep bs facts M domIdxT.get.val candsT.get.lookup
               (denseDropWits facts bidxT.get arr alive S R checksOld [])
-              (denseDropFormBasis fidxT.get fbndT.get arr alive S R)
+              (denseDropFormBasisE facts fidxT.get fbndT.get arr alive S R checksOld [])
               busId shape slots bound S R [] = true then
-            some (denseMkDropResult cs0 bs facts hp1 deep hdeep ops busId shape hshape T hTtworoot
-              hTnonzero M hM domIdxT.get.val domIdxT.get.property candsT.get.lookup hcands
+            some (denseMkDropResult cs0 bs facts hp1 deep hdeep ops busId shape hshape
+              M hM domIdxT.get.val domIdxT.get.property candsT.get.lookup hcands
               fidxT bidxT fbndT arr alive checksOld hsz hfbnd i j S R slots bound [] checksOld
               (List.append_nil checksOld).symm (fun reg _ bi hbi => absurd hbi (by simp))
-              false 0 i hij hjlt hSget hR haliveS hRalive hslots hmid hshield hchk0)
+              false 0 i hij hjlt hSget hR haliveS hRalive hslots hchk0)
           else
           let unjust := denseUnjustifiedSlots bound deep domIdxT.get.val candsT.get.lookup bs facts
             (denseDropWits facts bidxT.get arr alive S R checksOld [])
-            (denseDropFormBasis fidxT.get fbndT.get arr alive S R)
+            (denseDropFormBasisE facts fidxT.get fbndT.get arr alive S R checksOld [])
             slots R
           let checks : List (BusInteraction (DenseExpr p)) :=
             match unjust, bcBus? with
@@ -296,16 +292,15 @@ def denseFindCancelGoIdx (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (
           if !checks.isEmpty && (aggressive || decide (S.payload = R.payload)) then
             if hchk : denseCheckCancel ops deep bs facts M domIdxT.get.val candsT.get.lookup
                 (denseDropWits facts bidxT.get arr alive S R checksOld checks)
-                (denseDropFormBasis fidxT.get fbndT.get arr alive S R)
+                (denseDropFormBasisE facts fidxT.get fbndT.get arr alive S R checksOld checks)
                 busId shape slots bound S R checks = true then
-              some (denseMkDropResult cs0 bs facts hp1 deep hdeep ops busId shape hshape T hTtworoot
-                hTnonzero M hM domIdxT.get.val domIdxT.get.property candsT.get.lookup hcands
+              some (denseMkDropResult cs0 bs facts hp1 deep hdeep ops busId shape hshape
+                M hM domIdxT.get.val domIdxT.get.property candsT.get.lookup hcands
                 fidxT bidxT fbndT arr alive checksOld hsz hfbnd i j S R slots bound checks
                 (checksOld ++ checks) rfl
                 (fun reg hRpay bi hbi => denseEmittedChecks_covered unjust bcBus? R reg hRpay bi hbi)
-                true 0 i hij hjlt hSget hR haliveS hRalive hslots hmid hshield hchk)
+                true 0 i hij hjlt hSget hR haliveS hRalive hslots hchk)
             else next ()
-          else next ()
           else next ()
         | none => next ()
       | none => next ()
@@ -315,14 +310,10 @@ def denseFindCancelGoIdx (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (
   termination_by arr.size - i
 
 /-- Search declared buses from list index `curIdx` for a droppable pair, honouring the resume
-    hint. Each bus carries its prepared certificate array (`hpre` ties it to
-    `denseAddrPrep` over the bus's shape), shared across every scan and resume. -/
+    hint. -/
 def denseFindCancel (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (facts : BusFacts p bs)
     (hp1 : (1 : ZMod p) ≠ 0) (deep : Bool) (hdeep : deep = true → p.Prime)
     (aggressive : Bool) (ops : DenseZModOps p)
-    (T : Thunk (DenseAddrCerts p))
-    (hTtworoot : T.get.tworoot.Sound cs0.algebraicConstraints)
-    (hTnonzero : T.get.nonzero = DenseNonzeroWits.build cs0.algebraicConstraints)
     (M : Thunk (DenseEqConstraintMap p)) (hM : M.get.Sound cs0.algebraicConstraints)
     (domIdxT : Thunk { m : Std.HashMap VarId (List (DenseExpr p)) //
       ∀ v, ∀ c ∈ denseVarBucketLookup m v, c ∈ cs0.algebraicConstraints })
@@ -335,33 +326,28 @@ def denseFindCancel (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (facts
     (hfbnd : fbndT.get = denseBuildFormBounds bs facts arr)
     (idx : Std.HashMap UInt64 (List Nat))
     (bcBus? : Option (Nat × ByteXorSpec p)) (resumeIdx resumePos : Nat) :
-    Nat → (preBuses : List (Nat × Thunk (Array (DenseAddrPre p)) × Thunk (DenseKeyIdx p))) →
-    (∀ busId t kt, (busId, t, kt) ∈ preBuses → ∀ shape, facts.memShape busId = some shape →
-      DensePreArrOk shape T busId arr t.get ∧
-      kt.get = denseKeyIdxBuild shape busId arr) →
+    Nat → (buses : List Nat) →
     Option (DenseDropResult cs0 bs arr alive checksOld)
-  | _, [], _ => none
-  | curIdx, (busId, preT, kT) :: rest, hpre =>
+  | _, [] => none
+  | curIdx, busId :: rest =>
     if curIdx < resumeIdx then
-      denseFindCancel cs0 bs facts hp1 deep hdeep aggressive ops T hTtworoot hTnonzero M hM domIdxT candsT
+      denseFindCancel cs0 bs facts hp1 deep hdeep aggressive ops M hM domIdxT candsT
         hcands fidxT bidxT fbndT arr alive checksOld hsz hfbnd idx bcBus? resumeIdx resumePos
         (curIdx + 1) rest
-        (fun b t kt hbt => hpre b t kt (List.mem_cons_of_mem _ hbt))
     else
       let startPos := if curIdx = resumeIdx then resumePos else 0
       match hshape : facts.memShape busId with
       | some shape =>
         match denseFindCancelGoIdx cs0 bs facts hp1 deep hdeep aggressive ops busId shape hshape
-            T hTtworoot hTnonzero M hM domIdxT candsT hcands bcBus? fidxT bidxT fbndT arr alive checksOld
-            hsz hfbnd idx preT (hpre busId preT kT (List.mem_cons_self ..) shape hshape).1
-            kT (hpre busId preT kT (List.mem_cons_self ..) shape hshape).2 startPos with
+            M hM domIdxT candsT hcands bcBus? fidxT bidxT fbndT arr alive checksOld
+            hsz hfbnd idx startPos with
         | some dr => some { dr with dropIdx := curIdx }
-        | none => denseFindCancel cs0 bs facts hp1 deep hdeep aggressive ops T hTtworoot hTnonzero M hM
+        | none => denseFindCancel cs0 bs facts hp1 deep hdeep aggressive ops M hM
             domIdxT candsT hcands fidxT bidxT fbndT arr alive checksOld hsz hfbnd idx bcBus? resumeIdx
-            resumePos (curIdx + 1) rest (fun b t kt hbt => hpre b t kt (List.mem_cons_of_mem _ hbt))
-      | none => denseFindCancel cs0 bs facts hp1 deep hdeep aggressive ops T hTtworoot hTnonzero M hM
+            resumePos (curIdx + 1) rest
+      | none => denseFindCancel cs0 bs facts hp1 deep hdeep aggressive ops M hM
           domIdxT candsT hcands fidxT bidxT fbndT arr alive checksOld hsz hfbnd idx bcBus? resumeIdx
-          resumePos (curIdx + 1) rest (fun b t kt hbt => hpre b t kt (List.mem_cons_of_mem _ hbt))
+          resumePos (curIdx + 1) rest
 
 /-! The materialized final system plus (erased) correctness and coverage proofs that
 `denseCancelLoop` returns. -/
@@ -377,25 +363,18 @@ structure DenseCancelBundle (cs0 : DenseConstraintSystem p) (bs : BusSemantics p
 def denseCancelLoop (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (facts : BusFacts p bs)
     (hp1 : (1 : ZMod p) ≠ 0) (deep : Bool) (hdeep : deep = true → p.Prime)
     (aggressive : Bool) (ops : DenseZModOps p)
-    (T : Thunk (DenseAddrCerts p))
-    (hTtworoot : T.get.tworoot.Sound cs0.algebraicConstraints)
-    (hTnonzero : T.get.nonzero = DenseNonzeroWits.build cs0.algebraicConstraints)
     (M : Thunk (DenseEqConstraintMap p)) (hM : M.get.Sound cs0.algebraicConstraints)
     (domIdxT : Thunk { m : Std.HashMap VarId (List (DenseExpr p)) //
       ∀ v, ∀ c ∈ denseVarBucketLookup m v, c ∈ cs0.algebraicConstraints })
     (candsT : Thunk (DenseVarCsIdx p))
     (hcands : ∀ x, ∀ c ∈ candsT.get.lookup x, c ∈ cs0.algebraicConstraints)
     (bcBus? : Option (Nat × ByteXorSpec p))
-    (preBuses : List (Nat × Thunk (Array (DenseAddrPre p)) × Thunk (DenseKeyIdx p)))
+    (buses : List Nat)
     (fidxT bidxT : Thunk (Array (List Nat)))
     (fbndT : Thunk (Array (Thunk (List (DenseLinExpr p × Nat)))))
     (arr : Array (BusInteraction (DenseExpr p)))
     (hfbnd : fbndT.get = denseBuildFormBounds bs facts arr)
     (idx : Std.HashMap UInt64 (List Nat))
-    (hpre : ∀ busId t kt, (busId, t, kt) ∈ preBuses → ∀ shape,
-      facts.memShape busId = some shape →
-      DensePreArrOk shape T busId arr t.get ∧
-      kt.get = denseKeyIdxBuild shape busId arr)
     (alive : Array Bool) (checksOld : List (BusInteraction (DenseExpr p)))
     (hsz : alive.size = arr.size) (resumeIdx resumePos : Nat)
     (hcur : ∀ (isInput : VarId → Bool) (reg : VarRegistry), cs0.CoveredBy reg →
@@ -403,9 +382,9 @@ def denseCancelLoop (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (facts
     (hsyscov : ∀ (reg : VarRegistry), cs0.CoveredBy reg →
       (denseMkCs cs0 arr alive checksOld).CoveredBy reg) :
     DenseCancelBundle cs0 bs :=
-  match hfc : denseFindCancel cs0 bs facts hp1 deep hdeep aggressive ops T hTtworoot hTnonzero M hM domIdxT
+  match hfc : denseFindCancel cs0 bs facts hp1 deep hdeep aggressive ops M hM domIdxT
       candsT hcands fidxT bidxT fbndT arr alive checksOld hsz hfbnd idx bcBus? resumeIdx resumePos 0
-      preBuses hpre with
+      buses with
   | none =>
     { out := { cs0 with
         busInteractions := denseLiveArr arr alive hsz 0 arr.size (by omega) ++ checksOld }
@@ -422,8 +401,8 @@ def denseCancelLoop (cs0 : DenseConstraintSystem p) (bs : BusSemantics p) (facts
   | some dr =>
     let nextIdx := if dr.emitted then 0 else dr.dropIdx
     let nextPos := if dr.emitted then 0 else dr.dropPos
-    denseCancelLoop cs0 bs facts hp1 deep hdeep aggressive ops T hTtworoot hTnonzero M hM domIdxT candsT
-      hcands bcBus? preBuses fidxT bidxT fbndT arr hfbnd idx hpre
+    denseCancelLoop cs0 bs facts hp1 deep hdeep aggressive ops M hM domIdxT candsT
+      hcands bcBus? buses fidxT bidxT fbndT arr hfbnd idx
       (denseTombstone alive dr.dropI dr.dropJ)
       dr.checksNew dr.sizeNew nextIdx nextPos
       (fun isInput reg hcs0 => (hcur isInput reg hcs0).andThen (dr.step isInput reg (hsyscov reg hcs0)))
@@ -446,9 +425,6 @@ def denseBusPairCancelPass (pw : PrimeWitness p) (aggressive : Bool) : DenseVeri
     -- and left lazy otherwise: `Thunk.get` marks its value multi-threaded (`denseThunkIf`), and an
     -- invocation with no candidate must not pay for a build it never reads.
     let eager := denseAnyCandidate facts aggressive ops idx arr
-    let T : Thunk (DenseAddrCerts p) :=
-      denseThunkIf eager fun _ =>
-        DenseAddrCerts.build facts.memShape d.busInteractions d.algebraicConstraints
     let M : Thunk (DenseEqConstraintMap p) :=
       Thunk.mk fun _ =>
         if aggressive then DenseEqConstraintMap.build d.algebraicConstraints
@@ -468,14 +444,6 @@ def denseBusPairCancelPass (pw : PrimeWitness p) (aggressive : Bool) : DenseVeri
     have halltrue : ∀ k, k < arr.size → alive[k]?.getD false = true := by
       intro k hk
       simp only [alive, Array.getElem?_replicate, hk, if_true, Option.getD_some]
-    have hTget : T.get = DenseAddrCerts.build facts.memShape d.busInteractions
-        d.algebraicConstraints := denseThunkIf_get _ _
-    have hTtworoot : T.get.tworoot.Sound d.algebraicConstraints := by
-      rw [hTget]
-      exact DenseTwoRootMap.buildForAddrs_sound facts.memShape d.busInteractions
-        d.algebraicConstraints
-    have hTnonzero : T.get.nonzero = DenseNonzeroWits.build d.algebraicConstraints := by
-      rw [hTget]; rfl
     have hM : M.get.Sound d.algebraicConstraints := by
       show (if aggressive then DenseEqConstraintMap.build d.algebraicConstraints
         else DenseEqConstraintMap.empty).Sound d.algebraicConstraints
@@ -494,33 +462,7 @@ def denseBusPairCancelPass (pw : PrimeWitness p) (aggressive : Bool) : DenseVeri
     let bcBus? := busIds.findSome? (fun k => match facts.byteXorSpec k with
       | some spec => if spec.bound = 256 then some (k, spec) else none
       | none => none)
-    -- One prepared certificate array per declared bus, shared across every region scan and
-    -- resume of this invocation (the thunk is forced only when a matched pair reaches a scan).
-    let preAllT : Thunk (Array (DenseAddrPre p)) :=
-      denseThunkIf eager fun _ => denseAddrPrepAll facts.memShape T.get.tworoot arr
-    let preBuses : List (Nat × Thunk (Array (DenseAddrPre p)) × Thunk (DenseKeyIdx p)) :=
-      busIds.filterMap (fun busId => (facts.memShape busId).map (fun shape =>
-        (busId, preAllT, denseThunkIf eager (fun _ => denseKeyIdxBuild shape busId arr))))
-    have hpreBuses : ∀ busId t kt, (busId, t, kt) ∈ preBuses → ∀ shape,
-        facts.memShape busId = some shape →
-        DensePreArrOk shape T busId arr t.get ∧
-        kt.get = denseKeyIdxBuild shape busId arr := by
-      intro busId t kt hmem shape hshape
-      obtain ⟨b, _hb, hsome⟩ := List.mem_filterMap.mp hmem
-      cases hms : facts.memShape b with
-      | none => rw [hms] at hsome; simp at hsome
-      | some sh =>
-          rw [hms, Option.map_some] at hsome
-          injection Option.some.inj hsome with hb hrest
-          injection hrest with ht hkt
-          subst hb
-          rw [hshape] at hms
-          obtain rfl := Option.some.inj hms
-          refine ⟨?_, by rw [← hkt]; exact denseThunkIf_get _ _⟩
-          rw [← ht, show (denseThunkIf eager
-                (fun _ => denseAddrPrepAll facts.memShape T.get.tworoot arr)).get
-              = denseAddrPrepAll facts.memShape T.get.tworoot arr from denseThunkIf_get _ _]
-          exact denseAddrPrepAll_ok facts.memShape shape T _ hshape arr
+    let buses : List Nat := busIds.filter (fun busId => (facts.memShape busId).isSome)
     have hcur0 : ∀ (isInput : VarId → Bool) (reg : VarRegistry), d.CoveredBy reg →
         DensePassCorrect isInput d (denseMkCs d arr alive []) [] bs :=
       fun isInput _ _ => by
@@ -529,8 +471,8 @@ def denseBusPairCancelPass (pw : PrimeWitness p) (aggressive : Bool) : DenseVeri
         (denseMkCs d arr alive []).CoveredBy reg :=
       fun _ hcs0 => by rw [denseMkCs_all d arr rfl alive halltrue]; exact hcs0
     let bundle := denseCancelLoop d bs facts hp1 deep (fun h => pw.correct h) aggressive ops
-      T hTtworoot hTnonzero M hM domIdxT candsT hcands bcBus? preBuses fidxT bidxT fbndT arr
-      (denseThunkIf_get _ _) idx hpreBuses alive [] hsz 0 0 hcur0 hsyscov0
+      M hM domIdxT candsT hcands bcBus? buses fidxT bidxT fbndT arr
+      (denseThunkIf_get _ _) idx alive [] hsz 0 0 hcur0 hsyscov0
     { reg' := reg
       out := bundle.out
       derivs := []

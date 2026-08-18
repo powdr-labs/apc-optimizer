@@ -179,11 +179,25 @@ private def internSystem (cs : Circuit p) : Circuit p :=
       { bi with multiplicity := internExpr m bi.multiplicity,
                 payload := bi.payload.map (internExpr m) }) }
 
+/-- The pc at which the exported block is entered: a top-level `entry_pc`, else the block
+    descriptor's `block.blocks[0].start_pc` (powdr's `ApcWithBusMap` carries the latter; its FFI
+    export carries neither unless the caller adds `entry_pc`). It designates the execution bridge's
+    entry record (`memShapeOf`'s `entryKey`, ENTRY_KEY); absent, that rely is not assumed and `execChain`
+    stays inert. -/
+private def parseEntryPc (json : Lean.Json) : Option Nat :=
+  match (json.getObjVal? "entry_pc").toOption.bind (·.getNat?.toOption) with
+  | some pc => some pc
+  | none =>
+    match (json.getObjVal? "block").toOption.bind (fun b => (b.getObjVal? "blocks").toOption) with
+    | some (Lean.Json.arr blocks) =>
+      blocks[0]?.bind (fun b0 => ((b0.getObjVal? "start_pc").toOption.bind (·.getNat?.toOption)))
+    | _ => none
+
 /-- Parse the bus-map-agnostic part of a powdr export: the top-level JSON (so callers pull
-    `bus_map` with the right per-VM parser), the constraint system under `machine`, and the
-    `next_free_id` cursor if present. -/
+    `bus_map` with the right per-VM parser), the constraint system under `machine`, the
+    `next_free_id` cursor if present, and the block's entry pc if present. -/
 private def parseMachinePart (jsonStr : String) :
-    Except String (Lean.Json × Circuit p × Option Nat) := do
+    Except String (Lean.Json × Circuit p × Option Nat × Option Nat) := do
   let json ← Lean.Json.parse jsonStr
   let machine ← json.getObjVal? "machine"
 
@@ -208,23 +222,23 @@ private def parseMachinePart (jsonStr : String) :
     algebraicConstraints := constraints,
     busInteractions := busInteractions
   }
-  pure (json, system, nextFreeId?)
+  pure (json, system, nextFreeId?, parseEntryPc json)
 
-/-- Parse a powdr export into a `Circuit`, its OpenVM `BusMap`, and the `next_free_id`
-    cursor. -/
+/-- Parse a powdr export into a `Circuit`, its OpenVM `BusMap`, the `next_free_id` cursor, and the
+    block's entry pc. -/
 def parseJsonSystem (jsonStr : String) :
-    Except String (Circuit p × BusMapList × Option Nat) := do
-  let (json, system, nextFreeId?) ← parseMachinePart (p := p) jsonStr
+    Except String (Circuit p × BusMapList × Option Nat × Option Nat) := do
+  let (json, system, nextFreeId?, entryPc?) ← parseMachinePart (p := p) jsonStr
   let busMap ← parseBusMap (← json.getObjVal? "bus_map")
-  pure (system, busMap, nextFreeId?)
+  pure (system, busMap, nextFreeId?, entryPc?)
 
 /-- The SP1 counterpart of `parseJsonSystem`: same machine parsing, but the `bus_map` is read as SP1
     bus types. SP1 exports are over KoalaBear, so instantiate `p := koalaBear`. -/
 def parseJsonSystemSp1 (jsonStr : String) :
-    Except String (Circuit p × ApcOptimizer.SP1.BusMapList × Option Nat) := do
-  let (json, system, nextFreeId?) ← parseMachinePart (p := p) jsonStr
+    Except String (Circuit p × ApcOptimizer.SP1.BusMapList × Option Nat × Option Nat) := do
+  let (json, system, nextFreeId?, entryPc?) ← parseMachinePart (p := p) jsonStr
   let busMap ← parseBusMapSp1 (← json.getObjVal? "bus_map")
-  pure (system, busMap, nextFreeId?)
+  pure (system, busMap, nextFreeId?, entryPc?)
 
 /- A real powdr export exercising every parser path; gzipped like the CLI inputs, so
    decompress with `gunzip -c`. -/
@@ -235,7 +249,7 @@ def parseJsonSystemSp1 (jsonStr : String) :
     { cmd := "gunzip",
       args := #["-c", "Benchmarks/OpenVM/openvm-eth/apc_001_pc0x4ecc54.json.gz"] }
   match parseJsonSystem (p := 2013265921) result.stdout with
-  | .ok (system, busMap, _) =>
+  | .ok (system, busMap, _, _) =>
     IO.println s!"Parsed {system.algebraicConstraints.length} constraints, {system.busInteractions.length} bus interactions, {busMap.length} bus types"
   | .error e =>
     IO.println s!"Error: {e}"
