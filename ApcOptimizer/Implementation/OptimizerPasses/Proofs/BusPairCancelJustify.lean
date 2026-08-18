@@ -356,6 +356,70 @@ theorem denseAffineJustified_sound (bound : Nat) (bnd : VarId → Option Nat) (e
       rw [denseLinearize_eval e L hL denv]
       exact DenseLinExpr.eval_val_lt L denv bnd (fun v _ b hb => hbnd v b hb) M hM bound h.1 h.2
 
+/-- The subtracted natural term-sum is bounded by `denseLinTermsNegBound` when every variable is
+    bounded. -/
+theorem denseLinTermsNegBound_le (bnd : VarId → Option Nat) (denv : VarId → ZMod p)
+    (terms : List (VarId × ZMod p)) (M : Nat) (h : denseLinTermsNegBound bnd terms = some M)
+    (hbnd : ∀ v ∈ terms.map Prod.fst, ∀ b, bnd v = some b → (denv v).val < b) :
+    (terms.map (fun t => (-t.2).val * (denv t.1).val)).sum ≤ M := by
+  induction terms generalizing M with
+  | nil => simp only [denseLinTermsNegBound, Option.some.injEq] at h; subst h; simp
+  | cons t rest ih =>
+    simp only [denseLinTermsNegBound] at h
+    cases hb : bnd t.1 with
+    | none => rw [hb] at h; simp at h
+    | some b =>
+      cases hr : denseLinTermsNegBound bnd rest with
+      | none => rw [hb, hr] at h; simp at h
+      | some Macc =>
+        rw [hb, hr] at h; simp only [Option.some.injEq] at h; subst h
+        have hvt : (denv t.1).val < b := hbnd t.1 (by simp) b hb
+        have hacc : (rest.map (fun t => (-t.2).val * (denv t.1).val)).sum ≤ Macc :=
+          ih Macc hr
+            (fun v hv => hbnd v (by simp only [List.map_cons, List.mem_cons]; exact Or.inr hv))
+        simp only [List.map_cons, List.sum_cons]
+        have hmul : (-t.2).val * (denv t.1).val ≤ (-t.2).val * (b - 1) :=
+          Nat.mul_le_mul_left _ (by omega)
+        omega
+
+/-- If `e` linearizes to `c₀ − Σ cᵥ·v` with the worst-case subtraction inside `[0, c₀]` and
+    `c₀ < bound`, then `e`'s value never wraps and is `< bound` under any assignment respecting the
+    bounds. -/
+theorem denseNegAffineJustified_sound (bound : Nat) (bnd : VarId → Option Nat) (e : DenseExpr p)
+    (denv : VarId → ZMod p)
+    (hbnd : ∀ v b, bnd v = some b → (denv v).val < b)
+    (h : denseNegAffineJustified bound bnd e = true) : (e.eval denv).val < bound := by
+  unfold denseNegAffineJustified at h
+  cases hL : denseLinearize e with
+  | none => simp [hL] at h
+  | some L =>
+    cases hM : denseLinTermsNegBound bnd L.terms with
+    | none => simp [hL, hM] at h
+    | some M =>
+      simp only [hL, hM, Bool.and_eq_true, decide_eq_true_eq] at h
+      obtain ⟨⟨hMc, hcb⟩, hcp⟩ := h
+      have hNe : NeZero p := ⟨by omega⟩
+      rw [denseLinearize_eval e L hL denv]
+      set S : ℕ := (L.terms.map (fun t => (-t.2).val * (denv t.1).val)).sum with hS
+      have hSle : S ≤ M := denseLinTermsNegBound_le bnd denv L.terms M hM
+        (fun v _ b hb => hbnd v b hb)
+      have hScv : S ≤ L.const.val := le_trans hSle hMc
+      have hneg : ∀ (ts : List (VarId × ZMod p)), (ts.map (fun t => t.2 * denv t.1)).sum
+          = -((ts.map (fun t => (-t.2) * denv t.1)).sum) := by
+        intro ts
+        induction ts with
+        | nil => simp
+        | cons t rest ih => simp only [List.map_cons, List.sum_cons, ih]; ring
+      have hcast : ((L.terms.map (fun t => (-t.2) * denv t.1))).sum = ((S : ℕ) : ZMod p) := by
+        have hc := denseTerms_eval_eq_cast (L.terms.map (fun t => (t.1, -t.2))) denv
+        rw [List.map_map, List.map_map] at hc
+        exact hc
+      have heval : L.eval denv = ((L.const.val - S : ℕ) : ZMod p) := by
+        rw [DenseLinExpr.eval, hneg, hcast, Nat.cast_sub hScv, ZMod.natCast_val, ZMod.cast_id]
+        ring
+      rw [heval, ZMod.val_natCast, Nat.mod_eq_of_lt (by omega)]
+      omega
+
 /-- If payload slot `i` of `bi` linearizes to `Lr` with slot bound `Br` and the interaction never
     violates when active, then `Lr`'s value is `< Br`. -/
 theorem denseFormBoundAt_sound {bs : BusSemantics p} (facts : BusFacts p bs)
@@ -531,8 +595,8 @@ theorem denseByteJustifiedW_sound (bound : Nat) (deep : Bool) (all : List (Dense
   | none =>
     rw [hc] at h
     dsimp only at h
-    rw [Bool.or_eq_true, Bool.or_eq_true, Bool.or_eq_true] at h
-    rcases h with ((h | h) | h) | h
+    rw [Bool.or_eq_true, Bool.or_eq_true, Bool.or_eq_true, Bool.or_eq_true] at h
+    rcases h with (((h | h) | h) | h) | h
     ·
       cases e with
       | var x =>
@@ -566,6 +630,10 @@ theorem denseByteJustifiedW_sound (bound : Nat) (deep : Bool) (all : List (Dense
         (of_decide_eq_true h.1.2)
     ·
       exact denseAffineJustified_sound bound (fun x => denseFindVarBound bs facts (wits x) x) e denv
+        (fun v b hb => denseFindVarBound_sound bs facts (wits v) v b hb denv (hbusW v)) h
+    ·
+      exact denseNegAffineJustified_sound bound (fun x => denseFindVarBound bs facts (wits x) x)
+        e denv
         (fun v b hb => denseFindVarBound_sound bs facts (wits v) v b hb denv (hbusW v)) h
     ·
       exact denseBasisJustified_sound bound (fun x => denseFindVarBound bs facts (wits x) x)

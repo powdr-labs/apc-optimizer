@@ -124,20 +124,20 @@ def denseBSPairsOk (setMult prevMult : ZMod p) (ps : List (DenseBSPair p)) : Boo
 
 /-- Every access's receive precedes its own send in time. -/
 def denseBSGadgetsOk (bs : BusSemantics p) (facts : BusFacts p bs)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (tsField B : Nat) (ps : List (DenseBSPair p)) : Bool :=
-  ps.all (fun q => denseBUGadgetOk bs facts allBis idx tsField B q.2.1 q.1.1)
+  ps.all (fun q => denseBUGadgetOk bs facts allArr idx tsField B q.2.1 q.1.1)
 
 /-- Everything the pairing has to satisfy. -/
 def denseBSChecksOk (bs : BusSemantics p) (facts : BusFacts p bs) (shape : MemoryBusShape)
     (T : DenseTwoRootMap p) (setMult prevMult : ZMod p)
-    (tsField B : Nat) (allBis : List (BusInteraction (DenseExpr p)))
+    (tsField B : Nat) (allArr : Array (BusInteraction (DenseExpr p)))
     (idx : DenseBUIdx)
     (zipped : List (BusInteraction (DenseExpr p) × DenseBUPre p)) (ps : List (Nat × Nat)) : Bool :=
   denseBSCheckPerm zipped.length ps
     && decide (2 ^ 30 < p) && decide (B ≤ 2 ^ 29)
     && denseBSPairsOk setMult prevMult (denseBSAccessesOf (denseBSDefault shape T) zipped.toArray ps)
-    && denseBSGadgetsOk bs facts allBis idx tsField B
+    && denseBSGadgetsOk bs facts allArr idx tsField B
         (denseBSAccessesOf (denseBSDefault shape T) zipped.toArray ps)
     && denseBUSendTsOk tsField B
         ((denseBSAccessesOf (denseBSDefault shape T) zipped.toArray ps).map (fun q => q.2.1))
@@ -146,11 +146,11 @@ def denseBSChecksOk (bs : BusSemantics p) (facts : BusFacts p bs) (shape : Memor
     `(receive, send)` with the gadget, ordered by send timestamp. -/
 def denseBSOrder? (bs : BusSemantics p) (facts : BusFacts p bs) (shape : MemoryBusShape)
     (T : DenseTwoRootMap p) (setMult prevMult : ZMod p)
-    (tsField B : Nat) (allBis : List (BusInteraction (DenseExpr p)))
+    (tsField B : Nat) (allArr : Array (BusInteraction (DenseExpr p)))
     (idx : DenseBUIdx)
     (zipped : List (BusInteraction (DenseExpr p) × DenseBUPre p)) : Option (List (Nat × Nat)) :=
   let ps := denseBSPropose setMult prevMult tsField zipped
-  if denseBSChecksOk bs facts shape T setMult prevMult tsField B allBis idx zipped ps
+  if denseBSChecksOk bs facts shape T setMult prevMult tsField B allArr idx zipped ps
   then some ps else none
 
 /-! ## The consumer sweep

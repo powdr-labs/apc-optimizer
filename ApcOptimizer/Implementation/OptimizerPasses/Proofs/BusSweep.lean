@@ -153,20 +153,20 @@ theorem denseBSCheckPerm_perm (dflt : BusInteraction (DenseExpr p) × DenseBUPre
 /-- Inversion of the certificate: the proposal, the permutation, the field gate, and the checks. -/
 theorem denseBSOrder?_inv {bs : BusSemantics p} {facts : BusFacts p bs} {shape : MemoryBusShape}
     {T : DenseTwoRootMap p} {setMult prevMult : ZMod p} {tsField B : Nat}
-    {allBis : List (BusInteraction (DenseExpr p))} {idx : DenseBUIdx}
+    {allArr : Array (BusInteraction (DenseExpr p))} {idx : DenseBUIdx}
     {zipped : List (BusInteraction (DenseExpr p) × DenseBUPre p)} {ps : List (Nat × Nat)}
-    (h : denseBSOrder? bs facts shape T setMult prevMult tsField B allBis idx zipped = some ps) :
+    (h : denseBSOrder? bs facts shape T setMult prevMult tsField B allArr idx zipped = some ps) :
     denseBSCheckPerm zipped.length ps = true ∧ 2 ^ 30 < p ∧ B ≤ 2 ^ 29 ∧
       denseBSPairsOk setMult prevMult
         (denseBSAccessesOf (denseBSDefault shape T) zipped.toArray ps) = true ∧
-      denseBSGadgetsOk bs facts allBis idx tsField B
+      denseBSGadgetsOk bs facts allArr idx tsField B
         (denseBSAccessesOf (denseBSDefault shape T) zipped.toArray ps) = true ∧
       denseBUSendTsOk tsField B
         ((denseBSAccessesOf (denseBSDefault shape T) zipped.toArray ps).map
           (fun q => q.2.1)) = true := by
   unfold denseBSOrder? at h
   simp only at h
-  by_cases hc : denseBSChecksOk bs facts shape T setMult prevMult tsField B allBis idx zipped
+  by_cases hc : denseBSChecksOk bs facts shape T setMult prevMult tsField B allArr idx zipped
       (denseBSPropose setMult prevMult tsField zipped) = true
   · rw [if_pos hc] at h
     obtain rfl : denseBSPropose setMult prevMult tsField zipped = ps := by simpa using h
@@ -187,7 +187,7 @@ theorem denseBSOrder?_admissibleMemoryBus (bs : BusSemantics p) (facts : BusFact
     (tsField B : Nat) (htsf : facts.memTsField busId = some (tsField, B))
     (T : DenseTwoRootMap p) (ps : List (Nat × Nat)) (idx : DenseBUIdx)
     (hord : denseBSOrder? bs facts shape T (denseSetNewMult denseZModOps shape)
-        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions idx
+        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions.toArray idx
         ((d.busInteractions.filter (fun bi => bi.busId = busId)).map
           (fun bi => (bi, denseBUPrep shape T bi))) = some ps)
     (denv : VarId → ZMod p) (hadm : d.admissible bs denv) (hsat : d.satisfies bs denv) :
@@ -338,10 +338,10 @@ theorem denseBSCanon_perm (shape : MemoryBusShape) (T : DenseTwoRootMap p)
 /-- Hence its entries are interactions of `d`. -/
 theorem denseBSCanon_mem (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) (busId : Nat) (shape : MemoryBusShape) (T : DenseTwoRootMap p)
-    (ps : List (Nat × Nat)) {tsField B : Nat} {allBis : List (BusInteraction (DenseExpr p))}
+    (ps : List (Nat × Nat)) {tsField B : Nat} {allArr : Array (BusInteraction (DenseExpr p))}
     {idx : DenseBUIdx}
     (hord : denseBSOrder? bs facts shape T (denseSetNewMult denseZModOps shape)
-        (denseGetPreviousMult denseZModOps shape) tsField B allBis idx
+        (denseGetPreviousMult denseZModOps shape) tsField B allArr idx
         ((d.busInteractions.filter (fun bi => bi.busId = busId)).map
           (fun bi => (bi, denseBUPrep shape T bi))) = some ps) :
     ∀ x ∈ denseBSCanon shape T (d.busInteractions.filter (fun bi => bi.busId = busId)) ps,

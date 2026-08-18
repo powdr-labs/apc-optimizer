@@ -874,11 +874,11 @@ theorem denseBUAnyBound_sound (bs : BusSemantics p) (facts : BusFacts p bs)
 /-- The indexed scan is sound: each consulted position is re-verified on its own singleton, so a
     hit bounds the variable under any satisfying assignment regardless of the index's content. -/
 theorem denseBUIdxScan_sound (bs : BusSemantics p) (facts : BusFacts p bs)
-    (d : DenseConstraintSystem p) (allBis : List (BusInteraction (DenseExpr p)))
-    (hall : ∀ bi ∈ allBis, bi ∈ d.busInteractions) (v : VarId)
+    (d : DenseConstraintSystem p) (allArr : Array (BusInteraction (DenseExpr p)))
+    (hall : ∀ bi ∈ allArr, bi ∈ d.busInteractions) (v : VarId)
     (denv : VarId → ZMod p) (hsat : d.satisfies bs denv) :
     ∀ (positions : List Nat) (w : Nat),
-      denseBUIdxScan bs facts allBis v positions = some w → (denv v).val < w
+      denseBUIdxScan bs facts allArr v positions = some w → (denv v).val < w
   | [], w, h => by simp [denseBUIdxScan] at h
   | i :: rest, w, h => by
       rw [denseBUIdxScan] at h
@@ -888,18 +888,18 @@ theorem denseBUIdxScan_sound (bs : BusSemantics p) (facts : BusFacts p bs)
         · rename_i w' hw
           obtain rfl : w' = w := Option.some.inj h
           have hmem : bi ∈ d.busInteractions :=
-            hall bi (List.mem_of_getElem? hbi)
+            hall bi (Array.mem_of_getElem? hbi)
           exact denseBUAnyBound_sound bs facts d [bi]
             (fun b hb => by rwa [List.mem_singleton.mp hb]) v w' hw denv hsat
-        · exact denseBUIdxScan_sound bs facts d allBis hall v denv hsat rest w h
-      · exact denseBUIdxScan_sound bs facts d allBis hall v denv hsat rest w h
+        · exact denseBUIdxScan_sound bs facts d allArr hall v denv hsat rest w h
+      · exact denseBUIdxScan_sound bs facts d allArr hall v denv hsat rest w h
 
 /-- The per-term certificates: the certified pairs are the terms, each with a sound bound. -/
 theorem denseBUTermCerts_sound (bs : BusSemantics p) (facts : BusFacts p bs)
-    (d : DenseConstraintSystem p) (allBis : List (BusInteraction (DenseExpr p)))
-    (hall : ∀ bi ∈ allBis, bi ∈ d.busInteractions) (idx : DenseBUIdx) :
+    (d : DenseConstraintSystem p) (allArr : Array (BusInteraction (DenseExpr p)))
+    (hall : ∀ bi ∈ allArr, bi ∈ d.busInteractions) (idx : DenseBUIdx) :
     ∀ (terms : List (VarId × ZMod p)) (certs : List (VarId × ZMod p × Nat)),
-      denseBUTermCerts bs facts allBis idx terms = some certs →
+      denseBUTermCerts bs facts allArr idx terms = some certs →
       certs.map (fun c => (c.1, c.2.1)) = terms ∧
       ∀ (denv : VarId → ZMod p), d.satisfies bs denv →
         ∀ c ∈ certs, (denv c.1).val < c.2.2
@@ -908,20 +908,20 @@ theorem denseBUTermCerts_sound (bs : BusSemantics p) (facts : BusFacts p bs)
       rw [← h]
       exact ⟨rfl, by intro denv _ c hc; simp at hc⟩
   | (v, coeff) :: rest, certs, h => by
-      cases hw : denseBUIdxScan bs facts allBis v (idx.bounds.getD v []) with
+      cases hw : denseBUIdxScan bs facts allArr v (idx.bounds.getD v []) with
       | none => simp [denseBUTermCerts, hw] at h
       | some w =>
-          cases hrec : denseBUTermCerts bs facts allBis idx rest with
+          cases hrec : denseBUTermCerts bs facts allArr idx rest with
           | none => simp [denseBUTermCerts, hw, hrec] at h
           | some cs =>
               simp only [denseBUTermCerts, hw, hrec, Option.some.injEq] at h
               obtain ⟨hcorr, hbnd⟩ :=
-                denseBUTermCerts_sound bs facts d allBis hall idx rest cs hrec
+                denseBUTermCerts_sound bs facts d allArr hall idx rest cs hrec
               rw [← h]
               refine ⟨by simp [hcorr], ?_⟩
               intro denv hsat c hc
               rcases List.mem_cons.mp hc with rfl | hc'
-              · exact denseBUIdxScan_sound bs facts d allBis hall v denv hsat _ w hw
+              · exact denseBUIdxScan_sound bs facts d allArr hall v denv hsat _ w hw
               · exact hbnd denv hsat c hc'
 
 /-- The variable-limb certificate is sound: with `N` evaluating to `a − x` and `x` bounded
@@ -929,17 +929,17 @@ theorem denseBUTermCerts_sound (bs : BusSemantics p) (facts : BusFacts p bs)
 theorem denseBUGadgetCore_sound (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) (idx : DenseBUIdx) (B : Nat)
     (N : DenseLinExpr p)
-    (h : denseBUGadgetCore bs facts d.busInteractions idx B N = true)
+    (h : denseBUGadgetCore bs facts d.busInteractions.toArray idx B N = true)
     (denv : VarId → ZMod p) (hsat : d.satisfies bs denv)
     (a x : ZMod p) (hax : N.eval denv = a - x) (hx : x.val < B) : x.val < a.val := by
-  cases hcerts : denseBUTermCerts bs facts d.busInteractions idx N.terms with
+  cases hcerts : denseBUTermCerts bs facts d.busInteractions.toArray idx N.terms with
   | none => simp [denseBUGadgetCore, hcerts] at h
   | some certs =>
   simp only [denseBUGadgetCore, hcerts, Bool.and_eq_true, decide_eq_true_eq] at h
   obtain ⟨hc0, htot⟩ := h
   haveI : NeZero p := ⟨by omega⟩
-  obtain ⟨hcorr, hbnd⟩ := denseBUTermCerts_sound bs facts d d.busInteractions
-    (fun _ hb => hb) idx N.terms certs hcerts
+  obtain ⟨hcorr, hbnd⟩ := denseBUTermCerts_sound bs facts d d.busInteractions.toArray
+    (fun _ hb => by simpa using hb) idx N.terms certs hcerts
   set triples : List (ℕ × ℕ × ZMod p) :=
     certs.map (fun c => (c.2.1.val, c.2.2, denv c.1)) with htriples
   have hterm_sum : (triples.map fun t => (t.1 : ZMod p) * t.2.2).sum
@@ -969,11 +969,11 @@ theorem denseBUGadgetCore_sound (bs : BusSemantics p) (facts : BusFacts p bs)
 theorem denseBUGadgetXRem_sound (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) (idx : DenseBUIdx) (B : Nat)
     (N LX : DenseLinExpr p) (k : ZMod p) (bX : Nat)
-    (h : denseBUGadgetXRem bs facts d.busInteractions idx B N LX k bX = true)
+    (h : denseBUGadgetXRem bs facts d.busInteractions.toArray idx B N LX k bX = true)
     (denv : VarId → ZMod p) (hsat : d.satisfies bs denv)
     (X : ZMod p) (hX : LX.eval denv = X) (hXb : X.val < bX)
     (a x : ZMod p) (hax : N.eval denv = a - x) (hx : x.val < B) : x.val < a.val := by
-  cases hcerts : denseBUTermCerts bs facts d.busInteractions idx
+  cases hcerts : denseBUTermCerts bs facts d.busInteractions.toArray idx
       ((N.add (LX.scale (-k))).norm).terms with
   | none => simp [denseBUGadgetXRem, hcerts] at h
   | some certs =>
@@ -981,8 +981,8 @@ theorem denseBUGadgetXRem_sound (bs : BusSemantics p) (facts : BusFacts p bs)
   obtain ⟨hc0, htot⟩ := h
   set Rem := (N.add (LX.scale (-k))).norm with hRem
   haveI : NeZero p := ⟨by omega⟩
-  obtain ⟨hcorr, hbnd⟩ := denseBUTermCerts_sound bs facts d d.busInteractions
-    (fun _ hb => hb) idx Rem.terms certs hcerts
+  obtain ⟨hcorr, hbnd⟩ := denseBUTermCerts_sound bs facts d d.busInteractions.toArray
+    (fun _ hb => by simpa using hb) idx Rem.terms certs hcerts
   set triples : List (ℕ × ℕ × ZMod p) :=
     (k.val, bX, X) :: certs.map (fun c => (c.2.1.val, c.2.2, denv c.1)) with htriples
   have hterm_sum : ((certs.map (fun c => (c.2.1.val, c.2.2, denv c.1))).map
@@ -1025,7 +1025,7 @@ theorem denseBUGadgetXSlot_sound (bs : BusSemantics p) (facts : BusFacts p bs)
     (N : DenseLinExpr p)
     (bi : BusInteraction (DenseExpr p)) (hbi : bi ∈ d.busInteractions)
     (c : ZMod p) (hmc : denseMultConst bi = some c) (hcne : c ≠ 0) (slot : Nat)
-    (h : denseBUGadgetXSlot bs facts d.busInteractions idx B N bi c slot = true)
+    (h : denseBUGadgetXSlot bs facts d.busInteractions.toArray idx B N bi c slot = true)
     (denv : VarId → ZMod p) (hsat : d.satisfies bs denv)
     (a x : ZMod p) (hax : N.eval denv = a - x) (hx : x.val < B) : x.val < a.val := by
   rw [denseBUGadgetXSlot] at h
@@ -1066,7 +1066,7 @@ theorem denseBUGadgetXSlot_sound (bs : BusSemantics p) (facts : BusFacts p bs)
 theorem denseBUGadgetX_sound (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) (idx : DenseBUIdx) (B : Nat)
     (N : DenseLinExpr p)
-    (h : denseBUGadgetX bs facts d.busInteractions idx B N = true)
+    (h : denseBUGadgetX bs facts d.busInteractions.toArray idx B N = true)
     (denv : VarId → ZMod p) (hsat : d.satisfies bs denv)
     (a x : ZMod p) (hax : N.eval denv = a - x) (hx : x.val < B) : x.val < a.val := by
   rw [denseBUGadgetX, List.any_eq_true] at h
@@ -1079,7 +1079,8 @@ theorem denseBUGadgetX_sound (bs : BusSemantics p) (facts : BusFacts p bs)
       intro hb
       rw [Bool.and_eq_true, decide_eq_true_eq] at hb
       obtain ⟨hcne, hslot⟩ := hb
-      exact denseBUGadgetXSlot_sound bs facts d idx B N bi (List.mem_of_getElem? hbi)
+      exact denseBUGadgetXSlot_sound bs facts d idx B N bi
+        (by simpa using Array.mem_of_getElem? hbi)
         c hmc hcne is.2 hslot denv hsat a x hax hx
     case _ => intro hb; exact absurd hb (by simp)
   case _ => intro hb; exact absurd hb (by simp)
@@ -1089,7 +1090,7 @@ theorem denseBUGadgetX_sound (bs : BusSemantics p) (facts : BusFacts p bs)
 theorem denseBUGadgetOk_sound (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) (idx : DenseBUIdx) (tsField B : Nat)
     (S R : BusInteraction (DenseExpr p))
-    (h : denseBUGadgetOk bs facts d.busInteractions idx tsField B S R = true)
+    (h : denseBUGadgetOk bs facts d.busInteractions.toArray idx tsField B S R = true)
     (denv : VarId → ZMod p) (hsat : d.satisfies bs denv)
     (hx : tsSlotVal tsField (denseBIEval R denv) < B) :
     tsSlotVal tsField (denseBIEval R denv) < tsSlotVal tsField (denseBIEval S denv) := by
@@ -1181,7 +1182,7 @@ theorem denseBUGroupPairs?_sound (bs : BusSemantics p) (facts : BusFacts p bs)
     (pos : Nat) (sends recvs : List (BusInteraction (DenseExpr p)))
     (idx : DenseBUIdx)
     (hgrp : denseBUGroupPairs? bs facts (denseBUWits d) (denseSetNewMult denseZModOps shape)
-        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions idx
+        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions.toArray idx
         ((d.busInteractions.filter (fun bi => bi.busId = busId)).map
           (fun bi => (bi, denseBUPrep shape T bi))) pos = some (sends, recvs))
     (denv : VarId → ZMod p) (hadm : d.admissible bs denv) (hsat : d.satisfies bs denv) :
@@ -1424,7 +1425,7 @@ theorem denseBUEqs_mem (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseC
       facts.memTsField busId = some (tsField, B) ∧
       denseBUGroupPairs? bs facts
         (denseBUWits d) (denseSetNewMult denseZModOps shape)
-        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions
+        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions.toArray
         (denseBUBuildIdx bs facts d.busInteractions)
         ((d.busInteractions.filter (fun bi => bi.busId = busId)).map
           (fun bi => (bi, denseBUPrep shape
@@ -1443,7 +1444,7 @@ theorem denseBUEqs_mem (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseC
             | some (tsField, B) =>
               denseBUForBus bs facts denseZModOps
                 (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
-                (denseBUWits d) sl.2.1 tsField B d.busInteractions
+                (denseBUWits d) sl.2.1 tsField B d.busInteractions.toArray
                 (denseBUBuildIdx bs facts d.busInteractions) sl.2.2
             | none => [])).flatten from rfl,
       List.mem_flatten] at hc
@@ -1460,7 +1461,7 @@ theorem denseBUEqs_mem (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseC
         obtain ⟨pos, -, hcp⟩ := hcl
         cases hgp : denseBUGroupPairs? bs facts (denseBUWits d)
             (denseSetNewMult denseZModOps e.2.1) (denseGetPreviousMult denseZModOps e.2.1)
-            tsField B d.busInteractions (denseBUBuildIdx bs facts d.busInteractions)
+            tsField B d.busInteractions.toArray (denseBUBuildIdx bs facts d.busInteractions)
             (e.2.2.map (fun bi => (bi, denseBUPrep e.2.1
               (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d) bi))) pos with
         | none => rw [hgp] at hcp; simp at hcp
@@ -1492,7 +1493,7 @@ private theorem denseBUGroupPairs?_mem_bis {bs : BusSemantics p} {facts : BusFac
     {busId tsField B pos : Nat} {sends recvs : List (BusInteraction (DenseExpr p))}
     (idx : DenseBUIdx)
     (hgrp : denseBUGroupPairs? bs facts (denseBUWits d) (denseSetNewMult denseZModOps shape)
-        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions idx
+        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions.toArray idx
         ((d.busInteractions.filter (fun bi => bi.busId = busId)).map
           (fun bi => (bi, denseBUPrep shape T bi))) pos = some (sends, recvs)) :
     (∀ S ∈ sends, S ∈ d.busInteractions) ∧ (∀ R ∈ recvs, R ∈ d.busInteractions) := by

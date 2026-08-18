@@ -421,12 +421,12 @@ theorem denseBFCollect_mem (ops : DenseZModOps p) (nw : DenseNonzeroWits p)
 
 theorem denseBSForBus_mem (bs : BusSemantics p) (facts : BusFacts p bs) (T : DenseTwoRootMap p)
     (nw : DenseNonzeroWits p) (shape : MemoryBusShape) (tsField B : Nat)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (bisL : List (BusInteraction (DenseExpr p))) (c : DenseExpr p)
-    (hc : c ∈ denseBSForBus bs facts denseZModOps T nw shape tsField B allBis idx bisL) :
+    (hc : c ∈ denseBSForBus bs facts denseZModOps T nw shape tsField B allArr idx bisL) :
     ∃ ps,
       denseBSOrder? bs facts shape T (denseSetNewMult denseZModOps shape)
-        (denseGetPreviousMult denseZModOps shape) tsField B allBis idx
+        (denseGetPreviousMult denseZModOps shape) tsField B allArr idx
         (bisL.map (fun bi => (bi, denseBUPrep shape T bi))) = some ps ∧
       ((∃ i j S R,
           denseBSCheckPair denseZModOps nw (denseSetNewMult denseZModOps shape)
@@ -472,7 +472,7 @@ theorem denseBSEqs_mem (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseC
       denseBSOrder? bs facts shape
         (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
         (denseSetNewMult denseZModOps shape)
-        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions
+        (denseGetPreviousMult denseZModOps shape) tsField B d.busInteractions.toArray
         (denseBUBuildIdx bs facts d.busInteractions)
         ((d.busInteractions.filter (fun bi => bi.busId = busId)).map
           (fun bi => (bi, denseBUPrep shape
@@ -520,7 +520,7 @@ theorem denseBSEqs_mem (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseC
             | some (tsField, B) =>
               denseBSForBus bs facts denseZModOps
                 (denseBUTable (denseBUBusLists facts.memShape d.busInteractions) d)
-                (denseBUWits d) sl.2.1 tsField B d.busInteractions
+                (denseBUWits d) sl.2.1 tsField B d.busInteractions.toArray
                 (denseBUBuildIdx bs facts d.busInteractions) sl.2.2
             | none => [])).flatten from rfl,
       List.mem_flatten] at hc
