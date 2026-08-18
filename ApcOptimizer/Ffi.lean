@@ -52,8 +52,7 @@ private def runOpenVm (b : DegreeBound) (input : String) : String :=
   | .error err => errorJson err
   | .ok (_, _, none, _) => errorJson "missing required field `next_free_id`"
   | .ok (cs, busMap, some base, entryPc?) =>
-    let (optimized, ds) :=
-      openVmOptimizer busMap.toBusMap (entryPc?.map (fun n => (n : ZMod babyBear))) b cs
+    let (optimized, ds) := openVmOptimizer busMap.toBusMap entryPc? b cs
     ApcOptimizer.Serialize.serializeResult optimized ds base
 
 /-- Parse a powdr SP1 export, run `sp1Optimizer` with degree bound `b`, and serialize. -/

@@ -182,7 +182,7 @@ private def internSystem (cs : Circuit p) : Circuit p :=
 /-- The pc at which the exported block is entered: a top-level `entry_pc`, else the block
     descriptor's `block.blocks[0].start_pc` (powdr's `ApcWithBusMap` carries the latter; its FFI
     export carries neither unless the caller adds `entry_pc`). It designates the execution bridge's
-    entry record (`memEntryKeyOf`, ENTRY_KEY); absent, that rely is not assumed and `execChain`
+    entry record (`memShapeOf`'s `entryKey`, ENTRY_KEY); absent, that rely is not assumed and `execChain`
     stays inert. -/
 private def parseEntryPc (json : Lean.Json) : Option Nat :=
   match (json.getObjVal? "entry_pc").toOption.bind (·.getNat?.toOption) with

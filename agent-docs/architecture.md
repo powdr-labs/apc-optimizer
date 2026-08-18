@@ -86,7 +86,11 @@ passes usable knowledge:
   window atomicity) — assuming nothing about the interaction list's order (the count form the
   passes consume is `excessBounded`, `Implementation/MemoryBusState.lean`); TS_BOUND
   (`tsBounded`) additionally bounds each
-  message's declared timestamp-slot value (below `2^29` for OpenVM). The `setNew`/`getPrevious`
+  message's declared timestamp-slot value (below `2^29` for OpenVM), and ENTRY_KEY (`entryKeyed`)
+  designates the entering record. `MemoryBusShape` declares which of the three a bus carries and
+  `MemoryBusShape.rely` bundles them, so a VM's `admissible` states one clause per declared bus;
+  `MemoryShapes` (`Implementation/BusFacts.lean`) projects it back into the `BusFacts`
+  obligations. The `setNew`/`getPrevious`
   multiplicities are chosen per bus by `MemoryBusShape.direction` (via `setNewMult`) — `1`/`-1` for
   OpenVM (which sends the new record and receives the previous one), `-1`/`1` for SP1 (which sends the
   previous record and receives the new one). These are completeness-only assumptions about real

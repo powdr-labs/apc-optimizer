@@ -69,6 +69,17 @@ theorem admissibleMemoryBusM_perm (shape : MemoryBusShape)
     (and_congr (by rw [h.length_eq]) (forall_congr' fun addr => ?_))
   rw [busState_perm (h.filter _)]
 
+/-- The whole per-bus rely is invariant under reordering the interaction list. -/
+theorem MemoryBusShape.rely_perm (shape : MemoryBusShape)
+    {L L' : List (BusInteraction (ZMod p))} (h : L.Perm L') :
+    shape.rely L ↔ shape.rely L' := by
+  unfold MemoryBusShape.rely
+  refine and_congr (admissibleMemoryBusM_perm shape h)
+    (and_congr (forall_congr' fun slot => forall_congr' fun bound => imp_congr Iff.rfl ?_)
+      (forall_congr' fun slot => forall_congr' fun key => imp_congr Iff.rfl ?_))
+  · exact tsBounded_perm slot bound h
+  · exact entryKeyed_perm shape slot key h
+
 /-- One cons step of the net bus state. -/
 theorem busState_cons (m : BusInteraction (ZMod p)) (T : List (BusInteraction (ZMod p)))
     (key : BusMessage p) :

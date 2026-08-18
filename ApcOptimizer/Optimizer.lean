@@ -29,9 +29,9 @@ namespace ApcOptimizer.OpenVM
 
 /-- Optimizer specialized for the OpenVM semantics. `entryPc` is the block's entry pc when the
     caller knows it (powdr's `block.blocks[0].start_pc`), which declares the execution bridge's
-    entry record (ENTRY_KEY, see `memEntryKeyOf`); `none` assumes nothing. -/
+    entry record (ENTRY_KEY, see `memShapeOf`); `none` assumes nothing. -/
 def openVmOptimizer (busMap : BusMap := defaultBusMap)
-    (entryPc : Option (ZMod babyBear) := none) (b : DegreeBound := defaultDegreeBound) :
+    (entryPc : Option Nat := none) (b : DegreeBound := defaultDegreeBound) :
     Optimizer babyBear :=
   optimizerWithBusFacts b (openVmFacts babyBear busMap entryPc)
 
@@ -41,7 +41,7 @@ namespace ApcOptimizer.SP1
 
 /-- Optimizer specialized for the SP1 semantics. `entryPc` is the block's entry pc when the
     caller knows it (powdr's `block.blocks[0].start_pc`), which declares the execution bridge's
-    entry record (ENTRY_KEY, see `memEntryKeyOf`); `none` assumes nothing. -/
+    entry record (ENTRY_KEY, see `memShapeOf`); `none` assumes nothing. -/
 def sp1Optimizer (busMap : BusMap := defaultBusMap) (entryPc : Option Nat := none)
     (b : DegreeBound := defaultDegreeBound) :
     Optimizer koalaBear :=
@@ -67,7 +67,7 @@ theorem simpleOptimizer_maintainsCorrectness (bs : BusSemantics p) [DecidablePre
 namespace ApcOptimizer.OpenVM
 
 theorem openVmOptimizer_maintainsCorrectness (busMap : BusMap)
-    (entryPc : Option (ZMod babyBear)) (b : DegreeBound) :
+    (entryPc : Option Nat) (b : DegreeBound) :
     Optimizer.isCorrect (openVmOptimizer busMap entryPc b)
       (openVmBusSemantics babyBear busMap entryPc) b :=
   optimizerWithBusFacts_maintainsCorrectness (openVmBusSemantics babyBear busMap entryPc) b

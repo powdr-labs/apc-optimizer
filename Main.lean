@@ -231,7 +231,7 @@ def cmdReportImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
     optimizer is eta-expanded so its default `busMap` argument stays open. -/
 def openVmBackend : VmBackend babyBear OpenVmBusType where
   parse := parseOpenVm
-  optimize := fun bm epc => openVmOptimizer bm (epc.map (fun n => (n : ZMod babyBear)))
+  optimize := fun bm epc => openVmOptimizer bm epc
   degreeBound := defaultDegreeBound
 
 /-- The SP1 backend: KoalaBear field, SP1 bus semantics, `sp1Optimizer`. -/
@@ -383,10 +383,9 @@ def cmdProfile (vm fileName : String) (verbose : Bool := false) : IO Unit := do
       (ApcOptimizer.SP1.sp1Facts ApcOptimizer.SP1.koalaBear busMap entryPc?) verbose
   else
     let (cs, busMap, entryPc?) ← parseFileWith parseOpenVm fileName
-    let entryPc := entryPc?.map (fun n => (n : ZMod babyBear))
     profileRun defaultDegreeBound fileName cs
-      (openVmBusSemantics babyBear busMap entryPc)
-      (openVmFacts babyBear busMap entryPc) verbose
+      (openVmBusSemantics babyBear busMap entryPc?)
+      (openVmFacts babyBear busMap entryPc?) verbose
 
 def usage : String :=
   "usage: apc-optimizer run [vm] <file.json[.gz]>\n" ++

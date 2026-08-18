@@ -30,5 +30,6 @@ ApcOptimizer.Dense.denseNrmGo_var
 # interaction list). Consumed by auditors, not by the proof.
 tsBounded_perm
 entryKeyed_perm
+MemoryBusShape.rely_perm
 ApcOptimizer.OpenVM.openVmAdmissible_perm
 ApcOptimizer.SP1.sp1Admissible_perm

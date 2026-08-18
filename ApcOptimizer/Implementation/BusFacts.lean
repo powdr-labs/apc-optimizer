@@ -1,4 +1,5 @@
 import ApcOptimizer.Implementation.MemoryBusState
+import ApcOptimizer.Implementation.MemoryBusDrop
 
 set_option autoImplicit false
 
@@ -297,3 +298,139 @@ def BusFacts.trivial (bs : BusSemantics p) [DecidablePred bs.accepts] : BusFacts
   byteBoolSound := by intro _ _ h; exact absurd h (by simp)
   rangeCheckAt _ _ := none
   rangeCheckAt_sound := by intro _ _ _ _ h; exact absurd h (by simp)
+
+/-! ## Discharging the memory relies from a VM's `admissible`
+
+Both VMs state `MemoryBusShape.rely` once per declared bus, so their `memShape`, `memTsField` and
+`memEntryKey` obligations are the same three projections of it; these lemmas do that work once, and
+a VM's facts supply only its shape lookup plus `MemoryShapes.stateful`. -/
+
+/-- A VM's shape lookup, together with what its `admissible` supplies about it. -/
+structure MemoryShapes (bs : BusSemantics p) where
+  /-- The declared shape of each bus, as `BusFacts.memShape` wants it. -/
+  shape : Nat → Option MemoryBusShape
+  /-- Every bus with a declared shape is stateful. -/
+  stateful : ∀ (busId : Nat) (s : MemoryBusShape), shape busId = some s → bs.isStateful busId = true
+  /-- `admissible` states each declared bus's rely on that bus's messages. -/
+  rely : ∀ (msgs : List (BusInteraction (ZMod p))), bs.admissible msgs →
+    ∀ (busId : Nat) (s : MemoryBusShape), shape busId = some s →
+      s.rely (msgs.filter (fun m => m.busId = busId))
+
+variable {bs : BusSemantics p}
+
+/-- The TS_BOUND declaration a shape carries, as `BusFacts.memTsField` wants it. -/
+def MemoryShapes.tsField (ms : MemoryShapes bs) (busId : Nat) : Option (Nat × Nat) :=
+  (ms.shape busId).bind (fun s => s.tsField)
+
+/-- The ENTRY_KEY declaration a shape carries, as `BusFacts.memEntryKey` wants it (the shape's
+    modulus-free `Nat` key cast into the field). -/
+def MemoryShapes.entryKey (ms : MemoryShapes bs) (busId : Nat) : Option (Nat × ZMod p) :=
+  (ms.shape busId).bind (fun s => s.entryKey.map (fun sk => (sk.1, (sk.2 : ZMod p))))
+
+/-- On a stateful bus, restricting the active stateful messages to the bus is the same as
+    restricting the bus's messages to the active ones — the form every per-bus rely is stated in. -/
+private theorem filter_active_busId (msgs : List (BusInteraction (ZMod p))) (busId : Nat)
+    (hstateful : bs.isStateful busId = true) :
+    (msgs.filter (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)).filter
+        (fun m => m.busId = busId)
+      = (msgs.filter (fun m => m.busId = busId)).filter (fun m => decide (m.multiplicity ≠ 0)) := by
+  rw [List.filter_filter, List.filter_filter]
+  apply List.filter_congr
+  intro m _
+  by_cases hb : m.busId = busId
+  · rw [hb, hstateful]; simp
+  · simp [hb]
+
+/-- The rely of a declared bus, on that bus's active messages. -/
+private theorem MemoryShapes.rely_active (ms : MemoryShapes bs)
+    {msgs : List (BusInteraction (ZMod p))}
+    (hadm : bs.admissible (msgs.filter
+      (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)))
+    {busId : Nat} {s : MemoryBusShape} (hshape : ms.shape busId = some s) :
+    s.rely ((msgs.filter (fun m => m.busId = busId)).filter
+      (fun m => decide (m.multiplicity ≠ 0))) := by
+  have h := ms.rely _ hadm busId s hshape
+  rwa [filter_active_busId msgs busId (ms.stateful busId s hshape)] at h
+
+/-- `BusFacts.admissible_sound` for a VM stating `MemoryBusShape.rely` per declared bus. -/
+theorem MemoryShapes.excessBounded_of_rely (ms : MemoryShapes bs)
+    (msgs : List (BusInteraction (ZMod p)))
+    (hadm : bs.admissible (msgs.filter
+      (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)))
+    (busId : Nat) (s : MemoryBusShape) (hshape : ms.shape busId = some s) :
+    excessBounded s (↑((msgs.filter (fun m => m.busId = busId)).filter
+      (fun m => decide (m.multiplicity ≠ 0))) : Multiset (BusInteraction (ZMod p))) := by
+  refine excessBounded_of_admissibleMemoryBusM s (b := busId) ?_ (ms.rely_active hadm hshape).1
+  intro m hm
+  simpa using List.of_mem_filter (List.mem_of_mem_filter hm)
+
+/-- `BusFacts.memTsField_sound` for `MemoryShapes.tsField`. -/
+theorem MemoryShapes.tsBounded_of_rely (ms : MemoryShapes bs)
+    (msgs : List (BusInteraction (ZMod p)))
+    (hadm : bs.admissible (msgs.filter
+      (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)))
+    (busId slot bound : Nat) (hfact : ms.tsField busId = some (slot, bound))
+    (m : BusInteraction (ZMod p)) (hm : m ∈ msgs.filter (fun m => m.busId = busId))
+    (hmne : m.multiplicity ≠ 0) : tsSlotVal slot m < bound := by
+  unfold MemoryShapes.tsField at hfact
+  cases hshape : ms.shape busId with
+  | none => rw [hshape] at hfact; simp at hfact
+  | some s =>
+    rw [hshape] at hfact
+    exact (ms.rely_active hadm hshape).2.1 slot bound (by simpa using hfact) m
+      (List.mem_filter.mpr ⟨hm, decide_eq_true hmne⟩)
+
+/-- `BusFacts.memEntryKey_sound` for `MemoryShapes.entryKey`. -/
+theorem MemoryShapes.entryKeyed_of_rely (ms : MemoryShapes bs)
+    (msgs : List (BusInteraction (ZMod p)))
+    (hadm : bs.admissible (msgs.filter
+      (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)))
+    (busId slot : Nat) (key : ZMod p) (s : MemoryBusShape) (hshape : ms.shape busId = some s)
+    (hfact : ms.entryKey busId = some (slot, key)) :
+    entryKeyed s slot key
+      (↑((msgs.filter (fun m => m.busId = busId)).filter
+        (fun m => decide (m.multiplicity ≠ 0))) : Multiset (BusInteraction (ZMod p))) := by
+  unfold MemoryShapes.entryKey at hfact
+  rw [hshape] at hfact
+  obtain ⟨k, hek, rfl⟩ : ∃ k : Nat, s.entryKey = some (slot, k) ∧ (k : ZMod p) = key := by
+    simpa using hfact
+  exact (ms.rely_active hadm hshape).2.2 slot k hek
+
+/-- `BusFacts.admissible_dropPair` for the memory part of a VM's `admissible`: dropping an
+    equal-payload `setNew`/`getPrevious` pair preserves every declared bus's rely. -/
+theorem MemoryShapes.rely_dropPair (ms : MemoryShapes bs)
+    {busId : Nat} {s : MemoryBusShape} (hshape : ms.shape busId = some s)
+    {A B C : List (BusInteraction (ZMod p))} {S R : BusInteraction (ZMod p)}
+    (hSbus : S.busId = busId) (hRbus : R.busId = busId)
+    (hSm : S.multiplicity = s.setNewMult) (hRm : R.multiplicity = -s.setNewMult)
+    (hpay : S.payload = R.payload)
+    (hfull : ∀ (busId' : Nat) (s' : MemoryBusShape), ms.shape busId' = some s' →
+      s'.rely ((A ++ S :: B ++ R :: C).filter (fun m => m.busId = busId')))
+    (busId' : Nat) (s' : MemoryBusShape) (hshape' : ms.shape busId' = some s') :
+    s'.rely ((A ++ B ++ C).filter (fun m => m.busId = busId')) := by
+  have hdrop : (A ++ B ++ C).filter (fun m => m.busId = busId')
+      = A.filter (fun m => m.busId = busId') ++ B.filter (fun m => m.busId = busId')
+        ++ C.filter (fun m => m.busId = busId') := by simp only [List.filter_append]
+  by_cases hbb : busId' = busId
+  · subst busId'
+    obtain rfl : s = s' := Option.some.inj (hshape.symm.trans hshape')
+    obtain ⟨hdisc, hts, hkey⟩ := hfull busId s hshape
+    have hfilt : (A ++ S :: B ++ R :: C).filter (fun m => m.busId = busId)
+        = A.filter (fun m => m.busId = busId) ++ S :: B.filter (fun m => m.busId = busId)
+          ++ R :: C.filter (fun m => m.busId = busId) := by
+      simp only [List.filter_append, List.filter_cons, hSbus, hRbus, decide_true, if_true]
+    rw [hfilt] at hdisc hts hkey
+    rw [hdrop]
+    refine ⟨admissibleMemoryBusM_dropPair s (hSbus.trans hRbus.symm) hSm hRm hpay
+        ((admissibleMemoryBusM_perm s (perm_split_pair _ _ _ S R)).mp hdisc),
+      fun slot bound htf m hm => hts slot bound htf m ?_,
+      fun slot key hek => entryKeyed_dropPair s slot (key : ZMod p) hSm hRm hpay ?_⟩
+    · simp only [List.mem_append, List.mem_cons] at hm ⊢; tauto
+    · rw [coe_split_pair] at hkey; exact hkey slot key hek
+  · -- `S`, `R` are on `busId`, so they drop out of another bus's filter, which is unchanged.
+    have hne : busId ≠ busId' := fun h => hbb h.symm
+    rw [show (A ++ B ++ C).filter (fun m => m.busId = busId')
+        = (A ++ S :: B ++ R :: C).filter (fun m => m.busId = busId') from by
+      simp only [List.filter_append, List.filter_cons, hSbus, hRbus,
+        decide_eq_false hne, Bool.false_eq_true, if_false]]
+    exact hfull busId' s' hshape'

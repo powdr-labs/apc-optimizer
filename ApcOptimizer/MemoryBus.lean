@@ -41,6 +41,9 @@ set_option autoImplicit false
     strengthens window atomicity, which only counts the entering record without saying which one it
     is — see `entryKeyed` for why the message data alone cannot say.
 
+    `MemoryBusShape.rely` bundles the three, keyed off which of them the shape declares; each VM's
+    `admissible` states it once per declared bus.
+
     [1] https://link.springer.com/article/10.1007/BF01185212
 -/
 
@@ -68,6 +71,13 @@ structure MemoryBusShape where
   /-- Which of the matched consecutive `setNew`/`getPrevious` pair is the send and which the
       receive (see `MemoryBusDirection`). -/
   direction : MemoryBusDirection
+  /-- The timestamp payload slot and the bound TS_BOUND asserts on its value (see `tsBounded`), or
+      `none` where the bus declares no bounded timestamp. -/
+  tsField : Option (Nat × Nat) := none
+  /-- The payload slot designating the entering record and the key it carries (see `entryKeyed`),
+      or `none` where the entering record is not designated. The key is a `Nat`, cast into the
+      field, which keeps the shape independent of the modulus. -/
+  entryKey : Option (Nat × Nat) := none
 
 /-- The multiplicity a `setNew` carries on this bus (`1` for `receiveThenSend`, `-1` for
     `sendThenReceive`); the `getPrevious` reading it back carries the negation. -/
@@ -144,3 +154,12 @@ def tsSlotVal (tsField : Nat) (m : BusInteraction (ZMod p)) : Nat :=
     reordering (`tsBounded_perm`). -/
 def tsBounded (tsField bound : Nat) (msgs : List (BusInteraction (ZMod p))) : Prop :=
   ∀ m ∈ msgs, tsSlotVal tsField m < bound
+
+/-- The whole rely a memory-shaped bus carries: the order-free discipline, plus the TS_BOUND and
+    ENTRY_KEY assumptions the shape declares (nothing where it declares none). A VM's
+    `BusSemantics.admissible` states this once per declared bus. -/
+def MemoryBusShape.rely (shape : MemoryBusShape) (M : List (BusInteraction (ZMod p))) : Prop :=
+  admissibleMemoryBusM shape M ∧
+  (∀ slot bound : Nat, shape.tsField = some (slot, bound) → tsBounded slot bound M) ∧
+  (∀ slot key : Nat, shape.entryKey = some (slot, key) →
+    entryKeyed shape slot (key : ZMod p) (↑M : Multiset (BusInteraction (ZMod p))))
