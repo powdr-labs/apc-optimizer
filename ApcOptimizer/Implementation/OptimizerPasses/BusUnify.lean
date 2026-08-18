@@ -394,18 +394,19 @@ def denseBUAnyBound (bs : BusSemantics p) (facts : BusFacts p bs)
   | none => denseBUSlotScan bs facts allBis v
 
 /-- Scan the indexed positions for a bound witness for `v`, re-verifying each candidate on its
-    own (`denseBUAnyBound` on the singleton) — the index stays untrusted. -/
+    own (`denseBUAnyBound` on the singleton) — the index stays untrusted. `allArr` is the full
+    interaction list as an array, so each position is an O(1) lookup. -/
 def denseBUIdxScan (bs : BusSemantics p) (facts : BusFacts p bs)
-    (allBis : List (BusInteraction (DenseExpr p))) (v : VarId) :
+    (allArr : Array (BusInteraction (DenseExpr p))) (v : VarId) :
     (positions : List Nat) → Option Nat
   | [] => none
   | i :: rest =>
-    match allBis[i]? with
+    match allArr[i]? with
     | some bi =>
       match denseBUAnyBound bs facts [bi] v with
       | some w => some w
-      | none => denseBUIdxScan bs facts allBis v rest
-    | none => denseBUIdxScan bs facts allBis v rest
+      | none => denseBUIdxScan bs facts allArr v rest
+    | none => denseBUIdxScan bs facts allArr v rest
 
 /-- The candidate-position index. Untrusted: every consulted entry is re-verified, so a wrong or
     missing entry costs a miss, never soundness. Built once per invocation, replacing
@@ -453,12 +454,12 @@ def denseBUBuildIdx (bs : BusSemantics p) (facts : BusFacts p bs)
 /-- Per-term range certificates for a gadget's limb terms: each variable's witnessed bound,
     found through the position index. -/
 def denseBUTermCerts (bs : BusSemantics p) (facts : BusFacts p bs)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx) :
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx) :
     List (VarId × ZMod p) → Option (List (VarId × ZMod p × Nat))
   | [] => some []
   | (v, coeff) :: rest =>
-    match denseBUIdxScan bs facts allBis v (idx.bounds.getD v []),
-        denseBUTermCerts bs facts allBis idx rest with
+    match denseBUIdxScan bs facts allArr v (idx.bounds.getD v []),
+        denseBUTermCerts bs facts allArr idx rest with
     | some w, some cs => some ((v, coeff, w) :: cs)
     | _, _ => none
 
@@ -467,9 +468,9 @@ def denseBUTermCerts (bs : BusSemantics p) (facts : BusFacts p bs)
     variable, and the no-wrap certificate `c₀ + B + Σ coeffᵢ·(boundᵢ − 1) ≤ p`
     (consumed via `val_lt_of_lessThan_gadget`). -/
 def denseBUGadgetCore (bs : BusSemantics p) (facts : BusFacts p bs)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (B : Nat) (N : DenseLinExpr p) : Bool :=
-  match denseBUTermCerts bs facts allBis idx N.terms with
+  match denseBUTermCerts bs facts allArr idx N.terms with
   | some certs =>
     decide (1 ≤ N.const.val) &&
       decide (N.const.val + B + (certs.map (fun c => c.2.1.val * (c.2.2 - 1))).sum ≤ p)
@@ -479,9 +480,9 @@ def denseBUGadgetCore (bs : BusSemantics p) (facts : BusFacts p bs)
     `k·LX` from `N` leaves `c₀ + Σ coeffᵢ · limbᵢ` with `c₀ ≥ 1` and variable limbs, the no-wrap
     total now also carrying the synthetic limb's `k·(bX − 1)`. -/
 def denseBUGadgetXRem (bs : BusSemantics p) (facts : BusFacts p bs)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (B : Nat) (N LX : DenseLinExpr p) (k : ZMod p) (bX : Nat) : Bool :=
-  match denseBUTermCerts bs facts allBis idx ((N.add (LX.scale (-k))).norm).terms with
+  match denseBUTermCerts bs facts allArr idx ((N.add (LX.scale (-k))).norm).terms with
   | some certs =>
     decide (1 ≤ ((N.add (LX.scale (-k))).norm).const.val) &&
       decide (((N.add (LX.scale (-k))).norm).const.val + B + k.val * (bX - 1)
@@ -496,7 +497,7 @@ def denseBUGadgetXRem (bs : BusSemantics p) (facts : BusFacts p bs)
     `(send_ts − recv_ts − 1 − diff_low)·2⁻¹⁶`, where powdr eliminated the `diff_high` column and
     byte-checks its defining expression instead. -/
 def denseBUGadgetXSlot (bs : BusSemantics p) (facts : BusFacts p bs)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (B : Nat) (N : DenseLinExpr p)
     (bi : BusInteraction (DenseExpr p)) (c : ZMod p) (slot : Nat) : Bool :=
   match facts.slotBound bi.busId c (bi.payload.map DenseExpr.constValue?) slot with
@@ -506,7 +507,7 @@ def denseBUGadgetXSlot (bs : BusSemantics p) (facts : BusFacts p bs)
       match denseLinearize eX with
       | some LX =>
         match N.terms.find? (fun t => !zmodIsZero (LX.coeff t.1)) with
-        | some t0 => denseBUGadgetXRem bs facts allBis idx B N LX (t0.2 * (LX.coeff t0.1)⁻¹) bX
+        | some t0 => denseBUGadgetXRem bs facts allArr idx B N LX (t0.2 * (LX.coeff t0.1)⁻¹) bX
         | none => false
       | none => false
     | none => false
@@ -516,16 +517,16 @@ def denseBUGadgetXSlot (bs : BusSemantics p) (facts : BusFacts p bs)
     bounded slot expression that completes the gadget (`denseBUGadgetXSlot`). Only tried when the
     variable-limb path failed. -/
 def denseBUGadgetX (bs : BusSemantics p) (facts : BusFacts p bs)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (B : Nat) (N : DenseLinExpr p) : Bool :=
   (((N.terms.flatMap (fun t => idx.xcands.getD t.1 [])).foldl
       (fun (acc : Std.HashSet (Nat × Nat) × List (Nat × Nat)) is =>
         if acc.1.contains is then acc else (acc.1.insert is, is :: acc.2))
       (∅, [])).2).any (fun is =>
-    match allBis[is.1]? with
+    match allArr[is.1]? with
     | some bi =>
       match denseMultConst bi with
-      | some c => decide (c ≠ 0) && denseBUGadgetXSlot bs facts allBis idx B N bi c is.2
+      | some c => decide (c ≠ 0) && denseBUGadgetXSlot bs facts allArr idx B N bi c is.2
       | none => false
     | none => false)
 
@@ -535,12 +536,12 @@ def denseBUGadgetX (bs : BusSemantics p) (facts : BusFacts p bs)
     slot *expression* plus checked variables (`denseBUGadgetX`) — and the no-wrap certificate
     `c₀ + B + Σ coeffᵢ·(boundᵢ − 1) ≤ p` (consumed via `val_lt_of_lessThan_gadget`). -/
 def denseBUGadgetOk (bs : BusSemantics p) (facts : BusFacts p bs)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (tsField B : Nat) (S R : BusInteraction (DenseExpr p)) : Bool :=
   match denseBUTsLin tsField S, denseBUTsLin tsField R with
   | some LS, some LR =>
-    denseBUGadgetCore bs facts allBis idx B ((LS.add (LR.scale (-1))).norm) ||
-      denseBUGadgetX bs facts allBis idx B ((LS.add (LR.scale (-1))).norm)
+    denseBUGadgetCore bs facts allArr idx B ((LS.add (LR.scale (-1))).norm) ||
+      denseBUGadgetX bs facts allArr idx B ((LS.add (LR.scale (-1))).norm)
   | _, _ => false
 
 /-! ## The group verifier -/
@@ -551,7 +552,7 @@ def denseBUGadgetOk (bs : BusSemantics p) (facts : BusFacts p bs)
     receives. -/
 def denseBUGroupPairs? (bs : BusSemantics p) (facts : BusFacts p bs) (nw : DenseNonzeroWits p)
     (setMult prevMult : ZMod p) (tsField B : Nat)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (zipped : List (BusInteraction (DenseExpr p) × DenseBUPre p)) (pos : Nat) :
     Option (List (BusInteraction (DenseExpr p)) × List (BusInteraction (DenseExpr p))) :=
   match zipped[pos]? with
@@ -563,7 +564,7 @@ def denseBUGroupPairs? (bs : BusSemantics p) (facts : BusFacts p bs) (nw : Dense
         if decide (2 ≤ sends.length) && decide (sends.length = recvs.length)
             && denseBUSendTsOk tsField B sends
             && (sends.zip recvs).all (fun sr =>
-                denseBUGadgetOk bs facts allBis idx tsField B sr.1 sr.2)
+                denseBUGadgetOk bs facts allArr idx tsField B sr.1 sr.2)
         then some (sends, recvs)
         else none
       | none => none
@@ -649,13 +650,13 @@ def denseBUTwoRootMap (avars : Std.HashSet VarId) (cs : List (DenseExpr p)) : De
     group, emit the interior copy equalities. -/
 def denseBUForBus (bs : BusSemantics p) (facts : BusFacts p bs) (ops : DenseZModOps p)
     (T : DenseTwoRootMap p) (nw : DenseNonzeroWits p) (shape : MemoryBusShape) (tsField B : Nat)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (bisL : List (BusInteraction (DenseExpr p))) : List (DenseExpr p) :=
   let setMult := denseSetNewMult ops shape
   let prevMult := denseGetPreviousMult ops shape
   let zipped := bisL.map (fun bi => (bi, denseBUPrep shape T bi))
   (denseBUProps tsField B setMult zipped).flatMap (fun pos =>
-    match denseBUGroupPairs? bs facts nw setMult prevMult tsField B allBis idx zipped pos with
+    match denseBUGroupPairs? bs facts nw setMult prevMult tsField B allArr idx zipped pos with
     | some (sends, recvs) => denseBUGroupEqs shape sends recvs
     | none => [])
 
@@ -681,7 +682,8 @@ def denseBUEqsOf (bs : BusSemantics p) (facts : BusFacts p bs)
   (busLists.map (fun sl =>
     match facts.memTsField sl.1 with
     | some (tsField, B) =>
-      denseBUForBus bs facts denseZModOps T nw sl.2.1 tsField B d.busInteractions idx sl.2.2
+      denseBUForBus bs facts denseZModOps T nw sl.2.1 tsField B d.busInteractions.toArray idx
+        sl.2.2
     | none => [])).flatten
 
 def denseBUEqs (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :

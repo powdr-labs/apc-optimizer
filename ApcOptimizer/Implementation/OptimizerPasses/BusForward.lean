@@ -292,12 +292,12 @@ rearranged list: the consecutive-match sweep's payload copies (`denseBSCollect`,
     interactions do not certify contributes nothing. -/
 def denseBSForBus (bs : BusSemantics p) (facts : BusFacts p bs) (ops : DenseZModOps p)
     (T : DenseTwoRootMap p) (nw : DenseNonzeroWits p) (shape : MemoryBusShape) (tsField B : Nat)
-    (allBis : List (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
+    (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (bisL : List (BusInteraction (DenseExpr p))) : List (DenseExpr p) :=
   let setMult := denseSetNewMult ops shape
   let prevMult := denseGetPreviousMult ops shape
   let zipped := bisL.map (fun bi => (bi, denseBUPrep shape T bi))
-  match denseBSOrder? bs facts shape T setMult prevMult tsField B allBis idx zipped with
+  match denseBSOrder? bs facts shape T setMult prevMult tsField B allArr idx zipped with
   | none => []
   | some ps =>
     let canon := denseBSCanon shape T bisL ps
@@ -321,7 +321,8 @@ def denseBSEqsOf (bs : BusSemantics p) (facts : BusFacts p bs)
   (busLists.map (fun sl =>
     match facts.memTsField sl.1 with
     | some (tsField, B) =>
-      denseBSForBus bs facts denseZModOps T nw sl.2.1 tsField B d.busInteractions idx sl.2.2
+      denseBSForBus bs facts denseZModOps T nw sl.2.1 tsField B d.busInteractions.toArray idx
+        sl.2.2
     | none => [])).flatten
 
 def denseBSEqs (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
