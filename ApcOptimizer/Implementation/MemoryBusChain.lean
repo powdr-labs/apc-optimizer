@@ -1,12 +1,12 @@
-import ApcOptimizer.MemoryBus
+import ApcOptimizer.Implementation.MemoryBusState
 
 set_option autoImplicit false
 
 /-! # The forced chain of a designated-entry bus
 
-Consequences of `entryKeyed` (`ApcOptimizer/MemoryBus.lean`) for a bus whose records form a
+Consequences of ENTRY_KEY, in its count form (`excessKeyed`), for a bus whose records form a
 *chain*: an execution bridge, where access `i` receives the CPU state `(pc i, ts i)` and sends
-`(pc (i+1), ts i + δ)`. `chain_pinned` is the combinatorial core and `entryKeyed_chain_copies` the
+`(pc (i+1), ts i + δ)`. `chain_pinned` is the combinatorial core and `excessKeyed_chain_copies` the
 pass-facing package: presenting one address group as `n` accesses whose key slots chain (`send i`
 carries `recv (i+1)`'s key) with pairwise distinct receive keys, every receive but the entry one
 copies the previous send's payload.
@@ -14,7 +14,7 @@ copies the previous send's payload.
 Two facts do the work, and neither trusts the interaction order:
 
 * ENTRY_KEY makes every non-entry receive *matched* — its payload is some send's payload
-  (`payload_matched_of_entryKeyed`, pure counting; the excess-cardinality half of the discipline
+  (`payload_matched_of_excessKeyed`, pure counting; the excess-cardinality half of the discipline
   is not even needed).
 * the matching is strictly *decreasing* in receive timestamps (a receive's own send is later,
   `hlt`), so it cannot cycle. That is what excludes the exit send — whose key slot is a jump target
@@ -27,9 +27,9 @@ variable {p : ℕ}
 /-- With the entry record designated, every *other* receive is matched: its payload is the payload
     of a send at the same address. Counting only — the excess multiset holds entry-keyed payloads,
     so a receive keyed otherwise cannot be in it, hence the sends cover it. -/
-theorem payload_matched_of_entryKeyed (shape : MemoryBusShape)
+theorem payload_matched_of_excessKeyed (shape : MemoryBusShape)
     {M : Multiset (BusInteraction (ZMod p))} {addr : List (Option (ZMod p))}
-    {slot : Nat} {key : ZMod p} (hkey : entryKeyed shape slot key M)
+    {slot : Nat} {key : ZMod p} (hkey : excessKeyed shape slot key M)
     {R : BusInteraction (ZMod p)} (hR : R ∈ recvsAt shape addr M)
     (hne : R.payload[slot]? ≠ some key) :
     ∃ S ∈ sendsAt shape addr M, S.payload = R.payload := by
@@ -124,13 +124,13 @@ theorem chain_pinned {n : ℕ} (send recv : Fin n → BusInteraction (ZMod p)) (
   have h2 : tsVal (recv i) < tsVal (send i) := hlt i
   omega
 
-/-- The pass-facing package: an order-free `entryKeyed` group presented as `n` chained accesses
+/-- The pass-facing package: an order-free `excessKeyed` group presented as `n` chained accesses
     forces every non-entry receive to copy the previous send's payload. `hentry` is what the pass
     checks per receive — its key slot is not the entry key — and `hchain`/`hdistinct` are the
     syntactic chain conditions on the key slot. -/
-theorem entryKeyed_chain_copies {n : ℕ} (shape : MemoryBusShape)
+theorem excessKeyed_chain_copies {n : ℕ} (shape : MemoryBusShape)
     (M : Multiset (BusInteraction (ZMod p))) (addr : List (Option (ZMod p)))
-    (slot : Nat) (key : ZMod p) (hkey : entryKeyed shape slot key M)
+    (slot : Nat) (key : ZMod p) (hkey : excessKeyed shape slot key M)
     (send recv : Fin n → BusInteraction (ZMod p))
     (hsend : sendsAt shape addr M = Multiset.map send ↑(List.finRange n))
     (hrecv : recvsAt shape addr M = Multiset.map recv ↑(List.finRange n))
@@ -149,7 +149,7 @@ theorem entryKeyed_chain_copies {n : ℕ} (shape : MemoryBusShape)
   have hmem : recv j ∈ recvsAt shape addr M := by
     rw [hrecv]
     exact Multiset.mem_map.mpr ⟨j, by rw [Multiset.mem_coe]; exact List.mem_finRange j, rfl⟩
-  obtain ⟨S, hS, hSp⟩ := payload_matched_of_entryKeyed shape hkey hmem (hentry j hj)
+  obtain ⟨S, hS, hSp⟩ := payload_matched_of_excessKeyed shape hkey hmem (hentry j hj)
   rw [hsend] at hS
   obtain ⟨i, -, rfl⟩ := Multiset.mem_map.mp hS
   exact ⟨i, hSp.symm⟩

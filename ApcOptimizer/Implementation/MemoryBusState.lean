@@ -17,6 +17,31 @@ VM rely, but derived on a certified canonical access order
 
 variable {p : ℕ}
 
+/-- The `getPrevious` messages of `M` at evaluated address `addr`. -/
+def recvsAt (shape : MemoryBusShape) (addr : List (Option (ZMod p)))
+    (M : Multiset (BusInteraction (ZMod p))) : Multiset (BusInteraction (ZMod p)) :=
+  M.filter (fun m => m.multiplicity = -shape.setNewMult ∧ shape.address m = addr)
+
+/-- The `setNew` messages of `M` at evaluated address `addr`. -/
+def sendsAt (shape : MemoryBusShape) (addr : List (Option (ZMod p)))
+    (M : Multiset (BusInteraction (ZMod p))) : Multiset (BusInteraction (ZMod p)) :=
+  M.filter (fun m => m.multiplicity = shape.setNewMult ∧ shape.address m = addr)
+
+/-- The payloads the receives at `addr` hold in excess of the sends: what enters the block from
+    outside there. The discipline bounds its cardinality by one. -/
+def excessAt (shape : MemoryBusShape) (addr : List (Option (ZMod p)))
+    (M : Multiset (BusInteraction (ZMod p))) : Multiset (List (ZMod p)) :=
+  (recvsAt shape addr M).map BusInteraction.payload
+    - (sendsAt shape addr M).map BusInteraction.payload
+
+/-- Count form of ENTRY_KEY (`entryKeyed`, `ApcOptimizer/MemoryBus.lean`), recovered by
+    `excessKeyed_of_entryKeyed`: every payload the receives at an address hold in excess of the
+    sends carries the key. -/
+def excessKeyed (shape : MemoryBusShape) (slot : Nat) (key : ZMod p)
+    (M : Multiset (BusInteraction (ZMod p))) : Prop :=
+  ∀ (addr : List (Option (ZMod p))) (P : List (ZMod p)),
+    P ∈ excessAt shape addr M → P[slot]? = some key
+
 /-- Count form of the discipline: at every evaluated address, the receives' payload multiset
     exceeds the sends' by at most one element — the entry receive. -/
 def excessBounded (shape : MemoryBusShape) (M : Multiset (BusInteraction (ZMod p))) : Prop :=
@@ -43,13 +68,6 @@ theorem excessBounded_perm (shape : MemoryBusShape)
       excessBounded shape (L' : Multiset (BusInteraction (ZMod p))) := by
   rw [Multiset.coe_eq_coe.mpr h]
 
-/-- The entry designation is invariant under reordering the interaction list. -/
-theorem entryKeyed_perm (shape : MemoryBusShape) (slot : Nat) (key : ZMod p)
-    {L L' : List (BusInteraction (ZMod p))} (h : L.Perm L') :
-    entryKeyed shape slot key (L : Multiset (BusInteraction (ZMod p))) ↔
-      entryKeyed shape slot key (L' : Multiset (BusInteraction (ZMod p))) := by
-  rw [Multiset.coe_eq_coe.mpr h]
-
 /-- The timestamp bound is invariant under reordering the interaction list. -/
 theorem tsBounded_perm (tsField bound : Nat) {L L' : List (BusInteraction (ZMod p))}
     (h : L.Perm L') : tsBounded tsField bound L ↔ tsBounded tsField bound L' :=
@@ -59,6 +77,13 @@ theorem tsBounded_perm (tsField bound : Nat) {L L' : List (BusInteraction (ZMod 
 theorem busState_perm {L L' : List (BusInteraction (ZMod p))} (h : L.Perm L') :
     busState L = busState L' :=
   funext fun _ => ((h.filter _).map _).sum_eq
+
+/-- The entry designation is invariant under reordering the interaction list. -/
+theorem entryKeyed_perm (shape : MemoryBusShape) (slot : Nat) (key : ZMod p)
+    {L L' : List (BusInteraction (ZMod p))} (h : L.Perm L') :
+    entryKeyed shape slot key L ↔ entryKeyed shape slot key L' := by
+  unfold entryKeyed
+  rw [busState_perm h]
 
 /-- The state discipline is invariant under reordering the interaction list. -/
 theorem admissibleMemoryBusM_perm (shape : MemoryBusShape)
@@ -143,6 +168,65 @@ private theorem busState_count (shape : MemoryBusShape) (b : Nat)
         Multiset.filter_cons_of_neg _ (fun hc => haddr hc.2)]
       exact ihT
 
+/-- `setNewMult` is its own inverse. -/
+private theorem setNewMult_mul_self (shape : MemoryBusShape) :
+    (shape.setNewMult * shape.setNewMult : ZMod p) = 1 := by
+  cases h : shape.direction <;> simp [MemoryBusShape.setNewMult, h]
+
+/-- Above characteristic 2 a send is not a receive — what lets counts embed into the field. -/
+private theorem setNewMult_ne_neg (shape : MemoryBusShape) (hp3 : 2 < p) :
+    (shape.setNewMult : ZMod p) ≠ -shape.setNewMult := by
+  haveI : NeZero p := ⟨by omega⟩
+  intro he
+  have h20 : ((2 : ℕ) : ZMod p) = 0 := by
+    have h2 := congrArg (· * shape.setNewMult) (eq_neg_iff_add_eq_zero.mp he)
+    simp only [add_mul, zero_mul, setNewMult_mul_self] at h2
+    push_cast
+    linear_combination h2
+  have := Nat.le_of_dvd (by omega) ((CharP.cast_eq_zero_iff (ZMod p) p 2).mp h20)
+  omega
+
+/-- The payload counts an address group's net state pins down: with fewer than `p` messages on the
+    bus, a state of `(i - j) • setNewMult` at `(b, P)` forces `sends + j = recvs + i`. The three
+    cases of `admissibleMemoryBusM` are `(i, j) = (0, 0)`, `(1, 0)` (the exit record) and `(0, 1)`
+    (the entry record). -/
+private theorem counts_of_busState (shape : MemoryBusShape) {b : Nat}
+    {L : List (BusInteraction (ZMod p))} (hbus : ∀ m ∈ L, m.busId = b)
+    (hmults : ∀ m ∈ L, m.multiplicity = shape.setNewMult ∨ m.multiplicity = -shape.setNewMult)
+    (hlen : L.length + 1 < p) (hp3 : 2 < p)
+    {addr : List (Option (ZMod p))} {P : List (ZMod p)} {i j : ℕ} (hi : i ≤ 1) (hj : j ≤ 1)
+    (hstate : busState (L.filter (fun m => shape.address m = addr)) (b, P)
+      = ((i : ZMod p) - (j : ZMod p)) * shape.setNewMult) :
+    Multiset.count P (Multiset.map BusInteraction.payload
+          (sendsAt shape addr (↑L : Multiset (BusInteraction (ZMod p))))) + j
+      = Multiset.count P (Multiset.map BusInteraction.payload
+          (recvsAt shape addr (↑L : Multiset (BusInteraction (ZMod p))))) + i := by
+  haveI : NeZero p := ⟨by omega⟩
+  rw [busState_count shape b addr P (setNewMult_ne_neg shape hp3) L hbus hmults] at hstate
+  set S := Multiset.count P (Multiset.map BusInteraction.payload
+    (sendsAt shape addr (↑L : Multiset (BusInteraction (ZMod p)))))
+  set R := Multiset.count P (Multiset.map BusInteraction.payload
+    (recvsAt shape addr (↑L : Multiset (BusInteraction (ZMod p)))))
+  have count_le : ∀ M : Multiset (BusInteraction (ZMod p)),
+      M ≤ (↑L : Multiset (BusInteraction (ZMod p))) →
+      Multiset.count P (Multiset.map BusInteraction.payload M) ≤ L.length := by
+    intro M hM
+    calc Multiset.count P (Multiset.map BusInteraction.payload M)
+        ≤ Multiset.card (Multiset.map BusInteraction.payload M) := Multiset.count_le_card _ _
+    _ = Multiset.card M := Multiset.card_map _ _
+    _ ≤ Multiset.card (↑L : Multiset (BusInteraction (ZMod p))) := Multiset.card_le_card hM
+    _ = L.length := Multiset.coe_card _
+  have hSle : S ≤ L.length := count_le _ (Multiset.filter_le _ _)
+  have hRle : R ≤ L.length := count_le _ (Multiset.filter_le _ _)
+  -- cancel `setNewMult`, then read the equation back in `ℕ`: both sides are below `p`
+  have hfield : ((S + j : ℕ) : ZMod p) = ((R + i : ℕ) : ZMod p) := by
+    have h := congrArg (· * shape.setNewMult) hstate
+    simp only [sub_mul, mul_assoc, setNewMult_mul_self, mul_one] at h
+    push_cast
+    linear_combination h
+  have hval := congrArg ZMod.val hfield
+  rwa [ZMod.val_natCast_of_lt (by omega), ZMod.val_natCast_of_lt (by omega)] at hval
+
 /-- The count form follows from the state form on a single bus's messages: with every
     multiplicity `±setNewMult` and fewer than `p` messages, the field-valued net state
     determines the counts. -/
@@ -155,104 +239,103 @@ theorem excessBounded_of_admissibleMemoryBusM (shape : MemoryBusShape) {b : Nat}
   · subst hL
     intro addr
     simp [excessAt, recvsAt, sendsAt]
-  · -- a nonempty list forces `p > 2`, so `setNewMult ≠ -setNewMult` and counts embed into `ZMod p`
-    have hp3 : 2 < p := by
-      have := List.length_pos_iff.mpr hL
+  have hp3 : 2 < p := by
+    have := List.length_pos_iff.mpr hL
+    omega
+  intro addr
+  obtain hz | ⟨entry, exitR, hex⟩ := hstate addr
+  · -- balanced: receive and send counts agree at every payload, so the excess is empty
+    have hempty : excessAt shape addr (↑L : Multiset (BusInteraction (ZMod p))) = 0 := by
+      unfold excessAt
+      refine tsub_eq_zero_of_le (Multiset.le_iff_count.mpr fun P => ?_)
+      have := counts_of_busState shape hbus hmults hlen hp3 (P := P) (i := 0) (j := 0) (by omega) (by omega)
+        (by simpa using congrFun hz (b, P))
       omega
-    haveI : NeZero p := ⟨by omega⟩
-    have hss : shape.setNewMult * shape.setNewMult = (1 : ZMod p) := by
-      cases h : shape.direction <;> simp [MemoryBusShape.setNewMult, h]
-    have hne : (shape.setNewMult : ZMod p) ≠ -shape.setNewMult := by
-      intro he
-      have h20 : ((2 : ℕ) : ZMod p) = 0 := by
-        have h2 := congrArg (· * shape.setNewMult) (eq_neg_iff_add_eq_zero.mp he)
-        simp only [add_mul, zero_mul, hss] at h2
-        push_cast
-        linear_combination h2
-      have := Nat.le_of_dvd (by omega) ((CharP.cast_eq_zero_iff (ZMod p) p 2).mp h20)
-      omega
-    have cancel : ∀ {x y : ZMod p},
-        x * shape.setNewMult = y * shape.setNewMult → x = y := by
-      intro x y hxy
-      calc x = x * shape.setNewMult * shape.setNewMult := by rw [mul_assoc, hss, mul_one]
-      _ = y * shape.setNewMult * shape.setNewMult := by rw [hxy]
-      _ = y := by rw [mul_assoc, hss, mul_one]
-    have cast_eq : ∀ {a c : ℕ}, a < p → c < p → ((a : ZMod p) = (c : ZMod p)) → a = c := by
-      intro a c ha hc hac
-      have := congrArg ZMod.val hac
-      rwa [ZMod.val_natCast_of_lt ha, ZMod.val_natCast_of_lt hc] at this
-    intro addr
-    have count_le : ∀ (P : List (ZMod p)) (M : Multiset (BusInteraction (ZMod p))),
-        M ≤ (↑L : Multiset (BusInteraction (ZMod p))) →
-        Multiset.count P (Multiset.map BusInteraction.payload M) ≤ L.length := by
-      intro P M hM
-      calc Multiset.count P (Multiset.map BusInteraction.payload M)
-          ≤ Multiset.card (Multiset.map BusInteraction.payload M) := Multiset.count_le_card _ _
-      _ = Multiset.card M := Multiset.card_map _ _
-      _ ≤ Multiset.card (↑L : Multiset (BusInteraction (ZMod p))) := Multiset.card_le_card hM
-      _ = L.length := Multiset.coe_card _
-    have sends_le : sendsAt shape addr (↑L : Multiset (BusInteraction (ZMod p))) ≤ ↑L :=
-      Multiset.filter_le _ _
-    have recvs_le : recvsAt shape addr (↑L : Multiset (BusInteraction (ZMod p))) ≤ ↑L :=
-      Multiset.filter_le _ _
-    obtain hz | ⟨entry, exitR, hex⟩ := hstate addr
-    · -- balanced: receive and send counts agree at every payload, so the excess is empty
-      have hcount : ∀ P : List (ZMod p),
-          Multiset.count P (Multiset.map BusInteraction.payload
-            (recvsAt shape addr (↑L : Multiset (BusInteraction (ZMod p)))))
-          = Multiset.count P (Multiset.map BusInteraction.payload
-            (sendsAt shape addr (↑L : Multiset (BusInteraction (ZMod p))))) := by
-        intro P
-        have h0 := congrFun hz (b, P)
-        rw [busState_count shape b addr P hne L hbus hmults] at h0
-        simp only [sub_eq_zero] at h0
-        exact (cast_eq (by have := count_le P _ sends_le; omega) (by have := count_le P _ recvs_le; omega) (cancel h0)).symm
-      have : excessAt shape addr (↑L : Multiset (BusInteraction (ZMod p))) = 0 := by
-        unfold excessAt
-        exact tsub_eq_zero_of_le (Multiset.le_iff_count.mpr fun P => (hcount P).le)
-      rw [this]
-      simp
-    · -- one enters, one exits: the excess is at most the entry's payload
-      have hsub : excessAt shape addr (↑L : Multiset (BusInteraction (ZMod p)))
-          ≤ ({entry.2} : Multiset (List (ZMod p))) := by
-        unfold excessAt
-        rw [Multiset.sub_le_iff_le_add]
-        refine Multiset.le_iff_count.mpr fun P => ?_
-        rw [Multiset.count_add]
-        have hP := congrFun hex (b, P)
-        rw [busState_count shape b addr P hne L hbus hmults] at hP
-        by_cases hPe : ((b, P) : BusMessage p) = entry
-        · -- the entry payload: one more receive than send, matched by the singleton
-          rw [if_pos hPe] at hP
-          have hPeq : P = entry.2 := by rw [← hPe]
-          have hcast : (Multiset.count P (Multiset.map BusInteraction.payload
-                (recvsAt shape addr (↑L : Multiset (BusInteraction (ZMod p))))) : ZMod p)
-              = ((Multiset.count P (Multiset.map BusInteraction.payload
-                (sendsAt shape addr (↑L : Multiset (BusInteraction (ZMod p))))) + 1 : ℕ) : ZMod p) := by
-            push_cast
-            exact cancel (by linear_combination -hP)
-          have hcnt := cast_eq (by have := count_le P _ recvs_le; omega)
-            (by have := count_le P _ sends_le; omega) hcast
-          rw [Multiset.count_singleton, if_pos hPeq]
+    rw [hempty]
+    simp
+  · -- one enters, one exits: the excess is at most the entry record's payload
+    have hsub : excessAt shape addr (↑L : Multiset (BusInteraction (ZMod p)))
+        ≤ ({entry.2} : Multiset (List (ZMod p))) := by
+      unfold excessAt
+      rw [Multiset.sub_le_iff_le_add]
+      refine Multiset.le_iff_count.mpr fun P => ?_
+      rw [Multiset.count_add]
+      have hP := congrFun hex (b, P)
+      by_cases hPe : ((b, P) : BusMessage p) = entry
+      · have hcnt := counts_of_busState shape hbus hmults hlen hp3 (P := P) (i := 0) (j := 1)
+          (by omega) (by omega) (by rw [hP, if_pos hPe]; push_cast; ring)
+        rw [Multiset.count_singleton, if_pos (show P = entry.2 from by rw [← hPe])]
+        omega
+      · rw [if_neg hPe] at hP
+        by_cases hPx : ((b, P) : BusMessage p) = exitR
+        · have hcnt := counts_of_busState shape hbus hmults hlen hp3 (P := P) (i := 1) (j := 0)
+            (by omega) (by omega) (by rw [hP, if_pos hPx]; push_cast; ring)
           omega
-        · rw [if_neg hPe] at hP
-          by_cases hPx : ((b, P) : BusMessage p) = exitR
-          · -- the exit payload: one more send than receive
-            rw [if_pos hPx] at hP
-            have hcast : (Multiset.count P (Multiset.map BusInteraction.payload
-                  (sendsAt shape addr (↑L : Multiset (BusInteraction (ZMod p))))) : ZMod p)
-                = ((Multiset.count P (Multiset.map BusInteraction.payload
-                  (recvsAt shape addr (↑L : Multiset (BusInteraction (ZMod p))))) + 1 : ℕ) : ZMod p) := by
-              push_cast
-              exact cancel (by linear_combination hP)
-            have hcnt := cast_eq (by have := count_le P _ sends_le; omega)
-              (by have := count_le P _ recvs_le; omega) hcast
-            omega
-          · -- any other payload balances
-            rw [if_neg hPx] at hP
-            simp only [sub_eq_zero] at hP
-            have hcnt := cast_eq (by have := count_le P _ sends_le; omega) (by have := count_le P _ recvs_le; omega) (cancel hP)
-            omega
-      calc Multiset.card (excessAt shape addr (↑L : Multiset (BusInteraction (ZMod p))))
-          ≤ Multiset.card ({entry.2} : Multiset (List (ZMod p))) := Multiset.card_le_card hsub
-      _ = 1 := Multiset.card_singleton _
+        · have hcnt := counts_of_busState shape hbus hmults hlen hp3 (P := P) (i := 0) (j := 0)
+            (by omega) (by omega) (by rw [hP, if_neg hPx]; push_cast; ring)
+          omega
+    calc Multiset.card (excessAt shape addr (↑L : Multiset (BusInteraction (ZMod p))))
+        ≤ Multiset.card ({entry.2} : Multiset (List (ZMod p))) := Multiset.card_le_card hsub
+    _ = 1 := Multiset.card_singleton _
+
+/-- Filtering by an address keeps every message carrying a payload with that address, so the net
+    state at such a message is unchanged. -/
+private theorem busState_filter_addr (shape : MemoryBusShape) (b : Nat) (P : List (ZMod p))
+    (L : List (BusInteraction (ZMod p))) :
+    busState (L.filter (fun m => shape.address m = shape.addressOf P)) (b, P)
+      = busState L (b, P) := by
+  unfold busState
+  rw [List.filter_filter]
+  congr 2
+  refine List.filter_congr fun m _ => ?_
+  by_cases h : (m.busId, m.payload) = ((b, P) : BusMessage p)
+  · have haddr : shape.address m = shape.addressOf P := by
+      unfold MemoryBusShape.address
+      rw [show m.payload = P from by simpa using congrArg Prod.snd h]
+    simp [h, haddr]
+  · simp [h]
+
+/-- The count form of ENTRY_KEY: a payload the receives at an address hold in excess of the sends is
+    an unmatched receive — the discipline leaves no other state value for it — so `entryKeyed`
+    keys it. -/
+theorem excessKeyed_of_entryKeyed (shape : MemoryBusShape) {b slot : Nat} {key : ZMod p}
+    {L : List (BusInteraction (ZMod p))} (hbus : ∀ m ∈ L, m.busId = b)
+    (hadm : admissibleMemoryBusM shape L) (hkey : entryKeyed shape slot key L) :
+    excessKeyed shape slot key (↑L : Multiset (BusInteraction (ZMod p))) := by
+  obtain ⟨hmults, hlen, hstate⟩ := hadm
+  intro addr P hP
+  have hlt : Multiset.count P (Multiset.map BusInteraction.payload
+        (sendsAt shape addr (↑L : Multiset (BusInteraction (ZMod p)))))
+      < Multiset.count P (Multiset.map BusInteraction.payload
+        (recvsAt shape addr (↑L : Multiset (BusInteraction (ZMod p))))) := by
+    have hpos := Multiset.count_pos.mpr hP
+    rw [excessAt, Multiset.count_sub] at hpos
+    omega
+  -- a receive carries `P` at `addr`, so `addr` is `P`'s address and `L` is nonempty
+  obtain ⟨R, hR, hRp⟩ :=
+    Multiset.mem_map.mp (Multiset.count_pos.mp (Nat.lt_of_le_of_lt (Nat.zero_le _) hlt))
+  obtain ⟨hRmem, -, hRaddr⟩ := Multiset.mem_filter.mp hR
+  have haddr : shape.addressOf P = addr := by
+    rw [← hRp]
+    exact hRaddr
+  have hp3 : 2 < p := by
+    have : 0 < L.length :=
+      List.length_pos_iff.mpr (fun hnil => by rw [hnil] at hRmem; simp at hRmem)
+    omega
+  subst haddr
+  obtain hz | ⟨entry, exitR, hex⟩ := hstate (shape.addressOf P)
+  · have := counts_of_busState shape hbus hmults hlen hp3 (P := P) (i := 0) (j := 0) (by omega) (by omega)
+      (by simpa using congrFun hz (b, P))
+    omega
+  · have hP' := congrFun hex (b, P)
+    by_cases hPe : ((b, P) : BusMessage p) = entry
+    · rw [if_pos hPe] at hP'
+      exact hkey b P (by rw [← busState_filter_addr shape b P L]; exact hP')
+    · rw [if_neg hPe] at hP'
+      by_cases hPx : ((b, P) : BusMessage p) = exitR
+      · have := counts_of_busState shape hbus hmults hlen hp3 (P := P) (i := 1) (j := 0)
+          (by omega) (by omega) (by rw [hP', if_pos hPx]; push_cast; ring)
+        omega
+      · have := counts_of_busState shape hbus hmults hlen hp3 (P := P) (i := 0) (j := 0)
+          (by omega) (by omega) (by rw [hP', if_neg hPx]; push_cast; ring)
+        omega

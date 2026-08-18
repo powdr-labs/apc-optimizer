@@ -663,7 +663,7 @@ def sp1Facts (p : ℕ) [NeZero p]
     memTsField_sound := (sp1Shapes busMap entryPc).tsBounded_of_rely
     memEntryKey := (sp1Shapes busMap entryPc).entryKey
     memEntryKey_sound := fun msgs hadm busId slot key shape hshape hkey =>
-      (sp1Shapes busMap entryPc).entryKeyed_of_rely msgs hadm busId slot key shape hshape hkey
+      (sp1Shapes busMap entryPc).excessKeyed_of_rely msgs hadm busId slot key shape hshape hkey
     admissible_dropPair := by
       -- `sp1BusSemantics.admissible` is the per-declared-bus `MemoryBusShape.rely` (`.1`) together
       -- with the `zeroRegisterReads` clause (`.2`).

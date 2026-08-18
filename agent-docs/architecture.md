@@ -101,8 +101,9 @@ passes usable knowledge:
   access order and runs the consecutive-match sweep and the value-forwarding engine on it
   (`admissibleMemoryBus_of_pairUp`, `Implementation/MemoryBusOrdered.lean`); and `execChain`,
   which chains the execution bridge from ENTRY_KEY (`entryKeyed` — the caller-declared entry pc,
-  opt-in and completeness-only) plus per-access timestamp certificates
-  (`entryKeyed_chain_copies`, `Implementation/MemoryBusChain.lean`).
+  opt-in and completeness-only; the count form the pass consumes is `excessKeyed`, recovered by
+  `excessKeyed_of_entryKeyed`) plus per-access timestamp certificates
+  (`excessKeyed_chain_copies`, `Implementation/MemoryBusChain.lean`).
 
 ## OpenVM instantiation
 

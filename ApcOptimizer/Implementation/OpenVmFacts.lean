@@ -686,7 +686,7 @@ def openVmFacts (p : ℕ) [NeZero p]
   memTsField_sound := (openVmShapes busMap entryPc).tsBounded_of_rely
   memEntryKey := (openVmShapes busMap entryPc).entryKey
   memEntryKey_sound := fun msgs hadm busId slot key shape hshape hkey =>
-    (openVmShapes busMap entryPc).entryKeyed_of_rely msgs hadm busId slot key shape hshape hkey
+    (openVmShapes busMap entryPc).excessKeyed_of_rely msgs hadm busId slot key shape hshape hkey
   admissible_dropPair := by
     -- `openVmBusSemantics.admissible` is the per-declared-bus `MemoryBusShape.rely` (`.1`) together
     -- with the `zeroRegisterReads` clause (`.2`).

@@ -89,32 +89,18 @@ def admissibleMemoryBusM (shape : MemoryBusShape) (M : List (BusInteraction (ZMo
         else if message = exitRecord then shape.setNewMult
         else 0
 
-/-- The `getPrevious` messages of `M` at evaluated address `addr`. -/
-def recvsAt (shape : MemoryBusShape) (addr : List (Option (ZMod p)))
-    (M : Multiset (BusInteraction (ZMod p))) : Multiset (BusInteraction (ZMod p)) :=
-  M.filter (fun m => m.multiplicity = -shape.setNewMult ∧ shape.address m = addr)
+/-- ENTRY_KEY: every record entering the block from outside — a message the block leaves as an
+    unmatched *receive*, i.e. at net state `-setNewMult` — carries `key` in payload slot `slot`.
 
-/-- The `setNew` messages of `M` at evaluated address `addr`. -/
-def sendsAt (shape : MemoryBusShape) (addr : List (Option (ZMod p)))
-    (M : Multiset (BusInteraction (ZMod p))) : Multiset (BusInteraction (ZMod p)) :=
-  M.filter (fun m => m.multiplicity = shape.setNewMult ∧ shape.address m = addr)
-
-/-- The payloads the receives at `addr` hold in excess of the sends: what enters the block from
-    outside there. The discipline bounds its cardinality by one. -/
-def excessAt (shape : MemoryBusShape) (addr : List (Option (ZMod p)))
-    (M : Multiset (BusInteraction (ZMod p))) : Multiset (List (ZMod p)) :=
-  (recvsAt shape addr M).map BusInteraction.payload
-    - (sendsAt shape addr M).map BusInteraction.payload
-
-/-- ENTRY_KEY: every payload entering the block from outside carries `key` in slot `slot` — on a
-    chain bus (an execution bridge), that the entering record is the block's entry record, at the
-    entry pc the optimizer is told. Window atomicity only *counts* the entering record; a rotated
-    filling of the block yields the same multiset with a different entry, so it takes an assumption
-    to exclude (see the README's assumptions). -/
+    For a chain bus (an execution bridge), window atomicity already says *one* record enters; this
+    says it is the block's entry record, at the entry pc the optimizer is told. A rotated filling of
+    the block (entered at an interior instruction, wrapping through the exit) leaves the same net
+    state with a different entering record, so it takes an assumption to exclude (see the README's
+    assumptions). -/
 def entryKeyed (shape : MemoryBusShape) (slot : Nat) (key : ZMod p)
-    (M : Multiset (BusInteraction (ZMod p))) : Prop :=
-  ∀ (addr : List (Option (ZMod p))) (P : List (ZMod p)),
-    P ∈ excessAt shape addr M → P[slot]? = some key
+    (M : List (BusInteraction (ZMod p))) : Prop :=
+  ∀ (busId : Nat) (payload : List (ZMod p)),
+    busState M (busId, payload) = -shape.setNewMult → payload[slot]? = some key
 
 /-- The `Nat` value of a message's declared timestamp slot (`0` if the payload is too short to
     have one). -/
@@ -134,5 +120,4 @@ def tsBounded (tsField bound : Nat) (msgs : List (BusInteraction (ZMod p))) : Pr
 def MemoryBusShape.rely (shape : MemoryBusShape) (M : List (BusInteraction (ZMod p))) : Prop :=
   admissibleMemoryBusM shape M ∧
   (∀ slot bound : Nat, shape.tsField = some (slot, bound) → tsBounded slot bound M) ∧
-  (∀ slot key : Nat, shape.entryKey = some (slot, key) →
-    entryKeyed shape slot (key : ZMod p) (↑M : Multiset (BusInteraction (ZMod p))))
+  (∀ slot key : Nat, shape.entryKey = some (slot, key) → entryKeyed shape slot (key : ZMod p) M)

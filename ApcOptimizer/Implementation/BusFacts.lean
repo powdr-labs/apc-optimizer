@@ -151,7 +151,8 @@ structure BusFacts (p : ℕ) (bs : BusSemantics p) where
           tsSlotVal slot m < bound
   /-- Declared entry key of a chain-shaped bus: `memEntryKey busId = some (slot, key)` asserts
       ENTRY_KEY — the record entering the block from outside on `busId` carries `key` in payload
-      slot `slot` (see `entryKeyed`; for an execution bridge, the block's entry pc). -/
+      slot `slot` (for an execution bridge, the block's entry pc), in the count form the passes
+      consume (`excessKeyed`, via `excessKeyed_of_entryKeyed`). -/
   memEntryKey : (busId : Nat) → Option (Nat × ZMod p)
   memEntryKey_sound :
     ∀ (msgs : List (BusInteraction (ZMod p))),
@@ -159,7 +160,7 @@ structure BusFacts (p : ℕ) (bs : BusSemantics p) where
         (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)) →
       ∀ (busId slot : Nat) (key : ZMod p) (shape : MemoryBusShape),
         memShape busId = some shape → memEntryKey busId = some (slot, key) →
-        entryKeyed shape slot key
+        excessKeyed shape slot key
           (↑((msgs.filter (fun m => m.busId = busId)).filter
             (fun m => decide (m.multiplicity ≠ 0))) : Multiset (BusInteraction (ZMod p)))
   /-- Reverse bridge for pair cancellation (completeness): dropping an equal-payload
@@ -381,20 +382,23 @@ theorem MemoryShapes.tsBounded_of_rely (ms : MemoryShapes bs)
       (List.mem_filter.mpr ⟨hm, decide_eq_true hmne⟩)
 
 /-- `BusFacts.memEntryKey_sound` for `MemoryShapes.entryKey`. -/
-theorem MemoryShapes.entryKeyed_of_rely (ms : MemoryShapes bs)
+theorem MemoryShapes.excessKeyed_of_rely (ms : MemoryShapes bs)
     (msgs : List (BusInteraction (ZMod p)))
     (hadm : bs.admissible (msgs.filter
       (fun m => decide (m.multiplicity ≠ 0) && bs.isStateful m.busId)))
     (busId slot : Nat) (key : ZMod p) (s : MemoryBusShape) (hshape : ms.shape busId = some s)
     (hfact : ms.entryKey busId = some (slot, key)) :
-    entryKeyed s slot key
+    excessKeyed s slot key
       (↑((msgs.filter (fun m => m.busId = busId)).filter
         (fun m => decide (m.multiplicity ≠ 0))) : Multiset (BusInteraction (ZMod p))) := by
   unfold MemoryShapes.entryKey at hfact
   rw [hshape] at hfact
   obtain ⟨k, hek, rfl⟩ : ∃ k : Nat, s.entryKey = some (slot, k) ∧ (k : ZMod p) = key := by
     simpa using hfact
-  exact (ms.rely_active hadm hshape).2.2 slot k hek
+  have hrely := ms.rely_active hadm hshape
+  refine excessKeyed_of_entryKeyed s (b := busId) ?_ hrely.1 (hrely.2.2 slot k hek)
+  intro m hm
+  simpa using List.of_mem_filter (List.mem_of_mem_filter hm)
 
 /-- `BusFacts.admissible_dropPair` for the memory part of a VM's `admissible`: dropping an
     equal-payload `setNew`/`getPrevious` pair preserves every declared bus's rely. -/
@@ -424,9 +428,11 @@ theorem MemoryShapes.rely_dropPair (ms : MemoryShapes bs)
     refine ⟨admissibleMemoryBusM_dropPair s (hSbus.trans hRbus.symm) hSm hRm hpay
         ((admissibleMemoryBusM_perm s (perm_split_pair _ _ _ S R)).mp hdisc),
       fun slot bound htf m hm => hts slot bound htf m ?_,
-      fun slot key hek => entryKeyed_dropPair s slot (key : ZMod p) hSm hRm hpay ?_⟩
+      fun slot key hek => entryKeyed_dropPair s slot (key : ZMod p)
+        (hSbus.trans hRbus.symm) hSm hRm hpay
+        ((entryKeyed_perm s slot (key : ZMod p) (perm_split_pair _ _ _ S R)).mp
+          (hkey slot key hek))⟩
     · simp only [List.mem_append, List.mem_cons] at hm ⊢; tauto
-    · rw [coe_split_pair] at hkey; exact hkey slot key hek
   · -- `S`, `R` are on `busId`, so they drop out of another bus's filter, which is unchanged.
     have hne : busId ≠ busId' := fun h => hbb h.symm
     rw [show (A ++ B ++ C).filter (fun m => m.busId = busId')

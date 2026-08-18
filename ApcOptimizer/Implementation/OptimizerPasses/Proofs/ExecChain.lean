@@ -8,7 +8,7 @@ set_option autoImplicit false
 /-! # Soundness for the dense `execChain` pass
 
 The certificate of `ExecChain.lean` read semantically: the key-slot constants pin the chain, each
-access steps its own timestamp, and `entryKeyed_chain_copies`
+access steps its own timestamp, and `excessKeyed_chain_copies`
 (`Implementation/MemoryBusChain.lean`) then forces every non-entry receive to copy the previous
 send's payload. The fiber presentations and the classification verdicts come from `Proofs/BusUnify.lean`. -/
 
@@ -327,7 +327,7 @@ theorem denseECGroup?_sound (bs : BusSemantics p) (facts : BusFacts p bs)
     exact denseECStepOk_sound hp30 hB29 hok denv
       (hrecv_ts (recvs[i.val]'(hrecb i)) (List.getElem_mem _))
   -- the copies
-  have hcopies := entryKeyed_chain_copies shape M A slot key hkeyM send recv hsendP hrecvP
+  have hcopies := excessKeyed_chain_copies shape M A slot key hkeyM send recv hsendP hrecvP
     (tsSlotVal tsField) (fun m m' h => by unfold tsSlotVal; rw [h]) hlt hdistinct hchainP hentry
   -- read off the emitted equalities
   intro c hc
