@@ -7569,3 +7569,58 @@ per-case diffs: (1) shifted-limb scales — apc_073's store forms mix `16·lo + 
 riskier); (2) copies never emitted — apc_035's main-memory `prev_*` wires stay unmerged (the
 uncertifiable-gadget class of entry 187's addendum, not a pivot matter). sp1:keccak's 72-var gap
 is class (2).
+
+### 189. Runtime: array indexing + obstruction-bounded gadget search; effectiveness: expression-slot cancels (openvm-eth bus back to main parity, wasm-eth 3 of 7 cases recovered)
+
+Three PR-polish items for #288/#304, attacking the branch's runtime and effectiveness deltas
+against main.
+
+**Runtime 1 — the gadget certifiers indexed a linked list.** `denseBUIdxScan` and
+`denseBUGadgetX` looked candidates up with `allBis[i]?` on the `List` of all interactions —
+an O(position) walk per consulted candidate, at ~71k interactions on sha256. Both now index one
+`Array` built per pass invocation (`d.busInteractions.toArray`); same lookups, same verdicts, so
+effectiveness is unchanged by construction. gdb-sample profiling found it: the hot stack was
+`denseBSGadgetsOk → denseBUGadgetCore → denseBUTermCerts → denseBUIdxScan → List.get?Internal`.
+Measured per-pass (4-core box): sha256 51.2 → 32.1 s end-to-end (busSweep 17.3 → 3.4 s, busUnify
+6.7 → 2.3 s), sp1:keccak 5.1 → 2.8 s, OpenVM keccak 4.0 → 3.6 s; per-cycle sizes byte-identical.
+
+**Runtime 2 — the expression-limb search scans provably-dead candidates.** After the array fix,
+sp1:keccak's residue was `denseBUGadgetX` trying every `xcands` entry of every term of `N` — and
+the shared clk-base variable's list is huge. A term the remainder check can never absorb (no
+witnessed bound, or a lone no-wrap contribution `1 + B + c.val·(w−1) > p`, e.g. the raw
+witness-limb terms with coefficient −1) must be rewritten by any successful synthetic limb: a
+candidate not touching it leaves the term in the remainder, where `denseBUGadgetXRem` fails on
+it. So the shortest such term's candidate list bounds the search *exactly* — removed candidates
+always fail, hence identical outcomes, no proof impact. Measured: sp1:keccak 2.8 → **1.5 s**
+(busUnify 1.5 → 0.2 s) — now faster than main's 1.7 s on the same box; all six suites reproduce
+the branch aggregates byte-identically.
+
+**Effectiveness — late-formed matched pairs with expression value slots.** The #304 bus-axis
+regressions (openvm-eth apc_037 +4, seven wasm-eth cases +2 each) are all one mechanism: the
+branch's substitution order leaves a matched ±1 memory pair whose value slot is an *expression*
+by the time the payloads become syntactically equal, and `denseCheckCancel`'s byte-justification
+fails on it, so the pair survives where main cancels it earlier as a plain var. Two fixes:
+
+1. *Emitted checks' forms join the basis* (`denseDropFormBasisE`): a check emitted for an
+   expression slot could never justify that slot — the witness channel bounds whole variables
+   only, and the form basis drew from the live array alone. Appending the emitted (and earlier)
+   checks' `slotBound` forms lets the reduction subtract the check's own form and close at
+   `255 < 256`. Recovers wasm-eth apc_017/027/085 (−2 bus each; aggregate 6.205× → 6.208×).
+2. *Subtractive affine justification* (`denseNegAffineJustified`): `c₀ − Σ cᵥ·v` with every
+   variable bounded, `Σ (−cᵥ).val·(bᵥ−1) ≤ c₀ < bound` never wraps, so it is `≤ c₀ < bound` —
+   e.g. apc_037's `255 − a` slots with `a` byte-checked on the bitwise bus. No sign analysis
+   needed: a positive coefficient makes `(−c).val` huge and the budget test fail. Recovers
+   openvm-eth apc_037 (449 → 445; aggregate bus 3.557× → **3.558×**, per-case now identical to
+   main on the whole suite).
+
+MEASURED (all six suites): openvm-eth 4.557×/3.558× (= main), wasm-eth 7.259×/6.208× (main
+7.260×/6.211×), OpenVM keccak/sha256 and both SP1 suites unchanged. **Worked: yes.**
+
+**Still open** (the remaining deltas to main): wasm-eth apc_082/083/037 — matched pairs whose
+value slots are shift recompositions (`16⁻¹·a₀ + 16·a₁`, `−15·2²⁰·a₀ + 2·c₀`), not justifiable by
+any linear bound argument; entry 188's gauss ladder-alphabet class (ratios 2/2⁴/2¹²/2²⁰). The SP1
+variable gaps are entries 187–188's classes, unchanged. sha256 end-to-end is now 32 s vs main's
+27 s on the same box (was 51 s); the residual is busUnify's `denseBUSplit` O(groups × interactions)
+classify and the busUnify/busSweep scaffolding built twice per cycle — a busUnify-into-busSweep
+merge (one certificate, group engine as the fallback arm) would kill both, but changes SP1-bus
+behavior where the whole-bus certificate succeeds, so it needs a full A/B.
