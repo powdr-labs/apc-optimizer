@@ -280,6 +280,47 @@ def gPick (ops : DenseZModOps p) (occ : Array Nat) (prot : Array Bool) (l : Dens
           | some xt => some xt
           | none => gPick ops occ prot l fuel (x :: banned)
 
+/-- A byte-ladder scale: `256^k`, `1 ≤ k ≤ 3`. -/
+def gLadderPow (r : ZMod p) : Bool :=
+  r.val = 256 || r.val = 65536 || r.val = 16777216
+
+/-- The head of a base-256 ladder row `±(x − Σ 256^k·yₖ)`: a `±1`-coefficient variable whose
+    co-terms all carry `−c·256^k` with at least one `k ≥ 1`. -/
+def gIsLadderHead (ops : DenseZModOps p) (terms : List (VarId × ZMod p))
+    (v : VarId) (c : ZMod p) : Bool :=
+  gIsPm1 ops c &&
+    (let negc := ops.mul ops.negOne c
+     terms.all (fun t => t.1 == v ||
+       (let r := ops.mul t.2 negc
+        r.val = 1 || gLadderPow r)) &&
+     terms.any (fun t => !(t.1 == v) && gLadderPow (ops.mul t.2 negc)))
+
+/-- The co-terms to ban when the row has a *protected* ladder head, `[]` otherwise (or on a long
+    row — ladders of interest have a handful of terms and the head scan is quadratic). A protected
+    head is a range-checked wire whose check turns into a recognizable digit-pair check when the
+    head is solved for the tail (`L := p₀ + 256·p₁`); solving the other way smears a digit into
+    every payload the head's byte checks sit in (`p₀ := L − 256·p₁`), which the byte-granularity
+    passes downstream cannot see through. An unprotected head is a hub (e.g. a frame pointer
+    decomposed into its word bytes) that occurrence economics already orient correctly. -/
+def gLadderBan (ops : DenseZModOps p) (prot : Array Bool)
+    (terms : List (VarId × ZMod p)) : List VarId :=
+  if terms.length ≤ 8 && terms.any (fun t =>
+      (prot[t.1.index]?).getD false && gIsLadderHead ops terms t.1 t.2) then
+    (terms.filter (fun t =>
+      !((prot[t.1.index]?).getD false && gIsLadderHead ops terms t.1 t.2))).map (·.1)
+  else []
+
+/-- `gPick`, preferring ladder heads: try the pick restricted to the row's protected ladder heads
+    first, falling back to the unrestricted pick. -/
+def gPickLadder (ops : DenseZModOps p) (occ : Array Nat) (prot : Array Bool)
+    (l : DenseLinExpr p) : Option (VarId × DenseLinExpr p) :=
+  match gLadderBan ops prot l.terms with
+  | [] => gPick ops occ prot l (l.terms.length + 1) []
+  | ban =>
+    match gPick ops occ prot l (l.terms.length + 1) ban with
+    | some xt => some xt
+    | none => gPick ops occ prot l (l.terms.length + 1) []
+
 /-! ## Engine state
 
 `rows` and `sol` carry the entailment invariant (`Proofs/Gauss.lean`); everything else is
@@ -423,7 +464,7 @@ def gTake (ops : DenseZModOps p) (occ : Array Nat) (prot : Array Bool) (S : GSt 
     (l : DenseLinExpr p) : GSt p :=
   if l.terms.isEmpty then S.setStatus i 2
   else
-    match gPick ops occ prot l (l.terms.length + 1) [] with
+    match gPickLadder ops occ prot l with
     | none => S.setPending i l
     | some (x, t) => gAdopt ops S i x t
 

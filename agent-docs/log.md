@@ -7541,3 +7541,31 @@ emit the per-digit equalities `aᵢ = bᵢ` (`ofAddConstraints` shape; uniquenes
 representation). It must run on the cycle's fresh copy equalities *before* gauss consumes them,
 i.e. right after `busSweep`. Alternatively a byte-aware gauss pivot preference. sp1-only;
 OpenVM's single-granularity payloads are insensitive to the orientation.
+
+### 188. gauss: protected-ladder-head pivot orientation (rsp 3.868× → 3.905× variables, 60 % of the entry-187 gap; all OpenVM suites byte-identical)
+
+Entry 187's stage-1 candidate, landed. `gPickLadder` (wired into `gTake`) recognizes a base-256
+ladder row `±(x − Σ 256^k·yₖ)` (unit head coefficient, co-term ratios in `{1, 256, 65536, 2^24}`
+with at least one `≥ 256`, ≤ 8 terms) and, when the head is *protected* (a bare occurrence in a
+stateless payload — a range-checked wire), restricts the pivot search to the head, falling back to
+the unrestricted pick if no head solves. Solving for the head keeps the tail a base-256
+combination of digits (`L := p₀ + 256·p₁`), so the head's 16-bit check becomes a digit-pair check
+the byte passes recognize; the previous orientation (`p₀ := L − 256·p₁`) smeared a digit through
+every payload the head's checks sat in (entry 187's pivot mechanism). Proof burden: one
+`gPickLadder_solveAt` wrapper lemma — the pivot choice is free, `denseSparseSolveAt` re-checks
+whatever is picked.
+
+**The protection gate is load-bearing (A/B, measured).** Ungated, the preference also fired on
+OpenVM hub decompositions — wasm-eth's frame pointer `fp = Σ 256^k·old_fp_data_k`, where the head
+is the hub every stack address mentions and occurrence economics already orient correctly —
+costing 5 wasm-eth cases +3 vars each (7.259× → 7.252×). Gated on a protected head: rsp keeps the
+full gain and every OpenVM suite is byte-identical per-case (openvm-eth 4.557×, wasm-eth 7.259×,
+keccak unchanged; rsp 3.868× → 3.905× vars, bus 2.692× → 2.705× — now above main's 2.703×; 2 rsp
+cases beat main outright, 16 remain above it, from 20).
+
+**Remaining vs main (rsp 3.905× vs 3.930×, sp1:keccak unchanged at 2729).** Two residual classes,
+per-case diffs: (1) shifted-limb scales — apc_073's store forms mix `16·lo + hi` / `4096·hi + lo`
+(2^4/2^12 shifts the ladder alphabet excludes; widening it to all powers of two is unmeasured and
+riskier); (2) copies never emitted — apc_035's main-memory `prev_*` wires stay unmerged (the
+uncertifiable-gadget class of entry 187's addendum, not a pivot matter). sp1:keccak's 72-var gap
+is class (2).
