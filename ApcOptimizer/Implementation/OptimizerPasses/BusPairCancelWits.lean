@@ -177,6 +177,19 @@ def denseDropFormBasis (fidx : Array (List Nat))
       else []
     else [])
 
+/-- `denseDropFormBasis` extended with the emitted byte checks' own payload forms (this drop's and
+    earlier drops'): a check's slot is `slotBound`-bounded like any other interaction's, which is
+    what lets a check emitted for an *expression* slot justify that slot in the basis reduction —
+    the variable-level witness channel (`denseDropWits`) only ever bounds whole variables. -/
+def denseDropFormBasisE {bs : BusSemantics p} (facts : BusFacts p bs) (fidx : Array (List Nat))
+    (fbnd : Array (Thunk (List (DenseLinExpr p × Nat))))
+    (arr : Array (BusInteraction (DenseExpr p))) (alive : Array Bool)
+    (S R : BusInteraction (DenseExpr p))
+    (checksOld emitted : List (BusInteraction (DenseExpr p))) (v : VarId) :
+    List (DenseLinExpr p × Nat) :=
+  denseDropFormBasis fidx fbnd arr alive S R v
+    ++ (checksOld ++ emitted).flatMap (denseFormBoundsOf facts)
+
 /-! ### The `_mem` proof layer
 
 Every returned witness is a live interaction at a position `≠ S`/`≠ R`, mapped into
