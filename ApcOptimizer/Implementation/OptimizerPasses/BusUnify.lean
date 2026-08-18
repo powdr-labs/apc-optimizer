@@ -515,11 +515,23 @@ def denseBUGadgetXSlot (bs : BusSemantics p) (facts : BusFacts p bs)
 
 /-- The expression-limb fallback of the LessThan certificate: some active interaction carries a
     bounded slot expression that completes the gadget (`denseBUGadgetXSlot`). Only tried when the
-    variable-limb path failed. -/
+    variable-limb path failed. A term the remainder check can never absorb — no witnessed bound,
+    or a lone no-wrap contribution already past `p` — must be rewritten by any successful
+    synthetic limb, so such a term's candidate list bounds the search exactly (a candidate not
+    touching it leaves the term in the remainder, where `denseBUGadgetXRem` fails on it). -/
 def denseBUGadgetX (bs : BusSemantics p) (facts : BusFacts p bs)
     (allArr : Array (BusInteraction (DenseExpr p))) (idx : DenseBUIdx)
     (B : Nat) (N : DenseLinExpr p) : Bool :=
-  (((N.terms.flatMap (fun t => idx.xcands.getD t.1 [])).foldl
+  let obst : List (List (Nat × Nat)) := N.terms.filterMap (fun t =>
+    match denseBUIdxScan bs facts allArr t.1 (idx.bounds.getD t.1 []) with
+    | some w =>
+      if p < 1 + B + t.2.val * (w - 1) then some (idx.xcands.getD t.1 []) else none
+    | none => some (idx.xcands.getD t.1 []))
+  let cands : List (Nat × Nat) :=
+    match obst with
+    | [] => N.terms.flatMap (fun t => idx.xcands.getD t.1 [])
+    | l :: ls => ls.foldl (fun a b => if b.length < a.length then b else a) l
+  ((cands.foldl
       (fun (acc : Std.HashSet (Nat × Nat) × List (Nat × Nat)) is =>
         if acc.1.contains is then acc else (acc.1.insert is, is :: acc.2))
       (∅, [])).2).any (fun is =>
