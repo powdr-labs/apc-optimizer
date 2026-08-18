@@ -5,48 +5,19 @@ set_option autoImplicit false
 /-! Helper definitions to encode the semantics of memory buses, used to implement
     `BusSemantics.admissible`. Memory buses are stateful: bus interactions come in
     `getPrevious`/`setNew` pairs — a `setNew` commits a cell's value, and the access reading it
-    back issues a same-address `getPrevious` with the same payload (address, timestamp and
-    value). Both memory reads and memory writes are such a `getPrevious`/`setNew` pair (a read
-    additionally constrains the two values to agree).
+    back issues a same-address `getPrevious` with the same payload (address, timestamp and value).
+    Both memory reads and memory writes are such a pair (a read additionally constrains the two
+    values to agree).
 
-    The primary discipline is the order-free `admissibleMemoryBusM`, stated on the *net bus state*
-    (`busState`: the multiplicity each message is sent with, summed) and hence assuming nothing about
-    the order of the interaction list. Per evaluated address it asserts
-    the state shadow of two system-level facts:
-
-    1. **Bus balance** — a received record is a sent record: an in-block receive consumes an in-block
-       send, netting to zero (the defining property of the global bus argument, e.g. [1]).
-    2. **Window atomicity** — per address, at most one record enters the block from outside (the
-       entry receive) and at most one is left behind for later (the exit send); those are the only
-       messages the block leaves unbalanced.
-
-    Grouping is by *evaluated* address, so the statement is independent of how symbolic addresses
-    alias. The field-valued state stands for the underlying message *counts*, and determines them
-    only because the rely also fixes the multiplicities to `±1` and keeps the message count below
-    `p` — see `admissibleMemoryBusM`. Everything derived from these definitions, including the
-    count-based form the passes consume and the order-freeness of each rely, lives in
-    `Implementation/MemoryBusState.lean`.
-
-    No ordering of the interaction list is assumed anywhere: the positional discipline the pass
-    proofs consume (`admissibleMemoryBus`, `Implementation/MemoryBusState.lean`) is *derived* on a
-    certified canonical access order (`interleaveAccesses_admissibleMemoryBus_of_M`,
-    `Implementation/MemoryBusMultiset.lean`).
-
-    A separate per-message rely, `tsBounded` (TS_BOUND), bounds the value of a declared timestamp
-    payload slot; combined with the order-free discipline it lets a pass recover timestamp *order*
-    from the bounded values without trusting the list order.
-
-    A third rely, `entryKeyed` (ENTRY_KEY), *designates* the record entering the block from outside
-    on a chain bus: it carries a known key (for an execution bridge, the block's entry pc). It
-    strengthens window atomicity, which only counts the entering record without saying which one it
-    is — see `entryKeyed` for why the message data alone cannot say.
-
-    `MemoryBusShape.rely` bundles the three, keyed off which of them the shape declares; each VM's
+    `admissibleMemoryBusM` just *asserts* that this discipline holds, per evaluated address and on
+    the net bus state alone: the messages balance, except for at most one record entering the block
+    from outside and one left behind for later (bus balance, e.g. [1], plus window atomicity). It
+    assumes nothing about the order of the interaction list. `tsBounded` (TS_BOUND) and `entryKeyed`
+    (ENTRY_KEY) are two further per-bus relies; `MemoryBusShape.rely` bundles the three, and a VM's
     `admissible` states it once per declared bus.
 
     [1] https://link.springer.com/article/10.1007/BF01185212
 -/
-
 variable {p : ℕ}
 
 /-- A memory access is a `getPrevious` (reading the cell's current value) followed by a `setNew`
@@ -75,8 +46,8 @@ structure MemoryBusShape where
       `none` where the bus declares no bounded timestamp. -/
   tsField : Option (Nat × Nat) := none
   /-- The payload slot designating the entering record and the key it carries (see `entryKeyed`),
-      or `none` where the entering record is not designated. The key is a `Nat`, cast into the
-      field, which keeps the shape independent of the modulus. -/
+      or `none` where it is not designated. A `Nat` key, cast into the field, keeps the shape
+      independent of the modulus. -/
   entryKey : Option (Nat × Nat) := none
 
 /-- The multiplicity a `setNew` carries on this bus (`1` for `receiveThenSend`, `-1` for
@@ -99,6 +70,10 @@ def MemoryBusShape.address (shape : MemoryBusShape) (m : BusInteraction (ZMod p)
 def busState (M : List (BusInteraction (ZMod p))) : BusState p := fun message =>
   M.filter (fun m => (m.busId, m.payload) = message) |>.map BusInteraction.multiplicity |>.sum
 
+/-- The order-free memory discipline on one bus's messages, on the net bus state (`busState`: the
+    multiplicity each message is sent with, summed). The field-valued state stands for the message
+    *counts* only because of the two side conditions below: every multiplicity is `±setNewMult`, and
+    the message count stays below `p`. -/
 def admissibleMemoryBusM (shape : MemoryBusShape) (M : List (BusInteraction (ZMod p))) : Prop :=
   (∀ m ∈ M, m.multiplicity = shape.setNewMult ∨ m.multiplicity = -shape.setNewMult) ∧
   M.length + 1 < p ∧
@@ -131,13 +106,11 @@ def excessAt (shape : MemoryBusShape) (addr : List (Option (ZMod p)))
   (recvsAt shape addr M).map BusInteraction.payload
     - (sendsAt shape addr M).map BusInteraction.payload
 
-/-- ENTRY_KEY: every payload entering the block from outside carries `key` in slot `slot`.
-
-    For a chain bus (an execution bridge), window atomicity already says *one* record enters; this
-    says it is the block's entry record, identified by its key — the block is entered at its entry
-    pc, which the optimizer is told. The designation cannot be recovered from the message multiset:
-    a *rotation* of the block's records (entered at an interior instruction, wrapping through the
-    exit) yields the same multiset with a different entry, so it takes an assumption to exclude. -/
+/-- ENTRY_KEY: every payload entering the block from outside carries `key` in slot `slot` — on a
+    chain bus (an execution bridge), that the entering record is the block's entry record, at the
+    entry pc the optimizer is told. Window atomicity only *counts* the entering record; a rotated
+    filling of the block yields the same multiset with a different entry, so it takes an assumption
+    to exclude (see the README's assumptions). -/
 def entryKeyed (shape : MemoryBusShape) (slot : Nat) (key : ZMod p)
     (M : Multiset (BusInteraction (ZMod p))) : Prop :=
   ∀ (addr : List (Option (ZMod p))) (P : List (ZMod p)),
