@@ -248,13 +248,21 @@ def Circuit.admissible (circuit : Circuit p) (busSemantics : BusSemantics p)
       (fun m => decide (m.multiplicity ≠ 0) && busSemantics.isStateful m.busId))
 -- ANCHOR_END: admissible
 
+-- ANCHOR: satisfiesAlgebraic
+/-- Whether an assignment satisfies a circuit's *algebraic* constraints alone —
+    `Circuit.satisfies` without its acceptance obligation. -/
+def Circuit.satisfiesAlgebraic (circuit : Circuit p)
+    (assignment : Variable → ZMod p) : Prop :=
+  ∀ c ∈ circuit.algebraicConstraints, c.eval assignment = 0
+-- ANCHOR_END: satisfiesAlgebraic
+
 -- ANCHOR: satisfies
 /-- Whether a circuit is satisfied under a given assignment and bus semantics,
     i.e., whether it satisfies all algebraic constraints and every active bus
     interaction message is accepted. -/
 def Circuit.satisfies (circuit : Circuit p) (busSemantics : BusSemantics p)
     (assignment : Variable → ZMod p) : Prop :=
-  (∀ c ∈ circuit.algebraicConstraints, c.eval assignment = 0) ∧
+  circuit.satisfiesAlgebraic assignment ∧
   (∀ bi ∈ circuit.busInteractions,
     let message := bi.eval assignment
     message.multiplicity ≠ 0 → busSemantics.accepts message)
