@@ -212,14 +212,12 @@ omit [Fact p.Prime] in
     never forced, leaving one out is always legal, and a chip that must be present cannot be
     written down (`HostChip.instanceBound`). -/
 theorem canProduce_idle {host : Host p} {G : Guest p} :
-    CanProduce ⟨host, G⟩ ⟨[], host.getOutput 0⟩ := by
+    CanProduce ⟨host, G⟩
+      (VmAssignment.effects (vm := (⟨host, G⟩ : Vm p)) ⟨fun _ => [], fun _ => []⟩) := by
   refine ⟨⟨fun _ => [], fun _ => []⟩, ⟨fun t asg hasg => absurd hasg (by simp),
     ⟨fun t effect hmem => absurd hmem (by simp), fun t => by simp⟩, fun m => ?_,
-    by simp [GuestAssignment.instanceCount]⟩, ?_⟩
-  · show GuestAssignment.busEffect (G := G) (fun _ => []) m
-      + HostAssignment.busEffect (host := host) (fun _ => []) m = 0
-    simp [GuestAssignment.busEffect, HostAssignment.busEffect]
-  · show VmAssignment.effects (vm := ⟨host, G⟩) ⟨fun _ => [], fun _ => []⟩ = _
-    simp [VmAssignment.effects, VmAssignment.orderedInputInstances,
-      VmAssignment.inputInstances]
+    by simp [GuestAssignment.instanceCount]⟩, rfl⟩
+  show GuestAssignment.busEffect (G := G) (fun _ => []) m
+    + HostAssignment.busEffect (host := host) (fun _ => []) m = 0
+  simp [GuestAssignment.busEffect, HostAssignment.busEffect]
 

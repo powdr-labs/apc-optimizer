@@ -115,15 +115,15 @@ structure Host.exemptChip (host : Host p) (bs : BusSemantics p) (idx : Fin host.
 
 /-- The host can re-balance a stateless change: given a legal host assignment and a `δ` supported
     on stateless messages the semantics accepts, some legal host assignment nets exactly `δ` more,
-    **leaving the input and output chips alone**.
+    **leaving every IO-labeled chip alone**.
 
     Lookup host chips are free in exactly this way: their legality predicate constrains *which*
     payloads may carry a nonzero net multiplicity, not what that multiplicity is, so the change is
-    absorbed into what they already net rather than by adding instances. The input/output clauses
-    are what make the observed effect survive the rebuild.
+    absorbed into what they already net rather than by adding instances. The `isIo` clause is what
+    makes the observed effect survive the rebuild.
 
-    Note what this does *not* permit: the input and output chips are pinned, so the observed
-    `VmEffect` is carried across untouched. -/
+    Note what this does *not* permit: every IO-labeled chip is pinned, so the observed `VmEffect`
+    is carried across untouched. -/
 def Host.absorbsStateless (host : Host p) (bs : BusSemantics p) : Prop :=
   ∀ hA : HostAssignment p host, hA.satisfies →
     ∀ δ : BusState p,
@@ -131,8 +131,7 @@ def Host.absorbsStateless (host : Host p) (bs : BusSemantics p) : Prop :=
         bs.isStateful m.1 = false ∧
           ∃ mult : ZMod p, mult ≠ 0 ∧ bs.accepts ⟨m.1, mult, m.2⟩) →
       ∃ hA' : HostAssignment p host, hA'.satisfies ∧ hA'.busEffect = hA.busEffect + δ ∧
-        (∀ i ∈ host.inputChips, hA' i = hA i) ∧
-        hA' host.outputChip = hA host.outputChip
+        ∀ i : Fin host.chips.length, (host.chips.get i).isIo = true → hA' i = hA i
 
 /-- **The host turns a step's offsets into a rank order.** A claim about the VM, not about any
     guest circuit: whatever *legal* chips it is running, in a satisfying assignment within the

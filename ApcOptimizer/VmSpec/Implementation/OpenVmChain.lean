@@ -24,11 +24,7 @@ set_option autoImplicit false
 
     The one arithmetic input is `OpenVmParams.windowOk` — a field of the host's own configuration,
     not a hypothesis of the theorem below: a run too long to fit in the field could wrap, and then
-    "the timestamp went up" would stop meaning anything. `Chain.time_injOn`
-    (`openVmHost_inputTime_injOn`, at the bottom) is the other thing this same chain gives for
-    free: two different input-chip instances can never land on the same clock reading, which is
-    what makes `VmAssignment.orderedInputInstances`' sort by `Host.getInputTime` a genuine order
-    rather than one with possible ties. -/
+    "the timestamp went up" would stop meaning anything. -/
 
 namespace ApcOptimizer.OpenVM
 
@@ -113,17 +109,15 @@ theorem openVmHost_bridge_isolated (P : OpenVmParams p)
     ∃ (r : ConnectorBoundary p) (iR : Fin (hA (openVmInputChip P)).length → InputRead p),
       (∀ i, (hA (openVmInputChip P)).get i
           = busStateOf ((iR i).interactions P.ptrReg 0 1)) ∧
-      (∀ i, (openVmHost P).getInputTime (openVmInputChip P)
-          ((hA (openVmInputChip P)).get i) = (iR i).base) ∧
       ∀ m : BusMessage p, m.1 = 0 →
         hA.busEffect m = busStateOf (r.interactions 0) m +
           ∑ i, busStateOf ((iR i).interactions P.ptrReg 0 1) m := by
   classical
   -- The connector's single instance.
-  have hconnIdx : (openVmHost P).chips.length = 9 :=
+  have hconnIdx : (openVmHost P).chips.length = 8 :=
     rfl
   set k : Fin (openVmHost P).chips.length :=
-    ⟨8, by rw [hconnIdx]; omega⟩ with hk
+    ⟨7, by rw [hconnIdx]; omega⟩ with hk
   have hlen : (hA k).length ≤ 1 := hlegal.withinBound k
   obtain ⟨r, hr⟩ : ∃ r : ConnectorBoundary p, ∀ m : BusMessage p,
       ((hA k).map (fun effect => effect m)).sum = busStateOf (r.interactions 0) m := by
@@ -151,21 +145,17 @@ theorem openVmHost_bridge_isolated (P : OpenVmParams p)
   set iR : Fin (hA j).length → InputRead p := fun i => (hchoice i).choose with hiRdef
   have hiReq : ∀ i, (hA j).get i = busStateOf ((iR i).interactions P.ptrReg 0 1) :=
     fun i => (hchoice i).choose_spec
-  have hiRtime : ∀ i, (openVmHost P).getInputTime j ((hA j).get i) = (iR i).base := by
-    intro i
-    show inputTimeOf P.ptrReg 0 1 ((hA j).get i) = (iR i).base
-    rw [inputTimeOf, dif_pos (hchoice i)]
-  refine ⟨r, iR, hiReq, hiRtime, fun m hm => ?_⟩
+  refine ⟨r, iR, hiReq, fun m hm => ?_⟩
   have hj_ne_k : j ≠ k := by
     intro h
-    have hjv : (j : ℕ) = 7 := rfl
-    have hkv : (k : ℕ) = 8 := by rw [hk]
+    have hjv : (j : ℕ) = 6 := rfl
+    have hkv : (k : ℕ) = 7 := by rw [hk]
     rw [h, hkv] at hjv
     omega
   -- Every other chip leaves bus `0` alone.
   have hzero :
       ∀ t : Fin (openVmHost P).chips.length,
-      (t : ℕ) ≠ 8 → (t : ℕ) ≠ 7 → ∀ c' ∈ hA t, c' m = 0 := by
+      (t : ℕ) ≠ 7 → (t : ℕ) ≠ 6 → ∀ c' ∈ hA t, c' m = 0 := by
     intro t ht ht7 c' hc'
     have hleg := hlegal.producible t c' hc'
     by_contra hne
@@ -176,15 +166,10 @@ theorem openVmHost_bridge_isolated (P : OpenVmParams p)
     · exact absurd (hleg m hne).1 (by rw [hm]; omega)
     · exact absurd (hleg m hne).1 (by rw [hm]; simp only [openVmMemBusId]; omega)
     · exact absurd (hleg m hne).1 (by rw [hm]; simp only [openVmMemBusId]; omega)
-    · obtain ⟨r', hr'⟩ := hleg
-      rw [hr'] at hne
-      obtain ⟨msg, hmsg, heq⟩ := exists_of_busStateOf_ne_zero hne
-      exact absurd ((congrArg Prod.fst heq).symm.trans
-        (OutputRead.interactions_busId r' 1 msg hmsg)) (by rw [hm]; omega)
     · exact absurd rfl ht7
     · exact absurd rfl ht
   have hz : ∀ t : Fin (openVmHost P).chips.length,
-      (t : ℕ) ≠ 8 → (t : ℕ) ≠ 7 → ((hA t).map (fun effect => effect m)).sum = 0 := by
+      (t : ℕ) ≠ 7 → (t : ℕ) ≠ 6 → ((hA t).map (fun effect => effect m)).sum = 0 := by
     intro t ht ht7
     refine List.sum_eq_zero (fun v hv => ?_)
     obtain ⟨c', hc', rfl⟩ := List.mem_map.mp hv
@@ -614,7 +599,7 @@ theorem openVmHost_ordersRanks [Fact p.Prime] (P : OpenVmParams p) :
     fun x => if h : x = ⟨t, jx⟩ then by subst h; exact L else Classical.choice (hNonempty x)
   have hSL : S ⟨t, jx⟩ = L := by simp only [S, dif_pos]
   -- The connector, the input-chip instances' own witnesses, and the bridge's balance equation.
-  obtain ⟨r, iR, -, -, hrnet⟩ :=
+  obtain ⟨r, iR, -, hrnet⟩ :=
     openVmHost_bridge_isolated P hsat.satisfiesHost
   have hbal : ∀ m : BusMessage p, m.1 = 0 →
       a.guestAssignments.busEffect m +
@@ -660,62 +645,5 @@ theorem openVmHost_ordersRanks [Fact p.Prime] (P : OpenVmParams p) :
     < (openVmRankModel (p := p) openVmMemBusId).rank _
   simp only [openVmRankModel]
   omega
-
-/-- **`openVmHost`'s input-chip instances run at pairwise distinct times.** Without this, nothing
-    would force two input-chip instances to distinct timestamps, so a
-    `VmAssignment.orderedInputInstances` tie could still swap which chunk is read first. Now that
-    the input chip shares the execution bridge with every guest
-    instruction (`InputRead.pcFrom`/`pcTo`), two different realized instances are two
-    different non-connector arcs of the very same `VmChain.Chain` — and `Chain.time_injOn`
-    already rules out two different arcs sharing a clock reading. -/
-theorem openVmHost_inputTime_injOn [Fact p.Prime] (P : OpenVmParams p)
-    {G : Guest p} (hGuests : (openVmHost P).legalGuests G)
-    {a : VmAssignment p ⟨openVmHost P, G⟩} (hsat : VmSat ⟨openVmHost P, G⟩ a) :
-    Set.InjOn (fun i => (openVmHost P).getInputTime (openVmInputChip P)
-        ((a.hostAssignment (openVmInputChip P)).get i))
-      (Set.univ : Set (Fin (a.hostAssignment (openVmInputChip P)).length)) := by
-  classical
-  have hp := P.windowOk
-  have hppos : 0 < p := Nat.lt_of_le_of_lt (Nat.zero_le _) hp
-  haveI : NeZero p := ⟨by omega⟩
-  have hNonempty : ∀ x : ((s : Fin G.length) × Fin (a.guestAssignments s).length),
-      Nonempty (StepLayout (G.get x.1) (openVmGuestRules defaultBusMap openVmMemBusId)
-        ((a.guestAssignments x.1).get x.2) P.maxWindow openVmTimestampBound) :=
-    fun x => openVmHost_stepLayout_unpack P _ (hGuests _ (List.get_mem G x.1))
-      _ (hsat.satisfiesGuest x.1 _ (List.get_mem _ _))
-      (satisfiesStateless_of_sinks (openVmHost_legalGuest_unpack P) (openVmHost_sinksAreTables P)
-        hGuests hsat x.1 _ (List.get_mem _ _))
-  have S : ∀ x : ((s : Fin G.length) × Fin (a.guestAssignments s).length),
-      StepLayout (G.get x.1) (openVmGuestRules defaultBusMap openVmMemBusId)
-        ((a.guestAssignments x.1).get x.2) P.maxWindow openVmTimestampBound :=
-    fun x => Classical.choice (hNonempty x)
-  obtain ⟨r, iR, -, hiRtime, hrnet⟩ :=
-    openVmHost_bridge_isolated P hsat.satisfiesHost
-  have hbal : ∀ m : BusMessage p, m.1 = 0 →
-      a.guestAssignments.busEffect m +
-        (∑ i, busStateOf ((iR i).interactions P.ptrReg 0 1) m)
-        + busStateOf (r.interactions 0) m = 0 := by
-    intro m hm
-    have hb := hsat.balances m
-    rw [busEffect_apply, hrnet m hm] at hb
-    linear_combination hb
-  have hcount : (∑ s : Fin G.length, (a.guestAssignments s).length) ≤ P.maxInstances :=
-    hsat.withinBudget
-  have hcountI : (a.hostAssignment (openVmInputChip P)).length ≤ P.maxInputInstances :=
-    hsat.satisfiesHost.withinBound (openVmInputChip P)
-  set C := bridgeChain a.guestAssignments S iR P.ptrReg r (openVm_negOne_ne_one P) hbal
-    P.inputWindowOk hcount hcountI hp
-    with hCdef
-  rintro i1 - i2 - heq
-  have hne_conn1 : (some (.inr i1) : BridgeArc a.guestAssignments _) ≠ C.conn :=
-    Option.some_ne_none _
-  have hne_conn2 : (some (.inr i2) : BridgeArc a.guestAssignments _) ≠ C.conn :=
-    Option.some_ne_none _
-  have htime : C.time (C.src (some (.inr i1))) = C.time (C.src (some (.inr i2))) := by
-    show (iR i1).base = (iR i2).base
-    rw [← hiRtime i1, ← hiRtime i2]
-    exact heq
-  have hres := C.time_injOn hne_conn1 hne_conn2 htime
-  simpa using hres
 
 end ApcOptimizer.OpenVM

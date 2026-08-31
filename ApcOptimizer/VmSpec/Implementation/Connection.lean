@@ -25,8 +25,8 @@ set_option autoImplicit false
       whereas `VmAssignment.busEffect` sums over *all* of them. So replacing a guest chip may well
       unbalance the stateless buses (dropping a redundant range check is exactly this), and the
       host's lookup chips have to be rebuilt to match. `Host.absorbsStateless` is the permission
-      to do that, and it pins the input and output chips, so the observed `VmEffect` is carried
-      across untouched.
+      to do that, and it pins every IO-labeled chip, so the observed `VmEffect` is carried across
+      untouched.
 
     Where the assumptions live: everything about the guest chips is `Circuit.legalGuest`, every
     clause of which has the shape "the chip's algebraic constraints imply X", and it is required
@@ -83,22 +83,21 @@ theorem guestInstanceCount_cons {c : Circuit p} {R : Guest p}
 
 --------- Carrying the observed effect across ---------
 
-/-- Two assignments over the same host with the same input- and output-chip instances have the
-    same observable effect, whatever their guest chips do. -/
+/-- Two assignments over the same host with the same IO-labeled chip instances have the same
+    observable effect, whatever their guest chips do. -/
 theorem effects_eq_of_io {host : Host p} {G G' : Guest p}
     {a : VmAssignment p ⟨host, G⟩} {a' : VmAssignment p ⟨host, G'⟩}
-    (hin : ∀ i ∈ host.inputChips, a.hostAssignment i = a'.hostAssignment i)
-    (hout : a.hostAssignment host.outputChip = a'.hostAssignment host.outputChip) :
+    (hio : ∀ i : Fin host.chips.length, (host.chips.get i).isIo = true →
+      a.hostAssignment i = a'.hostAssignment i) :
     a.effects = a'.effects := by
-  have hinst : (host.inputChips.flatMap fun i => (a.hostAssignment i).map (fun c => (i, c)))
-      = host.inputChips.flatMap fun i => (a'.hostAssignment i).map (fun c => (i, c)) :=
-    List.flatMap_congr (fun i hi => by rw [hin i hi])
-  have hord : a.orderedInputInstances = a'.orderedInputInstances := by
-    unfold VmAssignment.orderedInputInstances VmAssignment.inputInstances
-    rw [hinst]
-  exact congrArg₂ VmEffect.mk
-    (congrArg (List.flatMap fun x => host.getInputChunk x.1 x.2) hord)
-    (congrArg host.getOutput (congrArg (fun l => l.headD 0) hout))
+  show (List.finRange host.chips.length).filterMap
+      (fun t => if (host.chips.get t).isIo then some (a.hostAssignment t) else none)
+    = (List.finRange host.chips.length).filterMap
+      (fun t => if (host.chips.get t).isIo then some (a'.hostAssignment t) else none)
+  refine List.filterMap_congr (fun t _ => ?_)
+  cases h : (host.chips.get t).isIo
+  · rfl
+  · simp [hio t h]
 
 --------- One substitution ---------
 
@@ -106,10 +105,9 @@ theorem effects_eq_of_io {host : Host p} {G G' : Guest p}
     chip by a `Circuit.isSoundReplacementOf` of it, leaving the rest of the VM alone, produces no
     effect the original could not.
 
-    The witness keeps the host's stateful chips — memory, input, output — exactly as they were,
-    replaces each instance of the substituted chip by the assignment
-    `Circuit.isSoundReplacementOf` promises, and lets `Host.absorbsStateless` rebuild the lookup
-    chips around the difference.
+    The witness keeps every IO-labeled host chip — memory, input — exactly as it was, replaces
+    each instance of the substituted chip by the assignment `Circuit.isSoundReplacementOf`
+    promises, and lets `Host.absorbsStateless` rebuild the lookup chips around the difference.
 
     Legality is required of the list being *run* — the optimized one. Nothing is asked of `c`:
     `VmSat` carries no circuit-level property, so the restored run has nothing to re-establish. -/
@@ -181,7 +179,7 @@ theorem vmSoundReplacement_cons [Fact p.Prime]
       refine ⟨(bi.eval asg).multiplicity, hmult, ?_⟩
       rw [← show ((bi.eval asg).busId, (bi.eval asg).payload) = m from hmsg]
       exact hdsat.2 bi hbi hmult
-  obtain ⟨hA', hA'legal, hA'net, hA'in, hA'out⟩ :=
+  obtain ⟨hA', hA'legal, hA'net, hA'io⟩ :=
     hHost.absorbsStateless a'.hostAssignment (hsat'.satisfiesHost) δ hδspec
   have hsat : VmSat (⟨host, c :: R⟩ : Vm p) ⟨gA, hA'⟩ := by
     refine ⟨fun t asg hasg => (hsatG t asg hasg).1, hA'legal, fun m => ?_, ?_⟩
@@ -199,7 +197,7 @@ theorem vmSoundReplacement_cons [Fact p.Prime]
         (gA := Fin.tail a'.guestAssignments) (gA' := a'.guestAssignments) rfl (fun _ => rfl)
       rw [h1, List.length_map, ← h2]
       exact hsat'.withinBudget
-  exact ⟨⟨gA, hA'⟩, hsat, effects_eq_of_io hA'in hA'out⟩
+  exact ⟨⟨gA, hA'⟩, hsat, effects_eq_of_io hA'io⟩
 
 --------- Many substitutions ---------
 

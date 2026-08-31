@@ -52,12 +52,6 @@ theorem exists_of_busStateOf_ne_zero {msgs : List (BusInteraction (ZMod p))} {m 
   obtain ⟨hy1, hy2⟩ := List.mem_filter.mp hy
   exact absurd ⟨y, hy1, of_decide_eq_true hy2⟩ hcon
 
-theorem OutputRead.interactions_busId (r : OutputRead p) (memBusId : Nat) :
-    ∀ msg ∈ r.interactions memBusId, msg.busId = memBusId := by
-  intro msg hmsg
-  obtain ⟨⟨i, w, t⟩, -, rfl⟩ := List.mem_map.mp hmsg
-  rfl
-
 theorem ConnectorBoundary.interactions_busId (r : ConnectorBoundary p) (execBusId : Nat) :
     ∀ msg ∈ r.interactions execBusId, msg.busId = execBusId := by
   intro msg hmsg
@@ -120,14 +114,8 @@ theorem openVmHost_sinksAreTables (P : OpenVmParams p) :
   · have hbus := (hleg (mb, ml) hcm).1
     subst hbus
     simp [openVmBusSemantics, defaultBusMap, OpenVmBusType.isStateful] at hm
-  -- Output/input are pinned to an exact witness, every interaction of which is on the memory bus.
-  · obtain ⟨r, hr⟩ := hleg
-    rw [hr] at hcm
-    obtain ⟨msg, hmsg, heq⟩ := exists_of_busStateOf_ne_zero hcm
-    have hbus : mb = 1 :=
-      (congrArg Prod.fst heq).symm.trans (OutputRead.interactions_busId r 1 msg hmsg)
-    subst hbus
-    simp [openVmBusSemantics, defaultBusMap, OpenVmBusType.isStateful] at hm
+  -- The input chip is pinned to an exact witness, every interaction of which is on the memory bus
+  -- or the execution bridge.
   · obtain ⟨r, hr⟩ := hleg
     rw [hr] at hcm
     obtain ⟨msg, hmsg, heq⟩ := exists_of_busStateOf_ne_zero hcm
@@ -224,21 +212,6 @@ theorem memoryPayload?_word {as ptr ts : ZMod p} {w : Vector (ZMod p) 4} {f : Me
   simp at hd ⊢
   tauto
 
-/-- Every message an `OutputRead` describes carries byte-valued data limbs: the word itself by
-    `OutputRead.wordsAreBytes`, the three padding limbs by `isByte_zero`. -/
-theorem OutputRead.interactions_data (r : OutputRead p) (memBusId : Nat) :
-    ∀ msg ∈ r.interactions memBusId, ∀ f : MemoryPayload p,
-      memoryPayload? msg.payload = some f → ∀ d ∈ f.data, isByte d := by
-  intro msg hmsg f hf d hd
-  obtain ⟨⟨i, w, t⟩, hiw, rfl⟩ := List.mem_map.mp hmsg
-  have hw : isByte w := r.wordsAreBytes w (List.of_mem_zip (List.of_mem_zip hiw).2).1
-  simp only [memoryPayload?, Option.some.injEq] at hf
-  subst hf
-  simp at hd
-  rcases hd with rfl | rfl | rfl | rfl
-  · exact hw
-  all_goals exact isByte_zero
-
 /-- Every message an `InputRead` describes carries byte-valued data limbs — the peeked register
     value by `ptrLimbsAreBytes`, the overwritten word by `oldWordIsBytes`, the written value by
     `byteIsByte`. -/
@@ -307,11 +280,11 @@ theorem openVmHost_finalize_exempt (P : OpenVmParams p) :
     exact (hleg (mb, ml) hcm).2.1
 
 /-- **`openVmHost`'s stateful traffic maintains the bus invariants**, apart from memory
-    finalization (`openVmHost_finalize_exempt`). An eight-way split: the four lookup chips pin
+    finalization (`openVmHost_finalize_exempt`). A seven-way split: the four lookup chips pin
     their bus id to a stateless bus, so they cannot touch a stateful message at all; memory
-    initialization and the output/input chips each carry byte-valued data limbs, by the
-    predicates `OpenVm.lean` states for them; and the connector is on the execution bridge, whose
-    invariant is polarity alone.
+    initialization and the input chip each carry byte-valued data limbs, by the predicates
+    `OpenVm.lean` states for them; and the connector is on the execution bridge, whose invariant
+    is polarity alone.
 
     Memory initialization is the one genuinely irreducible case: nothing precedes it on the rank
     order to derive it from, so it is still asserted directly. -/
@@ -344,14 +317,6 @@ theorem openVmHost_statefulChipsMaintain (P : OpenVmParams p) :
     exact hbytes
   -- Memory finalization: excluded by `ht` — this is exactly the exempt chip.
   · exact absurd rfl ht
-  -- Output chip: pinned to an `OutputRead`, whose words are bytes.
-  · obtain ⟨r, hr⟩ := hleg
-    rw [hr] at hcm
-    obtain ⟨msg, hmsg, heq⟩ := exists_of_busStateOf_ne_zero hcm
-    obtain ⟨hb, hpl⟩ := Prod.mk.injEq .. ▸ heq
-    have hbus : mb = 1 := hb ▸ OutputRead.interactions_busId r 1 msg hmsg
-    subst hbus
-    exact hpl ▸ memory_maintains (hpl ▸ OutputRead.interactions_data r 1 msg hmsg)
   -- Input chip: on the execution bridge (polarity alone, like the connector) or pinned to an
   -- `InputRead`'s memory writes, whose bytes and old words are bytes.
   · obtain ⟨r, hr⟩ := hleg
@@ -404,8 +369,9 @@ theorem restrict_ne_zero {δ : BusState p} {b : Nat} {m : BusMessage p}
 /-- **`openVmHost` can re-balance a stateless change.** `δ` lives on the four lookup buses, and
     each lookup chip absorbs its own bus's slice of it into what its instances already net: the
     chip's predicate constrains *which* payloads may carry a nonzero net, not what that net is, so
-    it is closed under sums (`hadd`, `hsum`). The memory, input and output chips are left
-    untouched, which is what carries the observed `VmEffect` across the rebuild. -/
+    it is closed under sums (`hadd`, `hsum`). The IO chips — memory init/final and input — and the
+    connector are left untouched, which is what carries the observed `VmEffect` across the
+    rebuild. -/
 theorem openVmHost_absorbsStateless (P : OpenVmParams p) :
     (openVmHost P).absorbsStateless
       (openVmBusSemantics p defaultBusMap) := by
@@ -513,7 +479,7 @@ theorem openVmHost_absorbsStateless (P : OpenVmParams p) :
     simp only [defaultBusMap] at hacc
     revert hacc
     rcases hml : m.2 with _ | ⟨x, _ | ⟨y, _ | ⟨z, rest⟩⟩⟩ <;> exact id
-  refine ⟨hA', ⟨?_, ?_⟩, ?_, ?_, rfl⟩
+  refine ⟨hA', ⟨?_, ?_⟩, ?_, ?_⟩
   · intro t effect hmem
     fin_cases t <;> simp only [hA'def] at hmem
     · simp at hmem
@@ -542,27 +508,30 @@ theorem openVmHost_absorbsStateless (P : OpenVmParams p) :
     · exact Nat.le_refl 1
     all_goals exact hlegal.withinBound _
   · funext m
-    show (∑ t : Fin 9, ((hA' t).map (fun c => c m)).sum) = hA.busEffect m + δ m
-    have hsplit : ∀ t : Fin 9, ((hA' t).map (fun c => c m)).sum
+    show (∑ t : Fin 8, ((hA' t).map (fun c => c m)).sum) = hA.busEffect m + δ m
+    have hsplit : ∀ t : Fin 8, ((hA' t).map (fun c => c m)).sum
         = ((extra t).map (fun c => c m)).sum + ((hA t).map (fun c => c m)).sum := by
       intro t
       fin_cases t <;> simp [hA'def, hextra, hsumApply, add_comm]
     rw [Finset.sum_congr rfl (fun t _ => hsplit t), Finset.sum_add_distrib]
-    have hhost : (∑ t : Fin 9, ((hA t).map (fun c => c m)).sum) = hA.busEffect m := rfl
-    rw [hhost, add_comm ((∑ t : Fin 9, ((extra t).map (fun c => c m)).sum)), add_right_inj]
-    -- `Fin.sum_univ_eight` is Mathlib's widest, so peel index `0` first.
-    rw [Fin.sum_univ_succ, Fin.sum_univ_eight]
-    show (if m.1 = 2 then δ m else 0) + 0
-      + (((if m.1 = 6 then δ m else 0) + 0) + ((if m.1 = 3 then δ m else 0) + 0)
-        + ((if m.1 = 7 then δ m else 0) + 0) + 0 + 0 + 0 + 0 + 0) = δ m
+    have hhost : (∑ t : Fin 8, ((hA t).map (fun c => c m)).sum) = hA.busEffect m := rfl
+    rw [hhost, add_comm ((∑ t : Fin 8, ((extra t).map (fun c => c m)).sum)), add_right_inj]
+    rw [Fin.sum_univ_eight]
     by_cases hz : δ m = 0
-    · simp [hz]
-    · rcases hsupp m hz with h | h | h | h <;> simp [h]
-  · -- The only input chip is index `7`, which `hA'` leaves alone.
+    · simp [hextra, hz]
+    · rcases hsupp m hz with h | h | h | h <;> simp [hextra, h]
+  · -- The IO chips — memory init/final and the input chip — are what `hA'` leaves alone; the
+    -- lookup chips it rebuilds and the connector are not IO.
     intro i hi
-    simp only [openVmHost_inputChips, List.mem_singleton] at hi
-    subst hi
-    rfl
+    fin_cases i
+    · simp [openVmHost, pcLookupHostChip, lookupTableHostChip] at hi
+    · simp [openVmHost, bitwiseLookupHostChip, lookupTableHostChip] at hi
+    · simp [openVmHost, variableRangeCheckerHostChip, lookupTableHostChip] at hi
+    · simp [openVmHost, tupleRangeCheckerHostChip, lookupTableHostChip] at hi
+    · rfl
+    · rfl
+    · rfl
+    · simp [openVmHost, connectorHostChip, singletonWitnessChip] at hi
 
 /-- **The rules `OpenVm.lean` writes out are the ones `openVmBusSemantics` induces.** This is the
     only place the two meet: `accepts` and `isStateful` agree definitionally (the former *is* the

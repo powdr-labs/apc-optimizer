@@ -257,15 +257,10 @@ lookupPin_mem
 Expression.foldConstWith_eq
 checkMultiplicitiesWith_sound
 
-# `OpenVm.lean`'s `rfl`-lemma naming `openVmHost`'s single input chip, used by
-# `openVmHost_absorbsStateless` in a `simp only` that rewrites by `rfl`.
-ApcOptimizer.OpenVM.openVmHost_inputChips
-
 # `OpenVmConnection.lean` discharges the connecting theorem's host-side conditions for
 # `openVmHost`. Same story: its own root is `openVm_vmSoundReplacement`, and the rest feed its
 # proof.
 ApcOptimizer.OpenVM.exists_of_busStateOf_ne_zero
-ApcOptimizer.OpenVM.OutputRead.interactions_busId
 ApcOptimizer.OpenVM.InputRead.interactions_busId
 ApcOptimizer.OpenVM.ConnectorBoundary.interactions_busId
 ApcOptimizer.OpenVM.openVmHost_sinksAreTables
@@ -273,7 +268,6 @@ ApcOptimizer.OpenVM.openVmHost_forcesAccepts
 ApcOptimizer.OpenVM.openVmHost_realizes
 ApcOptimizer.OpenVM.isByte_zero
 ApcOptimizer.OpenVM.memoryPayload?_word
-ApcOptimizer.OpenVM.OutputRead.interactions_data
 ApcOptimizer.OpenVM.InputRead.interactions_data
 ApcOptimizer.OpenVM.memory_maintains
 ApcOptimizer.OpenVM.bridge_maintains
@@ -307,27 +301,6 @@ VmChain.Chain.exists_prefix
 VmChain.Chain.sum_time_src_eq_dst
 VmChain.Chain.time_conn
 VmChain.Chain.arc_position
-# `Chain.time_injOn`/`Chain.src_injOn` (no two non-connector arcs share a clock reading, hence not
-# a state either) and their supporting lemmas: the input chip is now wired onto the execution
-# bridge (`InputRead.pcFrom`/`pcTo`/`d`, `OpenVmChain.lean`'s `BridgeArc`), so these are consumed —
-# by `openVmHost_inputTime_injOn` below, closing A2 in `agent-docs/vm-spec-audit.md` — but the
-# whole `VmSpec/Implementation/` tree is still outside the four roots above, same as everything
-# else in this section.
-VmChain.mod_pred_succ
-VmChain.mod_succ_pred
-VmChain.no_selfBalanced_of_not_mem_conn
-VmChain.walk_conn_shift
-VmChain.walk_conn_cycleLen
-VmChain.walk_conn_ne_conn_of_pos_lt
-VmChain.walk_conn_injOn
-VmChain.walk_conn_periodic
-VmChain.walk_conn_mod
-VmChain.walk_conn_dst_eq_src_succ
-VmChain.cycleSet_selfBalanced
-VmChain.cycleSet_eq_univ
-VmChain.exists_index_of_ne_conn
-VmChain.Chain.time_injOn
-VmChain.Chain.src_injOn
 ApcOptimizer.OpenVM.list_map_sum_eq_sum_fin
 ApcOptimizer.OpenVM.guestNet_eq_sum_inst
 ApcOptimizer.OpenVM.connector_busStateOf
@@ -352,7 +325,6 @@ ApcOptimizer.OpenVM.bridge_advTime
 ApcOptimizer.OpenVM.bridge_total_le
 ApcOptimizer.OpenVM.bridge_totalLt
 ApcOptimizer.OpenVM.bridge_chain_bound
-ApcOptimizer.OpenVM.openVmHost_inputTime_injOn
 
 # `OpenVmLegalAudit.lean` checks `Circuit.legalGuest` against both OpenVM memory-send shapes: the
 # read-echo (carrying OpenVM's own `AssertLtSubAir`, from which the timestamp ordering is derived)

@@ -9,8 +9,8 @@ set_option autoImplicit false
     `Spec.lean` defines equivalence for a single `Circuit`, with "the rest of the VM" abstracted
     into `BusSemantics`: per-message `accepts`/`admissible`/`maintainsInvariants` predicates, with
     conditions on VM-level invariants that are not obviously true. This file makes the VM explicit
-    instead: host chips are named, buses balance globally, and the observable is the VM's
-    input/output, so no per-message assumptions are needed.
+    instead: host chips are named, buses balance globally, and the VM observable is the collection
+    of effect of the host's IO-labeled chips (`HostChip.isIo`).
 
     The definition is equi-effectfulness: for every effect one chipset can produce (`CanProduce`),
     the other can produce it too — soundness one direction (`VmSoundReplacement`), completeness
@@ -37,17 +37,9 @@ structure HostChip (p : ℕ) where
   canProduce : BusState p → Prop
   /-- The most instances of this chip a satisfying assignment may realize. -/
   instanceBound : ℕ
-
-/-- A VM's input: a stream of values. -/
-abbrev VmInput (p : ℕ) := List (ZMod p)
-
-/-- A VM's output: an array of values. -/
-abbrev VmOutput (p : ℕ) := List (ZMod p)
-
-/-- The externally observable effect of a VM: inputs and outputs. -/
-structure VmEffect (p : ℕ) where
-  input : VmInput p
-  output : VmOutput p
+  /-- Whether this chip's effects are part of the whole VM's effects (`VmAssignment.effects`).
+      For example, memory initialization, finalization, hints... Non-examples: tables. -/
+  isIo : Bool
 
 /-- **The VM the correctness statement is about.** Every field here is audited, on one of two
     counts: it feeds `VmSat`/`VmAssignment.effects`, and so determines what `CanProduce` — hence
@@ -89,19 +81,6 @@ structure Host (p : ℕ) where
       These live on the `Host` because they are the VM's requirements, not any chip's. They are
       *not* a conjunct of `VmSat`, because they are not (and cannot) be checked in constraints.  -/
   legalGuest : Circuit p → Prop
-  /-- The `chips` indices that pull the input stream. A list rather than a single index: a VM may
-      read input through several chip types. -/
-  inputChips : List (Fin chips.length)
-  /-- Map from an input chip instance's effects to its contribution to the input stream, indexed
-      by which of `inputChips` produced it (chip types read the stream differently). -/
-  getInputChunk : Fin chips.length → BusState p → VmInput p
-  /-- Map from an input chip instance's effects to when it ran. Input chunks are ordered by this. -/
-  getInputTime : Fin chips.length → BusState p → ZMod p
-  /-- The `chips` index that is the output chip type (`instanceBound` `1`, so at most one
-      instance: see `VmAssignment.effects`). -/
-  outputChip : Fin chips.length
-  /-- Map from an output chip instance's effects to the output array. -/
-  getOutput : BusState p → VmOutput p
   /-- No timestamp overflow: a run of `maxInstances` instructions, each advancing the clock by less
       than `maxWindow`, does not overflow.
 
@@ -210,22 +189,14 @@ structure VmSat (vm : Vm p) (a : VmAssignment p vm) : Prop where
   withinBudget : a.guestAssignments.instanceCount ≤ vm.host.maxInstances
 -- ANCHOR_END: vmSat
 
-/-- Every instance of every input chip, tagged with the `Host.inputChips` index that realized it. -/
-def VmAssignment.inputInstances {vm : Vm p} (a : VmAssignment p vm) :
-    List (Fin vm.host.chips.length × BusState p) :=
-  vm.host.inputChips.flatMap fun i => (a.hostAssignment i).map (fun c => (i, c))
+/-- The externally observable effect of a VM: for each IO-labeled host-chip type
+    (`HostChip.isIo`), in `Host.chips` order, the list of its instances' net bus effects.  -/
+abbrev VmEffect (p : ℕ) := List (List (BusState p))
 
-/-- The input-chip instances of a VM assignment, in the order their chunks are read: sorted by
-    `Host.getInputTime`. -/
-def VmAssignment.orderedInputInstances {vm : Vm p} (a : VmAssignment p vm) :
-    List (Fin vm.host.chips.length × BusState p) :=
-  a.inputInstances.mergeSort
-    (fun x y => decide ((vm.host.getInputTime x.1 x.2).val ≤ (vm.host.getInputTime y.1 y.2).val))
-
-/-- The effects of a VM assignment: input and outputs -/
+/-- The effects of a VM assignment. See `VmEffect`. -/
 def VmAssignment.effects {vm : Vm p} (a : VmAssignment p vm) : VmEffect p :=
-  { input := a.orderedInputInstances.flatMap (fun x => vm.host.getInputChunk x.1 x.2),
-    output := vm.host.getOutput ((a.hostAssignment vm.host.outputChip).headD 0) }
+  (List.finRange vm.host.chips.length).filterMap
+    (fun t => if (vm.host.chips.get t).isIo then some (a.hostAssignment t) else none)
 
 -- ANCHOR: canEffect
 /-- Whether `vm` can produce effect `e`. -/
