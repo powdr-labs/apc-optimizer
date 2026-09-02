@@ -125,7 +125,15 @@ A {deftech}_circuit_ is simply a collection of algebraic constraints and symboli
 
 {docstring Circuit}
 
-A circuit is satisfied under an assignment when all algebraic constraints evaluate to zero and every bus interaction message is accepted by the bus semantics:
+A circuit is satisfied under an assignment when all algebraic constraints evaluate to zero and every bus interaction message is accepted by the bus semantics. The algebraic half is named separately, so that it can be referred to (elsewhere) without assuming bus semantics.
+
+```anchor satisfiesAlgebraic
+/-- Whether an assignment satisfies a circuit's *algebraic* constraints alone —
+    `Circuit.satisfies` without its acceptance obligation. -/
+def Circuit.satisfiesAlgebraic (circuit : Circuit p)
+    (assignment : Variable → ZMod p) : Prop :=
+  ∀ c ∈ circuit.algebraicConstraints, c.eval assignment = 0
+```
 
 ```anchor satisfies
 /-- Whether a circuit is satisfied under a given assignment and bus semantics,
@@ -133,7 +141,7 @@ A circuit is satisfied under an assignment when all algebraic constraints evalua
     interaction message is accepted. -/
 def Circuit.satisfies (circuit : Circuit p) (busSemantics : BusSemantics p)
     (assignment : Variable → ZMod p) : Prop :=
-  (∀ c ∈ circuit.algebraicConstraints, c.eval assignment = 0) ∧
+  circuit.satisfiesAlgebraic assignment ∧
   (∀ bi ∈ circuit.busInteractions,
     let message := bi.eval assignment
     message.multiplicity ≠ 0 → busSemantics.accepts message)
