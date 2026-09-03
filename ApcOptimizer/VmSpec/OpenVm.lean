@@ -1,4 +1,5 @@
 import ApcOptimizer.VmSpec.Legal
+import ApcOptimizer.VmSpec.Legal
 import ApcOptimizer.OpenVmSemantics
 
 set_option autoImplicit false
@@ -91,28 +92,37 @@ def tupleRangeCheckerHostChip (busId : Nat := 7) (size1 : Nat := 256) (size2 : N
     | [x, y] => x.val < size1 ∧ y.val < size2
     | _ => False
 
-/-- The memory-initialization host chip (default bus `1`): OpenVM's memory boundary chip on its
-    send side (whitepaper §4.6.2: it "adds messages to the send multiset at timestamp `0`" that
-    "must correspond to the initial memory state"). Persistent mode commits that state as a Merkle
-    root (unmodeled — a cross-segment fact, §5.2); volatile mode is all `0`. The AIR only
-    byte-constrains persistent-mode data indirectly, through the cross-segment structure, but this
-    models it as byte-constrained either way.
+/-- **The initial memory image, required to be a *function* of the address.**
 
-    Scoped to registers (`1`), main memory (`2`), and address space `3` — the same three
-    `memoryFinalizeHostChip` covers — the full set of address spaces this host models.
+    Whitepaper §4.6.2: the boundary chip "add[s] messages to the send multiset at timestamp 0",
+    and "the messages at timestamp 0 … must correspond to the initial memory state"; it "exposes a
+    Merkle root of the initial memory state as a public value and constrains the messages at
+    timestamp 0 to be consistent with the Merkle root via Merkle proofs".
 
-    `isIo`: this chip's instances *are* (half of) the VM's externally observable effect — the
-    initial memory image, every address space alike, address space `3` included. There is no
-    dedicated output chip and no special-casing of address space `3` here; a sound/complete
-    replacement must reproduce this chip's net bus contribution exactly, same as any other IO
-    chip's. -/
+    A memory state is a function from address to value, and a Merkle root commits to exactly one.
+    `memoryInitHostChip` keeps only the per-message shape and drops the correspondence, so it
+    admits an image holding two different records for one cell — which is the whole of what makes
+    `Audit/AdmissibleGap.lean`'s `badChip` run balance. Since every record here is stamped `0`,
+    address injectivity is exactly send-uniqueness at `(address, timestamp)` for this chip.
+
+    The Merkle root itself stays unmodeled (a cross-segment fact, §5.2); this asks only for the
+    consequence a single segment's admissibility needs. -/
 def memoryInitHostChip (memBusId : Nat := openVmMemBusId) : HostChip p where
   canProduce contribution :=
-    ∀ message : BusMessage p, contribution message ≠ 0 →
+    (∀ message : BusMessage p, contribution message ≠ 0 →
       message.1 = memBusId ∧ contribution message = 1 ∧
       ∃ f : MemoryPayload p, memoryPayload? message.2 = some f ∧
         (∀ d ∈ f.data, isByte d) ∧ message.2[6]? = some 0 ∧
-        (f.addressSpace.val = 1 ∨ f.addressSpace.val = 2 ∨ f.addressSpace.val = 3)
+        (f.addressSpace.val = 1 ∨ f.addressSpace.val = 2 ∨ f.addressSpace.val = 3))
+    ∧ (∀ m m' : BusMessage p, contribution m ≠ 0 → contribution m' ≠ 0 →
+        m.2[0]? = m'.2[0]? → m.2[1]? = m'.2[1]? → m = m')
+    -- The initial memory state has `x0 = 0`: RISC-V's hardwired zero register. Without this the
+    -- image may seed `(1,0)` with a nonzero word, and `x0ReturnsZero` is then false of any chip
+    -- that *reads* `x0` — which `Audit/Apcs/AndBranch` and `Keccak2105000` both do. A chip can
+    -- only constrain what it writes (`Circuit.legalGuest`'s `x0Zero`), so the read side has to
+    -- come from here.
+    ∧ (∀ m : BusMessage p, contribution m ≠ 0 → m.2[0]? = some 1 → m.2[1]? = some 0 →
+        m.2[2]? = some 0 ∧ m.2[3]? = some 0 ∧ m.2[4]? = some 0 ∧ m.2[5]? = some 0)
   instanceBound := 1
   isIo := true
 
@@ -153,6 +163,24 @@ def wordValue (limbs : Vector (ZMod p) 4) : ZMod p :=
     `Audit/OpenVmLegalAudit.lean`'s `stepChip` exhibits. -/
 def inputStepWindow : ℕ := 3
 
+/-- OpenVM's `MemoryConfig.timestamp_max_bits`: "all timestamps must be in the range
+    `[0, 2 ^ timestamp_max_bits)`". Capped at `29` by OpenVM itself, and `29` is its default.
+
+    The cap is exactly the anti-wraparound condition of `assertLtChip`: `AssertLtSubAir` decides
+    `x < y` by range-checking `y - x - 1` to this many bits, which is the same question only while
+    `2 ^ (bits + 1) < p`. For BabyBear `2 ^ 30 < 2013265921`, and `30` bits would not fit —
+    hence `29`. -/
+def openVmTimestampBits : ℕ := 29
+
+/-- The ceiling every timestamp in a segment sits below, and — the same constant, and not by
+    accident — the furthest back a memory access may reach. The lt gadget is sized so that any
+    difference between two legitimate timestamps fits in it, which is why merging accesses can
+    never push one out of its range: both endpoints stay in `[0, openVmTimestampBound)`.
+
+    This is `Circuit.hasStepLayout`'s `maxLookback` for OpenVM, and the bound
+    `ConnectorBoundary.finalTimestampBounded` range-checks. -/
+def openVmTimestampBound : ℕ := 2 ^ openVmTimestampBits
+
 /-- A witness that an input-chip instance's contribution is a legal `HINT_STOREW`: which pointer
     register it peeked (`ptrLimbs`, a 32-bit value spread over four byte limbs as OpenVM stores
     it), which value it wrote (`byte`), and which word that write overwrote (`oldWord`,
@@ -164,6 +192,7 @@ def inputStepWindow : ℕ := 3
     (`extensions/rv32im/circuit/src/hintstore/mod.rs`). `HINT_BUFFER`, which does read a count off
     operand `a`, is a second chip type this host does not model yet — adding it is a new
     `isIo := true` entry in `openVmHost.chips` rather than a reshape. -/
+
 structure InputRead (p : ℕ) where
   ptrLimbs : Vector (ZMod p) 4
   byte : ZMod p
@@ -173,9 +202,10 @@ structure InputRead (p : ℕ) where
   byteIsByte : isByte byte
   oldWordIsBytes : ∀ d ∈ oldWord.toList, isByte d
   ptrLimbsAreBytes : ∀ d ∈ ptrLimbs.toList, isByte d
-  /-- When the peeked register and the overwritten word were last set — free rather than pinned to
-      `0`: they were set by whatever earlier instruction touched them, at whatever time that was,
-      which has nothing to do with *this* instance's own timing. -/
+  /-- When the peeked register and the overwritten word were last set — not pinned to `0`: they
+      were set by whatever earlier instruction touched them, at whatever time that was, which has
+      nothing to do with *this* instance's own timing beyond being *earlier* (`ptrOffsetOk`,
+      `wordOffsetOk`). -/
   ptrTime : ZMod p
   wordTime : ZMod p
   /-- This instance's own start time — free rather than pinned to `0`, since the chip may run at
@@ -185,6 +215,31 @@ structure InputRead (p : ℕ) where
       once per access, matching `Rv32HintStoreAir`'s single `from_state.timestamp` and its
       `timestamp_pp` counter. -/
   base : ZMod p
+  /-- **How far back the peeked register's previous record sits**, as an integer offset from this
+      instance's own `base` — the same device `StepLayout.tOffset` uses for a guest chip, and for
+      the same reason: `ptrTime` is a field element, so "earlier" is only a question about
+      integers.
+
+      §4.6.1: a Read "adds a message `(addr_space, ptr, ·, t_prev)` to the receive set and a
+      message `(addr_space, ptr, ·, t)` to the send set", with the AIR constraining `t_prev < t`.
+      `Rv32HintStoreAir` is an instruction executor like any other and range-checks that distance
+      with the same `AssertLtSubAir`, which is where the lookback bound comes from. This
+      instance's register write-back lands at `base + 1` (`InputRead.interactions`), so `t_prev <
+      t` reads `ptrOffset < 1`.
+
+      Without it a `HINT_STOREW` may claim to read a record set *after* its own write, and
+      `Host.forcesAdmissible` is then false rather than merely unproven.
+      `Audit/InputTimeGap.lean` audits this clause and carries the balancing run it excludes, in
+      which one instance satisfying every clause of `Circuit.legalGuest` takes in two records at
+      a single address; `Implementation/Forces.lean` has the counting argument that breaks without
+      it. -/
+  ptrOffset : ℤ
+  ptrOffsetOk : -(openVmTimestampBound : ℤ) ≤ ptrOffset ∧ ptrOffset < 1
+  ptrTimeMatch : ptrTime = base + ((ptrOffset : ℤ) : ZMod p)
+  /-- The same for the word this instance overwrites, whose write lands at `base + 2`. -/
+  wordOffset : ℤ
+  wordOffsetOk : -(openVmTimestampBound : ℤ) ≤ wordOffset ∧ wordOffset < 2
+  wordTimeMatch : wordTime = base + ((wordOffset : ℤ) : ZMod p)
   /-- The `pc` this instance starts at, on the execution bridge — an input-chip instance is an
       instruction executor like any other (whitepaper §4.5: "every instruction executor AIR must
       constrain that it adds a message `(pc_from, t_from)` to the receive set and `(pc_to, t_to)`
@@ -263,24 +318,6 @@ def openVmTimestamp (memBusId : Nat := openVmMemBusId) : BusMessage p → ZMod p
   fun m => if m.1 = memBusId then m.2[6]?.getD 0
     else if m.1 = openVmExecBusId then m.2[1]?.getD 0 else 0
 
-/-- OpenVM's `MemoryConfig.timestamp_max_bits`: "all timestamps must be in the range
-    `[0, 2 ^ timestamp_max_bits)`". Capped at `29` by OpenVM itself, and `29` is its default.
-
-    The cap is exactly the anti-wraparound condition of `assertLtChip`: `AssertLtSubAir` decides
-    `x < y` by range-checking `y - x - 1` to this many bits, which is the same question only while
-    `2 ^ (bits + 1) < p`. For BabyBear `2 ^ 30 < 2013265921`, and `30` bits would not fit —
-    hence `29`. -/
-def openVmTimestampBits : ℕ := 29
-
-/-- The ceiling every timestamp in a segment sits below, and — the same constant, and not by
-    accident — the furthest back a memory access may reach. The lt gadget is sized so that any
-    difference between two legitimate timestamps fits in it, which is why merging accesses can
-    never push one out of its range: both endpoints stay in `[0, openVmTimestampBound)`.
-
-    This is `Circuit.hasStepLayout`'s `maxLookback` for OpenVM, and the bound
-    `ConnectorBoundary.finalTimestampBounded` range-checks. -/
-def openVmTimestampBound : ℕ := 2 ^ openVmTimestampBits
-
 /-- How far `openVmRank` shifts a timestamp before reading it as a natural.
 
     A memory *receive* names a record from before its own step, so its offset from the step's base
@@ -328,6 +365,11 @@ def openVmBridgeTimestamp (m : BusMessage p) : ZMod p := m.2[1]?.getD 0
     Agrees with `openVmRank` on the memory bus. This is `GuestBusRules.getTimestamp`
     (`Legal.lean`) for OpenVM. -/
 def openVmMemTimestamp (m : BusMessage p) : ZMod p := m.2[6]?.getD 0
+
+/-- The access key an OpenVM memory message carries: `(address space, pointer)`, payload slots `0`
+    and `1` — `MemoryBusShape.address` at the memory shape, as a `GuestBusRules`-level function.
+    This is `Circuit.legalGuest`'s `memAddress`. -/
+def openVmMemAddress (m : BusMessage p) : List (Option (ZMod p)) := [m.2[0]?, m.2[1]?]
 
 /-- OpenVM's rules for how guests use buses. Copies `OpenVmSemantics.lean`'s existing `accepts`
     (which defines the tables) rather than restating it, so we trust their table definitions.
@@ -402,6 +444,15 @@ structure OpenVmParams (p : ℕ) where
   maxInstances : ℕ
   /-- The register the input chip peeks for its write pointer. -/
   ptrReg : Nat
+  /-- …and it is not `x0`. `InputRead.interactions` writes address space `1` at `ptrReg` carrying
+      `ptrLimbs`, which is only constrained to be byte-valued; at `ptrReg = 0` that is a nonzero
+      write to the hardwired zero register, falsifying `x0ReturnsZero`. A `HINT_STOREW` whose
+      pointer register is `x0` is meaningless anyway.
+
+      As a field element, since that is the form the memory payload carries and the form
+      `x0ReturnsZero` compares against: `ptrReg ≠ 0` in `ℕ` would leave a multiple of `p` free to
+      alias register `0`. -/
+  ptrRegNeZero : ((ptrReg : ZMod p)) ≠ 0
   /-- The most input-chip instances a segment may realize — every other host chip is capped at
       one, so this is what keeps the host side of a run finite (`HostAssignment.satisfies`). One
       instance is one `HINT_STOREW`, hence one input datum: an N-word chunk costs N instances. -/
@@ -417,7 +468,18 @@ structure OpenVmParams (p : ℕ) where
       than `Host.noTimeOverflow` (which only needs the guest term); `openVmHost` derives that
       weaker fact from this one. -/
   windowOk : (maxInstances + maxInputInstances + 1) * (maxWindow + 1) < p
-  budgetOk : maxInteractions * maxInstances + 1 < p
+  /-- No multiplicity overflow, counting the *host* side too: every interaction a segment can
+      carry — `maxInteractions` per guest instance, six per input-chip instance
+      (`InputRead.interactions`), and the four the remaining single-instance host chips
+      contribute — fits in `ZMod p` at once. Strictly more than `Host.noMultOverflow`, whose
+      `+ 1` budgets only the exempt chip's own touch; `openVmHost` derives that weaker fact from
+      this one.
+
+      The host term is what a record-matching argument needs: a run may receive one memory record
+      up to `maxInteractions * maxInstances` times from guests *and* once from
+      `memoryFinalizeHostChip` *and* twice per input-chip instance, and only a bound on the sum
+      keeps that count from wrapping. -/
+  budgetOk : maxInteractions * maxInstances + 6 * maxInputInstances + 4 < p
   /-- An input-chip instance's own clock advance fits the window too. Pinned rather than
       per-witness, since `inputStepWindow` is a constant (`inputHostChip`). -/
   inputWindowOk : inputStepWindow < maxWindow
@@ -444,7 +506,7 @@ noncomputable def openVmHost (P : OpenVmParams p) : Host p where
   maxLookback := openVmTimestampBound
   maxInteractions := P.maxInteractions
   legalGuest c :=
-    c.legalGuest (openVmGuestRules defaultBusMap openVmMemBusId) P.maxWindow
+    c.legalGuest (openVmGuestRules defaultBusMap openVmMemBusId) openVmMemAddress P.maxWindow
       openVmTimestampBound P.maxInteractions
   chips :=
     [ pcLookupHostChip, bitwiseLookupHostChip, variableRangeCheckerHostChip,
@@ -454,7 +516,9 @@ noncomputable def openVmHost (P : OpenVmParams p) : Host p where
   noTimeOverflow := lt_of_le_of_lt
     (Nat.mul_le_mul_right _ (by omega : P.maxInstances + 1 ≤ P.maxInstances + P.maxInputInstances + 1))
     P.windowOk
-  noMultOverflow := P.budgetOk
+  noMultOverflow := by
+    have := P.budgetOk
+    omega
 
 /-- `openVmHost`'s memory-init chip: an IO-labeled (`HostChip.isIo`) entry pinned to
     `memoryInitHostChip`. -/

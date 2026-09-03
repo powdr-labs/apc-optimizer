@@ -150,11 +150,12 @@ def Host.absorbsStateless (host : Host p) (bs : BusSemantics p) : Prop :=
     keeps strictly between `0` and `p`; the connector — carrying OpenVM's range check as
     `ConnectorBoundary.finalTimestampBounded` — is therefore the only place a chain can start, and
     one checked timestamp places every step in the run. -/
-def Host.ordersRanks (host : Host p) (rm : RankModel p) (r : GuestBusRules p) : Prop :=
+def Host.ordersRanks (host : Host p) (rm : RankModel p) (r : GuestBusRules p)
+    (memAddress : BusMessage p → List (Option (ZMod p))) : Prop :=
   ∀ (G : Guest p),
     host.legalGuests G →
     ∀ (a : VmAssignment p ⟨host, G⟩), VmSat ⟨host, G⟩ a →
-      a.ordersRanks rm r host.maxWindow host.maxLookback
+      a.ordersRanks rm r memAddress host.maxWindow host.maxLookback
 
 /-- **A host realizes its bus semantics.** The single hypothesis the connecting theorems need of
     the fixed VM; see the module docstring. (The lemmas below still take the individual fields, so
@@ -164,7 +165,8 @@ def Host.ordersRanks (host : Host p) (rm : RankModel p) (r : GuestBusRules p) : 
     from — in practice `openVmGuestRules`'s own value; see `Legal.lean` for why it does not live
     on `rm`. -/
 structure Host.realizes (host : Host p) (bs : BusSemantics p) (rm : RankModel p)
-    (r0 : GuestBusRules p) : Prop where
+    (r0 : GuestBusRules p)
+    (memAddress : BusMessage p → List (Option (ZMod p))) : Prop where
   /-- Off the memory bus, `bs` always has *some* multiplicity maintaining its invariants — what
       `bs.toGuestRules`'s `memPayloadOnly` field rests on (`Legal.lean`). -/
   hmem : ∀ m : BusMessage p, bs.isStateful m.1 = true → m.1 ≠ r0.memBusId →
@@ -173,7 +175,7 @@ structure Host.realizes (host : Host p) (bs : BusSemantics p) (rm : RankModel p)
       argument's own `rm.rank` and `rm.bound` and the host's own sizes. -/
   legalGuest : ∀ c : Circuit p,
     host.legalGuest c →
-      c.legalGuest (bs.toGuestRules r0 hmem) host.maxWindow host.maxLookback host.maxInteractions
+      c.legalGuest (bs.toGuestRules r0 hmem) memAddress host.maxWindow host.maxLookback host.maxInteractions
   sinksAreTables : host.sinksAreTables bs
   /-- One host-chip type is carved out and derivable instead of assumed — for `openVmHost`,
       `memoryFinalizeHostChip` (see `Host.exemptChip`). Existential rather than two separate data
@@ -184,7 +186,7 @@ structure Host.realizes (host : Host p) (bs : BusSemantics p) (rm : RankModel p)
     host.exemptChip bs idx ∧ host.statefulChipsMaintain bs idx
   statefulAcceptsOfPayloadOk : bs.statefulAcceptsOfPayloadOk r0 hmem
   absorbsStateless : host.absorbsStateless bs
-  ordersRanks : host.ordersRanks rm (bs.toGuestRules r0 hmem)
+  ordersRanks : host.ordersRanks rm (bs.toGuestRules r0 hmem) memAddress
 
 /-- The host chips realize `bs`'s acceptance: in any satisfying VM built on this host whose guest
     chips are small enough not to wrap `ZMod p`, every guest instance's assignment is
@@ -217,17 +219,18 @@ theorem satisfiesStateless_of_sinks [Fact p.Prime] {host : Host p} {bs : BusSema
     {r0 : GuestBusRules p}
     {hmem : ∀ m : BusMessage p, bs.isStateful m.1 = true → m.1 ≠ r0.memBusId →
       ∃ mult : ZMod p, bs.maintainsInvariants ⟨m.1, mult, m.2⟩}
+    {memAddress : BusMessage p → List (Option (ZMod p))}
     {G : Guest p} {a : VmAssignment p ⟨host, G⟩}
     (hunpack : ∀ c : Circuit p,
       host.legalGuest c →
-        c.legalGuest (bs.toGuestRules r0 hmem) host.maxWindow host.maxLookback
+        c.legalGuest (bs.toGuestRules r0 hmem) memAddress host.maxWindow host.maxLookback
           host.maxInteractions)
     (hsinks : host.sinksAreTables bs) (hGuests : host.legalGuests G)
     (hsat : VmSat ⟨host, G⟩ a)
     (t : Fin G.length) (asg : ChipAssignment p) (hasg : asg ∈ a.guestAssignments t) :
     (G.get t).satisfiesStateless (bs.toGuestRules r0 hmem) asg := by
   have hlegal : ∀ s : Fin G.length,
-      (G.get s).legalGuest (bs.toGuestRules r0 hmem) host.maxWindow host.maxLookback
+      (G.get s).legalGuest (bs.toGuestRules r0 hmem) memAddress host.maxWindow host.maxLookback
         host.maxInteractions :=
     fun s => hunpack _ (hGuests _ (List.get_mem G s))
   have hSize : ∀ c ∈ G, c.busInteractions.length ≤ host.maxInteractions :=
@@ -274,17 +277,18 @@ theorem maintains_of_stateful_active [Fact p.Prime] {host : Host p} {bs : BusSem
     {rm : RankModel p} {r0 : GuestBusRules p}
     {hmem : ∀ m : BusMessage p, bs.isStateful m.1 = true → m.1 ≠ r0.memBusId →
       ∃ mult : ZMod p, bs.maintainsInvariants ⟨m.1, mult, m.2⟩}
+    {memAddress : BusMessage p → List (Option (ZMod p))}
     {G : Guest p} {a : VmAssignment p ⟨host, G⟩}
     (hunpack : ∀ c : Circuit p,
       host.legalGuest c →
-        c.legalGuest (bs.toGuestRules r0 hmem) host.maxWindow host.maxLookback
+        c.legalGuest (bs.toGuestRules r0 hmem) memAddress host.maxWindow host.maxLookback
           host.maxInteractions)
     (hsinks : host.sinksAreTables bs)
     (hstateful : ∃ idx : Fin host.chips.length,
       host.exemptChip bs idx ∧ host.statefulChipsMaintain bs idx)
     (hGuests : host.legalGuests G)
     (hsat : VmSat ⟨host, G⟩ a)
-    (hOrders : a.ordersRanks rm (bs.toGuestRules r0 hmem) host.maxWindow host.maxLookback)
+    (hOrders : a.ordersRanks rm (bs.toGuestRules r0 hmem) memAddress host.maxWindow host.maxLookback)
     {t : Fin G.length} {asg : ChipAssignment p} (hasg : asg ∈ a.guestAssignments t)
     {bi : BusInteraction (Expression p)} (hbi : bi ∈ (G.get t).busInteractions)
     (hst : bs.isStateful bi.busId = true) (hmult : (bi.eval asg).multiplicity ≠ 0) :
@@ -294,7 +298,7 @@ theorem maintains_of_stateful_active [Fact p.Prime] {host : Host p} {bs : BusSem
     fun c hc => (hunpack c (hGuests c hc)).size
   have hBudget : host.maxInteractions * host.maxInstances + 1 < p := host.noMultOverflow
   have hlegal : ∀ s : Fin G.length,
-      (G.get s).legalGuest (bs.toGuestRules r0 hmem) host.maxWindow host.maxLookback
+      (G.get s).legalGuest (bs.toGuestRules r0 hmem) memAddress host.maxWindow host.maxLookback
         host.maxInteractions :=
     fun s => hunpack _ (hGuests _ (List.get_mem G s))
   suffices key : ∀ r : ℕ, ∀ (s : Fin G.length) (asg' : ChipAssignment p),
@@ -393,15 +397,16 @@ theorem forcesAccepts_of_hostSound [Fact p.Prime] {host : Host p} {bs : BusSeman
     {rm : RankModel p} {r0 : GuestBusRules p}
     {hmem : ∀ m : BusMessage p, bs.isStateful m.1 = true → m.1 ≠ r0.memBusId →
       ∃ mult : ZMod p, bs.maintainsInvariants ⟨m.1, mult, m.2⟩}
+    {memAddress : BusMessage p → List (Option (ZMod p))}
     (hunpack : ∀ c : Circuit p,
       host.legalGuest c →
-        c.legalGuest (bs.toGuestRules r0 hmem) host.maxWindow host.maxLookback
+        c.legalGuest (bs.toGuestRules r0 hmem) memAddress host.maxWindow host.maxLookback
           host.maxInteractions)
     (hsinks : host.sinksAreTables bs)
     (hstateful : ∃ idx : Fin host.chips.length,
       host.exemptChip bs idx ∧ host.statefulChipsMaintain bs idx)
     (hbs : bs.statefulAcceptsOfPayloadOk r0 hmem)
-    (hord : host.ordersRanks rm (bs.toGuestRules r0 hmem)) :
+    (hord : host.ordersRanks rm (bs.toGuestRules r0 hmem) memAddress) :
     host.forcesAccepts bs := by
   intro G hGuests a hsat t asg hasg
   have hRanks := hord G hGuests a hsat
@@ -414,7 +419,9 @@ theorem forcesAccepts_of_hostSound [Fact p.Prime] {host : Host p} {bs : BusSeman
 
 /-- `Host.realizes` gives `Host.forcesAccepts`. -/
 theorem Host.realizes.forcesAccepts [Fact p.Prime] {host : Host p} {bs : BusSemantics p}
-    {rm : RankModel p} {r0 : GuestBusRules p} (h : host.realizes bs rm r0) :
+    {rm : RankModel p} {r0 : GuestBusRules p}
+    {memAddress : BusMessage p → List (Option (ZMod p))}
+    (h : host.realizes bs rm r0 memAddress) :
     host.forcesAccepts bs :=
   forcesAccepts_of_hostSound h.legalGuest h.sinksAreTables h.statefulChipsMaintain
     h.statefulAcceptsOfPayloadOk h.ordersRanks

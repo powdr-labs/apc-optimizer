@@ -108,7 +108,7 @@ theorem openVmHost_sinksAreTables (P : OpenVmParams p) :
     revert hacc
     rcases ml with _ | ⟨x, _ | ⟨y, _ | ⟨z, rest⟩⟩⟩ <;> exact id
   -- Memory init/finalize pin the bus id directly; the message would have to be stateful.
-  · have hbus := (hleg (mb, ml) hcm).1
+  · have hbus := (hleg.1 (mb, ml) hcm).1
     subst hbus
     simp [openVmBusSemantics, defaultBusMap, OpenVmBusType.isStateful] at hm
   · have hbus := (hleg (mb, ml) hcm).1
@@ -309,7 +309,7 @@ theorem openVmHost_statefulChipsMaintain (P : OpenVmParams p) :
     subst hbus
     simp [openVmBusSemantics, defaultBusMap, OpenVmBusType.isStateful] at hst
   -- Memory initialization: byte-valued by the chip's own predicate.
-  · obtain ⟨hbus, -, f, hf, hbytes, -, -⟩ := hleg (mb, ml) hcm
+  · obtain ⟨hbus, -, f, hf, hbytes, -, -⟩ := hleg.1 (mb, ml) hcm
     subst hbus
     refine memory_maintains (fun f' hf' => ?_)
     rw [hf] at hf'
@@ -585,6 +585,7 @@ theorem openVmHost_legalGuest_unpack (P : OpenVmParams p) (c : Circuit p) :
     (openVmHost P).legalGuest c →
       c.legalGuest ((openVmBusSemantics p defaultBusMap).toGuestRules
           (openVmGuestRules defaultBusMap openVmMemBusId) openVmDefaultHmem)
+        openVmMemAddress
         (openVmHost P).maxWindow (openVmHost P).maxLookback (openVmHost P).maxInteractions :=
   fun h => openVmGuestRules_eq defaultBusMap openVmMemBusId ▸ h
 
@@ -593,8 +594,8 @@ theorem openVmHost_legalGuest_unpack (P : OpenVmParams p) (c : Circuit p) :
 theorem openVmHost_stepLayout_unpack
     (P : OpenVmParams p) (c : Circuit p) :
     (openVmHost P).legalGuest c →
-      Circuit.hasStepLayout c (openVmGuestRules defaultBusMap openVmMemBusId) P.maxWindow
-        openVmTimestampBound :=
+      Circuit.hasStepLayout c (openVmGuestRules defaultBusMap openVmMemBusId) openVmMemAddress
+        P.maxWindow openVmTimestampBound :=
   fun h => h.stepLayout
 
 /-- **`Host.forcesAccepts` for a concrete OpenVM host**, with no hypotheses: in any satisfying
@@ -603,7 +604,7 @@ theorem openVmHost_stepLayout_unpack
 theorem openVmHost_forcesAccepts [Fact p.Prime] (P : OpenVmParams p)
     (hOrd : (openVmHost P).ordersRanks (openVmRankModel openVmMemBusId)
       ((openVmBusSemantics p defaultBusMap).toGuestRules
-        (openVmGuestRules defaultBusMap openVmMemBusId) openVmDefaultHmem)) :
+        (openVmGuestRules defaultBusMap openVmMemBusId) openVmDefaultHmem) openVmMemAddress) :
     (openVmHost P).forcesAccepts
       (openVmBusSemantics p defaultBusMap) :=
   forcesAccepts_of_hostSound (openVmHost_legalGuest_unpack P)
@@ -614,26 +615,5 @@ theorem openVmHost_forcesAccepts [Fact p.Prime] (P : OpenVmParams p)
     (openVmBusSemantics_statefulAcceptsOfPayloadOk
       (openVmGuestRules defaultBusMap openVmMemBusId) openVmDefaultHmem)
     hOrd
-
-/-- **`openVmHost` realizes OpenVM's bus semantics** — unconditionally. This is the whole VM-side
-    obligation of `vmSoundReplacement_of_forall₂`, discharged for a concrete host. -/
-theorem openVmHost_realizes (P : OpenVmParams p)
-    (hOrd : (openVmHost P).ordersRanks (openVmRankModel openVmMemBusId)
-      ((openVmBusSemantics p defaultBusMap).toGuestRules
-        (openVmGuestRules defaultBusMap openVmMemBusId) openVmDefaultHmem)) :
-    (openVmHost P).realizes
-      (openVmBusSemantics p defaultBusMap) (openVmRankModel openVmMemBusId)
-      (openVmGuestRules defaultBusMap openVmMemBusId) where
-  hmem := openVmDefaultHmem
-  legalGuest := openVmHost_legalGuest_unpack P
-  sinksAreTables := openVmHost_sinksAreTables P
-  statefulChipsMaintain := ⟨openVmFinalizeIdx P,
-    openVmHost_finalize_exempt P,
-    openVmHost_statefulChipsMaintain P⟩
-  statefulAcceptsOfPayloadOk :=
-    openVmBusSemantics_statefulAcceptsOfPayloadOk
-      (openVmGuestRules defaultBusMap openVmMemBusId) openVmDefaultHmem
-  absorbsStateless := openVmHost_absorbsStateless P
-  ordersRanks := hOrd
 
 end ApcOptimizer.OpenVM

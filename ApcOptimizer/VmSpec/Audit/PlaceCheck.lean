@@ -86,20 +86,32 @@ def ReadsTimestampAt (r : GuestBusRules p) (tsPos : TimestampPos) : Prop :=
 
 --------- The check ---------
 
+/-- Whether a multiplicity expression folds to the literal `0` — the interaction never happens,
+    whatever the assignment. A fused APC has these: an operand slot the block does not use pins its
+    address space to `0`, and the memory access it would have made is dead. -/
+def multIsZero (rules : List (PinRule p)) (bi : BusInteraction (Expression p)) : Bool :=
+  match bi.multiplicity.foldConstWith rules with
+  | some v => v == 0
+  | none => false
+
 /-- Check one interaction against its recipe. A `fixed k` is decided here — the timestamp form must
     be the base form shifted by `k`. A `lookback` is not: its content is the gadget bound, which
-    this file takes as a hypothesis. -/
+    this file takes as a hypothesis. A dead interaction is asked nothing. -/
 def placeCheckOne (vs : List Variable) (rules : List (PinRule p)) (isStateful : Nat → Bool)
     (tsPos : TimestampPos) (baseF : LinForm p) (bi : BusInteraction (Expression p))
     (rc : Recipe p) : Bool :=
   if isStateful bi.busId then
+    multIsZero rules bi ||
     match tsPos bi.busId with
     | none => false
     | some j =>
-      match payloadLin vs rules bi.payload with
+      -- Only the timestamp field is normalized. Normalizing the whole payload would reject a
+      -- record this clause never reads into — a load's *address* can be non-linear (a byte load's
+      -- pointer is quadratic in its selector flags) while its timestamp is not.
+      match bi.payload[j]? with
       | none => false
-      | some pl =>
-        match pl[j]? with
+      | some e =>
+        match Expression.toLin vs rules e with
         | none => false
         | some f =>
           match rc with
@@ -144,7 +156,7 @@ theorem placeCheckOne_sound {vs : List Variable} {rules : List (PinRule p)}
     (hbase : Expression.toLin vs rules baseE = some baseF)
     {bi : BusInteraction (Expression p)} {rc : Recipe p}
     (h : placeCheckOne vs rules isStateful tsPos baseF bi rc = true)
-    (hst : isStateful bi.busId = true)
+    (hst : isStateful bi.busId = true) (hact : (bi.eval asg).multiplicity ≠ 0)
     {r : GuestBusRules p} (hts : ReadsTimestampAt r tsPos)
     (hlook : ∀ (k : ℤ) (radix : ℕ) (loE hiE : Expression p), rc = .lookback k radix loE hiE →
       r.getTimestamp ((bi.eval asg).busId, (bi.eval asg).payload)
@@ -155,25 +167,36 @@ theorem placeCheckOne_sound {vs : List Variable} {rules : List (PinRule p)}
   | lookback k radix loE hiE => exact hrc ▸ hlook k radix loE hiE hrc
   | fixed k =>
     subst hrc
-    simp only [placeCheckOne, hst, if_pos] at h
+    simp only [placeCheckOne, hst, if_pos, Bool.or_eq_true] at h
+    rcases h with h | h
+    · exfalso
+      simp only [multIsZero] at h
+      cases hm : bi.multiplicity.foldConstWith rules with
+      | none => rw [hm] at h; cases h
+      | some v =>
+        rw [hm] at h
+        simp only [beq_iff_eq] at h
+        exact hact ((Expression.foldConstWith_eq hrules hm).trans h)
     cases hj : tsPos bi.busId with
     | none => rw [hj] at h; cases h
     | some j =>
-      cases hpl : payloadLin vs rules bi.payload with
-      | none => rw [hj, hpl] at h; cases h
-      | some pl =>
-        rw [hj, hpl] at h
+      rw [hj] at h
+      dsimp only at h
+      cases he : bi.payload[j]? with
+      | none => rw [he] at h; cases h
+      | some e =>
+        rw [he] at h
         dsimp only at h
-        cases hf : pl[j]? with
+        cases hf : Expression.toLin vs rules e with
         | none => rw [hf] at h; cases h
         | some f =>
           rw [hf] at h
           have hbus : (bi.eval asg).busId = bi.busId := rfl
           rw [hts _ j (by rw [hbus]; exact hj)]
-          have hp : (bi.eval asg).payload = pl.map (fun g => g.eval vs asg) :=
-            payloadLin_eval hrules hpl
           have : ((bi.eval asg).payload).getD j 0 = f.eval vs asg := by
-            rw [hp, List.getD_eq_getElem?_getD, List.getElem?_map, hf]; rfl
+            show ((bi.payload.map (fun g => g.eval asg)).getD j 0) = f.eval vs asg
+            rw [List.getD_eq_getElem?_getD, List.getElem?_map, he]
+            exact Expression.toLin_eval hrules hf
           rw [this, eval_of_linShiftedBy h, Expression.toLin_eval hrules hbase]
           simp [Recipe.place]
 
@@ -215,7 +238,76 @@ theorem placeCheck_placed {vs : List Variable} {rules : List (PinRule p)}
   obtain ⟨hlo, hhi⟩ := recipe_placed (d := d) hf hbk
   refine ⟨hlo, hhi, ?_⟩
   exact placeCheckOne_sound hrules hbase (placeCheckAll_get hall i)
-    (by rw [← hstEq]; exact hi.1) hts hlook
+    (by rw [← hstEq]; exact hi.1) hi.2 hts hlook
+
+--------- The memory ordering ---------
+
+/-- Whether a multiplicity expression folds to something other than `1`. -/
+def multNotOne (rules : List (PinRule p)) (bi : BusInteraction (Expression p)) : Bool :=
+  match bi.multiplicity.foldConstWith rules with
+  | some v => !(v == 1)
+  | none => false
+
+/-- Whether it folds to something other than `0`. -/
+def multNotZero (rules : List (PinRule p)) (bi : BusInteraction (Expression p)) : Bool :=
+  match bi.multiplicity.foldConstWith rules with
+  | some v => !(v == 0)
+  | none => false
+
+/-- One ordered pair `j < i` of the interaction list. Nothing is asked unless both sit on the
+    memory bus and `i` cannot be ruled out as a *send*; then `j`'s recipe must place strictly below
+    `i`'s, whatever the assignment. -/
+def memOrderPairOk (rules : List (PinRule p)) (memBusId maxLookback : ℕ)
+    (L : List (BusInteraction (Expression p))) (R : List (Recipe p)) (j i : ℕ) : Bool :=
+  match L[j]?, L[i]? with
+  | some bj, some bi =>
+    !(bj.busId == memBusId) || !(bi.busId == memBusId) || multNotOne rules bi ||
+      Recipe.below maxLookback (R.getD j (.fixed 0)) (R.getD i (.fixed 0))
+  | _, _ => true
+
+/-- **The ordering `StepLayout.memSendsOk` inducts along, decided.** `memSendsOk` hands a memory
+    send every *earlier in time* memory interaction; `byteCheck_sendsOk` wants every *earlier in
+    the list* one. This closes that gap for a whole circuit at once: it is `Recipe.below` over
+    every pair, skipped wherever the recipes cannot both be memory or `i` cannot be a send. -/
+def memOrderCheck (rules : List (PinRule p)) (memBusId maxLookback : ℕ)
+    (L : List (BusInteraction (Expression p))) (R : List (Recipe p)) : Bool :=
+  (List.range L.length).all fun i =>
+    (List.range i).all fun j => memOrderPairOk rules memBusId maxLookback L R j i
+
+theorem memOrderCheck_get {rules : List (PinRule p)} {memBusId maxLookback : ℕ}
+    {L : List (BusInteraction (Expression p))} {R : List (Recipe p)}
+    (h : memOrderCheck rules memBusId maxLookback L R = true)
+    {i : ℕ} (hi : i < L.length) {j : ℕ} (hj : j < i) :
+    memOrderPairOk rules memBusId maxLookback L R j i = true :=
+  List.all_eq_true.mp (List.all_eq_true.mp h i (List.mem_range.mpr hi)) j
+    (List.mem_range.mpr hj)
+
+/-- **Soundness of the ordering check.** A `true` turns index order into offset order for the one
+    pair the byte induction needs it for. -/
+theorem memOrderCheck_sound {rules : List (PinRule p)} {memBusId maxLookback : ℕ}
+    {L : List (BusInteraction (Expression p))} {R : List (Recipe p)}
+    (h : memOrderCheck rules memBusId maxLookback L R = true)
+    {asg : ChipAssignment p} (hrules : ∀ q ∈ rules, q.1.eval asg = q.2)
+    {i j : Fin L.length} (hji : j.val < i.val)
+    (hmj : (L.get j).busId = memBusId) (hmi : (L.get i).busId = memBusId)
+    (hsend : ((L.get i).eval asg).multiplicity = 1)
+    (hbj : (R.getD j.val (.fixed 0)).back asg < maxLookback)
+    (hbi : (R.getD i.val (.fixed 0)).back asg < maxLookback) :
+    (R.getD j.val (.fixed 0)).place asg < (R.getD i.val (.fixed 0)).place asg := by
+  have hp := memOrderCheck_get h i.isLt hji
+  rw [memOrderPairOk, List.getElem?_eq_getElem j.isLt, List.getElem?_eq_getElem i.isLt] at hp
+  simp only [List.get_eq_getElem] at hmj hmi hsend
+  simp only [hmj, hmi, beq_self_eq_true, Bool.not_true, Bool.false_or, Bool.or_eq_true] at hp
+  rcases hp with hp | hp
+  · exfalso
+    simp only [multNotOne] at hp
+    cases hm : (L[i.val]).multiplicity.foldConstWith rules with
+    | none => rw [hm] at hp; cases hp
+    | some v =>
+      rw [hm] at hp
+      simp only [Bool.not_eq_true', beq_eq_false_iff_ne, ne_eq] at hp
+      exact hp ((Expression.foldConstWith_eq hrules hm).symm.trans hsend)
+  · exact recipe_ordered hp hbj hbi
 
 --------- The lt gadget's arithmetic ---------
 

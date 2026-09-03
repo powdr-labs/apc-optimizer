@@ -464,7 +464,7 @@ theorem allEffects_eq_entrySum {vs : List Variable} {rules : List (PinRule p)}
 /-- A pin from one variable to a linear combination of others — `(from_state__timestamp_1,
     from_state__timestamp_0 + 3)` for a fused APC's chained clock, say — rather than
     `PinRule`'s variable-to-*constant* pin. Read off a constraint by hand today (see
-    `RealApcLegality.lean`'s `unoptLinRules`); nothing here computes one. -/
+    `Apcs/Keccak2105000/UnoptChained.lean`'s `unoptLinRules`); nothing here computes one. -/
 abbrev LinPinRule (p : ℕ) := Variable × LinForm p
 
 /-- Look one variable up among the linear pins, by name. -/

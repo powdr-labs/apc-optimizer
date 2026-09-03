@@ -88,32 +88,33 @@ vmSoundReplacement_cons
 vmSoundReplacement_append
 vmSoundReplacement_of_forall₂
 
-# `Audit/RealApcLegality.lean` measures the legality clauses against two real APCs. Like every
-# other `VmSpec/` file it is unreachable from the four roots; its own roots are the
-# `apc2105000*` results and the lemmas they share — the lt gadget as powdr's optimizer leaves it
-# (`lt_gadget_offset`), the bitwise table's masking arm (`isByte_of_xorThree`) and the offset
-# tables `apc2105000Opt_hasStepLayout` places its twelve stateful interactions by.
+# `Audit/Apcs/` measures the legality clauses against real APCs, one directory per APC. Like
+# every other `VmSpec/` file it is unreachable from the four roots; its own roots are each APC's
+# per-stage results and the lemmas `Apcs/Common.lean` shares between them — the lt gadget as
+# powdr's optimizer leaves it (`lt_gadget_offset`) and the bitwise table's masking arm
+# (`isByte_of_xorThree`).
 ApcOptimizer.OpenVM.babyBear_negOne
 ApcOptimizer.OpenVM.babyBear_negOne_ne_one
 ApcOptimizer.OpenVM.babyBear_negOne_ne_zero
 ApcOptimizer.OpenVM.lt_gadget_offset
 ApcOptimizer.OpenVM.xor_three
 ApcOptimizer.OpenVM.isByte_of_xorThree
-ApcOptimizer.OpenVM.optAccepts
-ApcOptimizer.OpenVM.optOffsetUb_dominates
-ApcOptimizer.OpenVM.apc2105000Opt_hasStepLayout
-ApcOptimizer.OpenVM.apc2105000Opt_legalGuest
+ApcOptimizer.OpenVM.acceptsAt
+ApcOptimizer.OpenVM.Keccak2105000.opt_hasStepLayout
+ApcOptimizer.OpenVM.Keccak2105000.opt_legalGuest
 ApcOptimizer.OpenVM.allEffects_eq_zero_of_mults_zero
-ApcOptimizer.OpenVM.apc2105000Opt_checkMultiplicities
-ApcOptimizer.OpenVM.apc2105000Opt_legalMultiplicities
-ApcOptimizer.OpenVM.apc2105000Opt_no_padding_row
-ApcOptimizer.OpenVM.apc2105000Unopt_checkMultiplicitiesWith
-ApcOptimizer.OpenVM.apc2105000Unopt_legalMultiplicities
-ApcOptimizer.OpenVM.apc2105000Unopt_zero_not_satisfiesAlgebraic
-ApcOptimizer.OpenVM.apc2105000Gated_checkMultiplicities_fails
-ApcOptimizer.OpenVM.apc2105000Gated_satisfiesAlgebraic_zero
-ApcOptimizer.OpenVM.apc2105000Gated_mults_zero_on_padding
-ApcOptimizer.OpenVM.apc2105000Gated_not_hasStepLayout
+ApcOptimizer.OpenVM.satisfiesAlgebraic_of_forall
+ApcOptimizer.OpenVM.not_satisfiesAlgebraic_of_not_forall
+ApcOptimizer.OpenVM.Keccak2105000.opt_checkMultiplicities
+ApcOptimizer.OpenVM.Keccak2105000.opt_legalMultiplicities
+ApcOptimizer.OpenVM.Keccak2105000.opt_no_padding_row
+ApcOptimizer.OpenVM.Keccak2105000.unopt_checkMultiplicitiesWith
+ApcOptimizer.OpenVM.Keccak2105000.unopt_legalMultiplicities
+ApcOptimizer.OpenVM.Keccak2105000.unopt_zero_not_satisfiesAlgebraic
+ApcOptimizer.OpenVM.Keccak2105000.gated_checkMultiplicities_fails
+ApcOptimizer.OpenVM.Keccak2105000.gated_satisfiesAlgebraic_zero
+ApcOptimizer.OpenVM.Keccak2105000.gated_mults_zero_on_padding
+ApcOptimizer.OpenVM.Keccak2105000.gated_not_hasStepLayout
 pairsCancel_sum
 unsnoc_eq
 payloadAt_ne_of_distinctAt
@@ -137,8 +138,8 @@ busEntry_eval
 allEffects_eq_mapIf
 entrySum_eq
 allEffects_eq_entrySum
-ApcOptimizer.OpenVM.optPinRules_hold
-ApcOptimizer.OpenVM.optBridgeCheck
+ApcOptimizer.OpenVM.Keccak2105000.optPinRules_hold
+ApcOptimizer.OpenVM.Keccak2105000.optBridgeCheck
 Recipe.place_mem
 Recipe.place_eq
 placeCheckAll_get
@@ -149,32 +150,31 @@ placeCheck_placed
 gadgetIdentity_sound
 ApcOptimizer.OpenVM.openVmReadsTimestampAt
 ApcOptimizer.OpenVM.lookback_of_gadget
-ApcOptimizer.OpenVM.optBaseLin
+ApcOptimizer.OpenVM.Keccak2105000.optBaseLin
 ApcOptimizer.OpenVM.isByte_of_isByteConst
 ApcOptimizer.OpenVM.memShape_eval
 ApcOptimizer.OpenVM.byteCheckAll_get
 ApcOptimizer.OpenVM.byteCheckOne_sound
 ApcOptimizer.OpenVM.byteCheck_sendsOk
-ApcOptimizer.OpenVM.optByteCheck
-ApcOptimizer.OpenVM.gatedPinRules_hold
-ApcOptimizer.OpenVM.gatedIsValid
-ApcOptimizer.OpenVM.gatedIsValid_ne_zero
-ApcOptimizer.OpenVM.apc2105000GatedPinned_checkMultiplicitiesWith
-ApcOptimizer.OpenVM.apc2105000GatedPinned_legalMultiplicities
-ApcOptimizer.OpenVM.gatedAccepts
-ApcOptimizer.OpenVM.gatedBaseLin
-ApcOptimizer.OpenVM.gatedBridgeCheck
-ApcOptimizer.OpenVM.gatedByteCheck
-ApcOptimizer.OpenVM.apc2105000GatedPinned_hasStepLayout
-ApcOptimizer.OpenVM.apc2105000GatedPinned_legalGuest
-ApcOptimizer.OpenVM.apc2105000UnoptChained_checkMultiplicitiesWith
-ApcOptimizer.OpenVM.apc2105000UnoptChained_legalMultiplicities
-ApcOptimizer.OpenVM.chainedTimes
-ApcOptimizer.OpenVM.unoptPinRules_hold
-ApcOptimizer.OpenVM.unoptLinRules_sized
-ApcOptimizer.OpenVM.unoptLinRules_hold
-ApcOptimizer.OpenVM.unoptBridgeCheckL
-ApcOptimizer.OpenVM.apc2105000UnoptChained_bridge
+ApcOptimizer.OpenVM.Keccak2105000.optByteCheck
+ApcOptimizer.OpenVM.Keccak2105000.gatedPinRules_hold
+ApcOptimizer.OpenVM.Keccak2105000.gatedIsValid
+ApcOptimizer.OpenVM.Keccak2105000.gatedIsValid_ne_zero
+ApcOptimizer.OpenVM.Keccak2105000.gatedPinned_checkMultiplicitiesWith
+ApcOptimizer.OpenVM.Keccak2105000.gatedPinned_legalMultiplicities
+ApcOptimizer.OpenVM.Keccak2105000.gatedBaseLin
+ApcOptimizer.OpenVM.Keccak2105000.gatedBridgeCheck
+ApcOptimizer.OpenVM.Keccak2105000.gatedByteCheck
+ApcOptimizer.OpenVM.Keccak2105000.gatedPinned_hasStepLayout
+ApcOptimizer.OpenVM.Keccak2105000.gatedPinned_legalGuest
+ApcOptimizer.OpenVM.Keccak2105000.unoptChained_checkMultiplicitiesWith
+ApcOptimizer.OpenVM.Keccak2105000.unoptChained_legalMultiplicities
+ApcOptimizer.OpenVM.Keccak2105000.chainedTimes
+ApcOptimizer.OpenVM.Keccak2105000.unoptPinRules_hold
+ApcOptimizer.OpenVM.Keccak2105000.unoptLinRules_sized
+ApcOptimizer.OpenVM.Keccak2105000.unoptLinRules_hold
+ApcOptimizer.OpenVM.Keccak2105000.unoptBridgeCheckL
+ApcOptimizer.OpenVM.Keccak2105000.unoptChained_bridge
 ApcOptimizer.OpenVM.openVm_negOne_ne_one
 StepLayout.endpoints_ne
 StepLayout.net
@@ -189,27 +189,26 @@ busEntryL_eval
 entrySumL_eq
 allEffects_eq_entrySumL
 bridgeCheckL_sound
-# `Audit/RealApcLegality.lean`'s memory-gadget lookbacks for the unoptimized APC: the raw
+# `Keccak2105000/UnoptChained.lean`'s memory-gadget lookbacks: the raw
 # (pre-substitution) `AssertLtSubAir` reshaped into `lt_gadget_offset`'s form, one per genuine
 # memory access. `rs2_as_0/1/2` are pinned to `0` (unoptPins), so the other two arithmetic-slot
 # reads are unconditionally inactive and need no lookback of their own.
-ApcOptimizer.OpenVM.unoptPins
+ApcOptimizer.OpenVM.Keccak2105000.unoptPins
 ApcOptimizer.OpenVM.rawGadget_heq
-ApcOptimizer.OpenVM.unoptAccepts
 ApcOptimizer.OpenVM.gadgetLookback_raw
 ApcOptimizer.OpenVM.sum5_eq1_ne_zero
 ApcOptimizer.OpenVM.sum2_eq1_ne_zero
 ApcOptimizer.OpenVM.accepts_congr_mult3
-ApcOptimizer.OpenVM.unoptLookback_r1_0
-ApcOptimizer.OpenVM.unoptLookback_w_0
-ApcOptimizer.OpenVM.unoptLookback_r1_1
-ApcOptimizer.OpenVM.unoptLookback_w_1
-ApcOptimizer.OpenVM.unoptLookback_r1_2
-ApcOptimizer.OpenVM.unoptLookback_w_2
-ApcOptimizer.OpenVM.unoptLookback_r1_3
-ApcOptimizer.OpenVM.unoptLookback_r2_3
+ApcOptimizer.OpenVM.Keccak2105000.unoptLookback_r1_0
+ApcOptimizer.OpenVM.Keccak2105000.unoptLookback_w_0
+ApcOptimizer.OpenVM.Keccak2105000.unoptLookback_r1_1
+ApcOptimizer.OpenVM.Keccak2105000.unoptLookback_w_1
+ApcOptimizer.OpenVM.Keccak2105000.unoptLookback_r1_2
+ApcOptimizer.OpenVM.Keccak2105000.unoptLookback_w_2
+ApcOptimizer.OpenVM.Keccak2105000.unoptLookback_r1_3
+ApcOptimizer.OpenVM.Keccak2105000.unoptLookback_r2_3
 
-# `Audit/RealApcLegality.lean`'s byte invariant (`StepLayout.sendsOk`) for the unoptimized APC:
+# `Keccak2105000/UnoptChained.lean`'s byte invariant (`StepLayout.sendsOk`):
 # `byteCheckAll`/`byteCheck_sendsOk` decide every echoed read and non-send interaction; the three
 # ALU writes are left to the caller, closed by deriving each limb's byte-ness from its own
 # `bitwiseLookup` row and a one-hot decomposition of the instruction's opcode selector.
@@ -222,14 +221,120 @@ ApcOptimizer.OpenVM.isByte_of_andEq
 ApcOptimizer.OpenVM.zmod_boolElim
 ApcOptimizer.OpenVM.aluOneHot
 ApcOptimizer.OpenVM.isByte_of_aluLimb
-ApcOptimizer.OpenVM.unoptAluCase0
-ApcOptimizer.OpenVM.unoptAluCase1
-ApcOptimizer.OpenVM.unoptAluCase2
-ApcOptimizer.OpenVM.unoptWriteIsByte_0
-ApcOptimizer.OpenVM.unoptWriteIsByte_1
-ApcOptimizer.OpenVM.unoptWriteIsByte_2
-ApcOptimizer.OpenVM.unoptByteCheck
-ApcOptimizer.OpenVM.apc2105000UnoptChained_memSendsOk
+ApcOptimizer.OpenVM.Keccak2105000.unoptAluCase0
+ApcOptimizer.OpenVM.Keccak2105000.unoptAluCase1
+ApcOptimizer.OpenVM.Keccak2105000.unoptAluCase2
+ApcOptimizer.OpenVM.Keccak2105000.unoptWriteIsByte_0
+ApcOptimizer.OpenVM.Keccak2105000.unoptWriteIsByte_1
+ApcOptimizer.OpenVM.Keccak2105000.unoptWriteIsByte_2
+ApcOptimizer.OpenVM.Keccak2105000.unoptByteCheck
+ApcOptimizer.OpenVM.Keccak2105000.unoptChained_memSendsOk
+
+# The two single-instruction APCs (`Audit/Apcs/SingleXor/`, `Audit/Apcs/SingleBeq/`), audited at
+# the same stages as the keccak block over the same `Apcs/Common.lean`. One step each, so their
+# *unoptimized* stage has a step layout too -- the roots below include `unopt_legalGuest`, which
+# the fused block only reaches after chaining.
+ApcOptimizer.OpenVM.SingleXor.gated_checkMultiplicities_fails
+ApcOptimizer.OpenVM.SingleXor.gated_satisfiesAlgebraic_zero
+ApcOptimizer.OpenVM.SingleXor.gated_mults_zero_on_padding
+ApcOptimizer.OpenVM.SingleXor.gated_not_hasStepLayout
+ApcOptimizer.OpenVM.SingleXor.gatedPinRules
+ApcOptimizer.OpenVM.SingleXor.gatedPinRules_hold
+ApcOptimizer.OpenVM.SingleXor.gatedIsValid
+ApcOptimizer.OpenVM.SingleXor.gatedIsValid_ne_zero
+ApcOptimizer.OpenVM.SingleXor.gatedPinned_checkMultiplicitiesWith
+ApcOptimizer.OpenVM.SingleXor.gatedPinned_legalMultiplicities
+ApcOptimizer.OpenVM.SingleXor.gatedBaseLin
+ApcOptimizer.OpenVM.SingleXor.gatedBridgeCheck
+ApcOptimizer.OpenVM.SingleXor.gatedByteCheck
+ApcOptimizer.OpenVM.SingleXor.gatedPinned_hasStepLayout
+ApcOptimizer.OpenVM.SingleXor.gatedPinned_legalGuest
+ApcOptimizer.OpenVM.SingleXor.layoutVars
+ApcOptimizer.OpenVM.SingleXor.baseE
+ApcOptimizer.OpenVM.SingleXor.baseF
+ApcOptimizer.OpenVM.SingleXor.witnesses
+ApcOptimizer.OpenVM.SingleXor.opt_checkMultiplicities
+ApcOptimizer.OpenVM.SingleXor.opt_legalMultiplicities
+ApcOptimizer.OpenVM.SingleXor.opt_no_padding_row
+ApcOptimizer.OpenVM.SingleXor.optPinRules
+ApcOptimizer.OpenVM.SingleXor.optPinRules_hold
+ApcOptimizer.OpenVM.SingleXor.optBaseLin
+ApcOptimizer.OpenVM.SingleXor.optBridgeCheck
+ApcOptimizer.OpenVM.SingleXor.optByteCheck
+ApcOptimizer.OpenVM.SingleXor.opt_hasStepLayout
+ApcOptimizer.OpenVM.SingleXor.opt_legalGuest
+ApcOptimizer.OpenVM.SingleXor.unopt_checkMultiplicitiesWith
+ApcOptimizer.OpenVM.SingleXor.unopt_legalMultiplicities
+ApcOptimizer.OpenVM.SingleXor.unopt_zero_not_satisfiesAlgebraic
+ApcOptimizer.OpenVM.SingleXor.unoptPins
+ApcOptimizer.OpenVM.SingleXor.unoptLookback_r1
+ApcOptimizer.OpenVM.SingleXor.unoptLookback_r2
+ApcOptimizer.OpenVM.SingleXor.unoptLookback_w
+ApcOptimizer.OpenVM.SingleXor.unoptAluCase
+ApcOptimizer.OpenVM.SingleXor.unoptWriteIsByte
+ApcOptimizer.OpenVM.SingleXor.unoptVars
+ApcOptimizer.OpenVM.SingleXor.unoptBaseF
+ApcOptimizer.OpenVM.SingleXor.unoptPinRules
+ApcOptimizer.OpenVM.SingleXor.unoptPinRules_hold
+ApcOptimizer.OpenVM.SingleXor.unoptBaseLin
+ApcOptimizer.OpenVM.SingleXor.unoptBridgeCheck
+ApcOptimizer.OpenVM.SingleXor.unoptOffsets
+ApcOptimizer.OpenVM.SingleXor.unoptOffsetUb
+ApcOptimizer.OpenVM.SingleXor.unoptOffsetUb_dominates
+ApcOptimizer.OpenVM.SingleXor.unoptWitnesses
+ApcOptimizer.OpenVM.SingleXor.unoptByteCheck
+ApcOptimizer.OpenVM.SingleXor.unopt_hasStepLayout
+ApcOptimizer.OpenVM.SingleXor.unopt_legalGuest
+
+# `SingleBeq` writes nothing, so its byte invariant is entirely decidable.
+ApcOptimizer.OpenVM.SingleBeq.gated_checkMultiplicities_fails
+ApcOptimizer.OpenVM.SingleBeq.gated_satisfiesAlgebraic_zero
+ApcOptimizer.OpenVM.SingleBeq.gated_mults_zero_on_padding
+ApcOptimizer.OpenVM.SingleBeq.gated_not_hasStepLayout
+ApcOptimizer.OpenVM.SingleBeq.gatedPinRules
+ApcOptimizer.OpenVM.SingleBeq.gatedPinRules_hold
+ApcOptimizer.OpenVM.SingleBeq.gatedIsValid
+ApcOptimizer.OpenVM.SingleBeq.gatedIsValid_ne_zero
+ApcOptimizer.OpenVM.SingleBeq.gatedPinned_checkMultiplicitiesWith
+ApcOptimizer.OpenVM.SingleBeq.gatedPinned_legalMultiplicities
+ApcOptimizer.OpenVM.SingleBeq.gatedBaseLin
+ApcOptimizer.OpenVM.SingleBeq.gatedBridgeCheck
+ApcOptimizer.OpenVM.SingleBeq.gatedByteCheck
+ApcOptimizer.OpenVM.SingleBeq.gatedPinned_hasStepLayout
+ApcOptimizer.OpenVM.SingleBeq.gatedPinned_legalGuest
+ApcOptimizer.OpenVM.SingleBeq.layoutVars
+ApcOptimizer.OpenVM.SingleBeq.baseE
+ApcOptimizer.OpenVM.SingleBeq.baseF
+ApcOptimizer.OpenVM.SingleBeq.witnesses
+ApcOptimizer.OpenVM.SingleBeq.opt_checkMultiplicities
+ApcOptimizer.OpenVM.SingleBeq.opt_legalMultiplicities
+ApcOptimizer.OpenVM.SingleBeq.opt_no_padding_row
+ApcOptimizer.OpenVM.SingleBeq.optPinRules
+ApcOptimizer.OpenVM.SingleBeq.optPinRules_hold
+ApcOptimizer.OpenVM.SingleBeq.optBaseLin
+ApcOptimizer.OpenVM.SingleBeq.optBridgeCheck
+ApcOptimizer.OpenVM.SingleBeq.optByteCheck
+ApcOptimizer.OpenVM.SingleBeq.opt_hasStepLayout
+ApcOptimizer.OpenVM.SingleBeq.opt_legalGuest
+ApcOptimizer.OpenVM.SingleBeq.unopt_checkMultiplicitiesWith
+ApcOptimizer.OpenVM.SingleBeq.unopt_legalMultiplicities
+ApcOptimizer.OpenVM.SingleBeq.unopt_zero_not_satisfiesAlgebraic
+ApcOptimizer.OpenVM.SingleBeq.unoptFlagSum
+ApcOptimizer.OpenVM.SingleBeq.unoptLookback_r1
+ApcOptimizer.OpenVM.SingleBeq.unoptLookback_r2
+ApcOptimizer.OpenVM.SingleBeq.unoptVars
+ApcOptimizer.OpenVM.SingleBeq.unoptBaseF
+ApcOptimizer.OpenVM.SingleBeq.unoptPinRules
+ApcOptimizer.OpenVM.SingleBeq.unoptPinRules_hold
+ApcOptimizer.OpenVM.SingleBeq.unoptBaseLin
+ApcOptimizer.OpenVM.SingleBeq.unoptBridgeCheck
+ApcOptimizer.OpenVM.SingleBeq.unoptOffsets
+ApcOptimizer.OpenVM.SingleBeq.unoptOffsetUb
+ApcOptimizer.OpenVM.SingleBeq.unoptOffsetUb_dominates
+ApcOptimizer.OpenVM.SingleBeq.unoptWitnesses
+ApcOptimizer.OpenVM.SingleBeq.unoptByteCheck
+ApcOptimizer.OpenVM.SingleBeq.unopt_hasStepLayout
+ApcOptimizer.OpenVM.SingleBeq.unopt_legalGuest
 
 # `Legal.lean`'s `memOrdered`/`memSendsOk` restriction to the memory bus (added alongside
 # `GuestBusRules.memPayloadOnly`, which settles every other stateful bus outright): the general
@@ -239,17 +344,17 @@ ApcOptimizer.OpenVM.memSendsOk_of_sendsOk
 ApcOptimizer.OpenVM.defaultBusMap_mem_unique
 ApcOptimizer.OpenVM.maintainsInvariants_off_mem
 
-# `Audit/RealApcLegality.lean`'s `memOrdered` for the unoptimized APC: a `decide` over the
-# offset-upper-bound table, mirroring `optOffsetUb_dominates`.
-ApcOptimizer.OpenVM.unoptOffsetUb_dominates
+# `Keccak2105000/UnoptChained.lean`'s `memOrdered`: a `decide` over the offset-upper-bound table
+# it places by, this stage being the one that cannot use `Audit/PlaceCheck.lean`'s recipes.
+ApcOptimizer.OpenVM.Keccak2105000.unoptOffsetUb_dominates
 
-# `Audit/RealApcLegality.lean`'s full step layout for the chained-but-unoptimized APC, and the
+# `Keccak2105000/UnoptChained.lean`'s full step layout, and the
 # `legalGuest` it assembles into — the closing result for finding G's memory half on this circuit.
-ApcOptimizer.OpenVM.apc2105000UnoptChained_hasStepLayout
-ApcOptimizer.OpenVM.apc2105000UnoptChained_legalGuest
+ApcOptimizer.OpenVM.Keccak2105000.unoptChained_hasStepLayout
+ApcOptimizer.OpenVM.Keccak2105000.unoptChained_legalGuest
 
 # `Audit/SendOnlyPolarity.lean`'s constant-propagation tier: its root is
-# `checkMultiplicitiesWith_sound`, used by `Audit/RealApcLegality.lean`, and the rest feed it.
+# `checkMultiplicitiesWith_sound`, used by `Audit/Apcs/`, and the rest feed it.
 Expression.signedPart_sq
 Expression.signedPart_eval
 pinRuleOf_eval
@@ -361,3 +466,46 @@ ApcOptimizer.OpenVM.sideEffects_eq
 ApcOptimizer.OpenVM.looseTabled_not_isSoundReplacementOf
 ApcOptimizer.OpenVM.checkedStepChip_legalGuest
 ApcOptimizer.OpenVM.openVm_sound_but_illegal
+
+# The two blocks straight out of the shipped benchmark corpus (`Audit/Apcs/AndBranch/`,
+# `Audit/Apcs/LoadBranch/`), audited at the one stage those dumps carry: `.powdr_opt`, the
+# pre-gate analogue of the other three APCs' `opt`.
+ApcOptimizer.OpenVM.AndBranch.layoutVars
+ApcOptimizer.OpenVM.AndBranch.baseE
+ApcOptimizer.OpenVM.AndBranch.baseF
+ApcOptimizer.OpenVM.AndBranch.witnesses
+ApcOptimizer.OpenVM.AndBranch.opt_checkMultiplicities
+ApcOptimizer.OpenVM.AndBranch.opt_legalMultiplicities
+ApcOptimizer.OpenVM.AndBranch.opt_no_padding_row
+ApcOptimizer.OpenVM.AndBranch.optPinRules
+ApcOptimizer.OpenVM.AndBranch.optPinRules_hold
+ApcOptimizer.OpenVM.AndBranch.optBaseLin
+ApcOptimizer.OpenVM.AndBranch.optBridgeCheck
+ApcOptimizer.OpenVM.AndBranch.optByteCheck
+ApcOptimizer.OpenVM.AndBranch.recipes
+ApcOptimizer.OpenVM.AndBranch.optPlaceCheck
+ApcOptimizer.OpenVM.AndBranch.optOrderCheck
+ApcOptimizer.OpenVM.AndBranch.optFitsCheck
+ApcOptimizer.OpenVM.AndBranch.optLookbacks
+ApcOptimizer.OpenVM.AndBranch.optWriteOk
+ApcOptimizer.OpenVM.AndBranch.opt_hasStepLayout
+ApcOptimizer.OpenVM.AndBranch.opt_legalGuest
+ApcOptimizer.OpenVM.LoadBranch.layoutVars
+ApcOptimizer.OpenVM.LoadBranch.baseE
+ApcOptimizer.OpenVM.LoadBranch.baseF
+ApcOptimizer.OpenVM.LoadBranch.witnesses
+ApcOptimizer.OpenVM.LoadBranch.opt_checkMultiplicities
+ApcOptimizer.OpenVM.LoadBranch.opt_legalMultiplicities
+ApcOptimizer.OpenVM.LoadBranch.opt_no_padding_row
+ApcOptimizer.OpenVM.LoadBranch.optPinRules
+ApcOptimizer.OpenVM.LoadBranch.optPinRules_hold
+ApcOptimizer.OpenVM.LoadBranch.optBaseLin
+ApcOptimizer.OpenVM.LoadBranch.optBridgeCheck
+ApcOptimizer.OpenVM.LoadBranch.optByteCheck
+ApcOptimizer.OpenVM.LoadBranch.recipes
+ApcOptimizer.OpenVM.LoadBranch.optPlaceCheck
+ApcOptimizer.OpenVM.LoadBranch.optOrderCheck
+ApcOptimizer.OpenVM.LoadBranch.optFitsCheck
+ApcOptimizer.OpenVM.LoadBranch.optLookbacks
+ApcOptimizer.OpenVM.LoadBranch.opt_hasStepLayout
+ApcOptimizer.OpenVM.LoadBranch.opt_legalGuest

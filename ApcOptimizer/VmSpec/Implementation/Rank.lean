@@ -45,9 +45,10 @@ structure RankModel (p : ℕ) where
     bridge — walked across the whole run — says where that base sits on the global clock. See
     `Host.ordersRanks` and, for OpenVM, `openVmHost_ordersRanks`. -/
 def VmAssignment.ordersRanks {vm : Vm p} (a : VmAssignment p vm) (rm : RankModel p)
-    (r : GuestBusRules p) (maxWindow maxLookback : ℕ) : Prop :=
+    (r : GuestBusRules p) (memAddress : BusMessage p → List (Option (ZMod p)))
+    (maxWindow maxLookback : ℕ) : Prop :=
   ∀ (t : Fin vm.guest.length) (asg : ChipAssignment p), asg ∈ a.guestAssignments t →
-    ∀ L : StepLayout (vm.guest.get t) r asg maxWindow maxLookback,
+    ∀ L : StepLayout (vm.guest.get t) r asg memAddress maxWindow maxLookback,
       ∀ i j : Fin (vm.guest.get t).busInteractions.length,
         (vm.guest.get t).activeStateful r asg i → (vm.guest.get t).activeStateful r asg j →
           L.tOffset j < L.tOffset i →

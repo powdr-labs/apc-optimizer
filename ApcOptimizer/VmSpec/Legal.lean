@@ -114,6 +114,7 @@ def Circuit.memSend (c : Circuit p) (r : GuestBusRules p) (asg : ChipAssignment 
     argument can derive the chaining either, and it makes the byte-constraint induction awkward to
     state. Powdr should add the equations to the fused APCs; that looks like its intent. -/
 structure StepLayout {p : ℕ} (c : Circuit p) (r : GuestBusRules p) (asg : ChipAssignment p)
+    (memAddress : BusMessage p → List (Option (ZMod p)))
     (maxWindow maxLookback : ℕ) where
 
   -- EXECUTION BRIDGE
@@ -147,10 +148,47 @@ structure StepLayout {p : ℕ} (c : Circuit p) (r : GuestBusRules p) (asg : Chip
   /-- Where in the step's window each interaction sits. Essentially, each timestamp as an integer
       offset from `tStart`. Receives from previous steps get negative values. -/
   tOffset : Fin c.busInteractions.length → ℤ
+
   /-- The offsets match actual timestamps and are in the step's window. -/
   tOffsetMatch : ∀ i : Fin c.busInteractions.length, c.activeStateful r asg i →
     -(maxLookback : ℤ) ≤ tOffset i ∧ tOffset i ≤ (tWindow : ℤ) ∧
       r.getTimestamp (c.msgAt asg i) = tStart + ((tOffset i : ℤ) : ZMod p)
+
+  /-- Memory sends have distinct times. -/
+  sendTimesDistinct : ∀ i j : Fin c.busInteractions.length,
+    c.memSend r asg i → c.memSend r asg j →
+      memAddress (c.msgAt asg i) = memAddress (c.msgAt asg j) →
+        tOffset i = tOffset j → i = j
+
+  /-- Memory sends are in-window. -/
+  sendInWindow : ∀ i : Fin c.busInteractions.length,
+    c.memSend r asg i → 0 ≤ tOffset i ∧ tOffset i < tWindow
+
+  /-- Any pre-window interactions are memory receives. -/
+  negOffsetOnlyMemRecv : ∀ i : Fin c.busInteractions.length,
+    c.activeStateful r asg i → tOffset i < 0 →
+      (c.busInteractions.get i).busId = r.memBusId ∧ c.multAt asg i = -1
+
+  /-- Memory accesses are paired. This function is the pairing; its requirements follow. -/
+  memPartner : Fin c.busInteractions.length → Fin c.busInteractions.length
+
+  /-- The pairing is closed on memory interactions and is a fixpoint-free involution there. -/
+  memPartner_invol : ∀ i : Fin c.busInteractions.length,
+    (c.busInteractions.get i).busId = r.memBusId →
+      memPartner (memPartner i) = i ∧ memPartner i ≠ i ∧
+        (c.busInteractions.get (memPartner i)).busId = r.memBusId
+
+  /-- Sends and receives are paired. -/
+  memPartner_mult : ∀ i : Fin c.busInteractions.length,
+    (c.busInteractions.get i).busId = r.memBusId →
+      c.multAt asg (memPartner i) = - c.multAt asg i ∧
+      memAddress (c.msgAt asg i) = memAddress (c.msgAt asg (memPartner i))
+
+  /-- Receives are constrained to preceed sends. (Typically via range-checks.) -/
+  memPartner_time : ∀ i : Fin c.busInteractions.length,
+    (c.busInteractions.get i).busId = r.memBusId → c.multAt asg i = -1 →
+      tOffset i < tOffset (memPartner i)
+
   /-- Each memory send is Ok, given that every earlier memory interaction is Ok.
 
       This is the induction that carries the memory-byte invariant: a send is justified by
@@ -165,21 +203,32 @@ structure StepLayout {p : ℕ} (c : Circuit p) (r : GuestBusRules p) (asg : Chip
       r.payloadOk (c.msgAt asg j)) →
     r.payloadOk (c.msgAt asg i)
 
+
 /-- Every assignment a guest chip admits lays out as one instruction step.
 
     Needed to avoid timestamp overflow, and to give the soundness argument's induction something to
     descend on. -/
-def Circuit.hasStepLayout (c : Circuit p) (r : GuestBusRules p) (maxWindow maxLookback : ℕ) :
-    Prop :=
+def Circuit.hasStepLayout (c : Circuit p) (r : GuestBusRules p)
+    (memAddress : BusMessage p → List (Option (ZMod p))) (maxWindow maxLookback : ℕ) : Prop :=
   ∀ asg : ChipAssignment p, c.satisfiesAlgebraic asg → c.satisfiesStateless r asg →
-    Nonempty (StepLayout c r asg maxWindow maxLookback)
+    Nonempty (StepLayout c r asg memAddress maxWindow maxLookback)
 
 /-- What a VM requires of any guest chip it will run. Instantiates the `Host.legalGuest` field.
 
     See the consituent fields for the conditions. -/
 structure Circuit.legalGuest (c : Circuit p) (r : GuestBusRules p)
+    (memAddress : BusMessage p → List (Option (ZMod p)))
     (maxWindow maxLookback maxInteractions : ℕ) : Prop where
   sendOnly : c.statelessSendOnly r
   polarity : c.statefulPolarity r
-  stepLayout : c.hasStepLayout r maxWindow maxLookback
+  stepLayout : c.hasStepLayout r memAddress maxWindow maxLookback
   size : c.busInteractions.length ≤ maxInteractions
+  /-- Any assignment that interacts with register 0 has value 0.
+
+      TODO(AO): study APCs that interact with register 0 to see if this requirement is correctly
+      phrased. I have not seen such APCs yet. -/
+  x0Zero : ∀ asg : ChipAssignment p, c.satisfiesAlgebraic asg → c.satisfiesStateless r asg →
+    ∀ i : Fin c.busInteractions.length, c.memSend r asg i →
+      (c.msgAt asg i).2[0]? = some 1 → (c.msgAt asg i).2[1]? = some 0 →
+        (c.msgAt asg i).2[2]? = some 0 ∧ (c.msgAt asg i).2[3]? = some 0 ∧
+          (c.msgAt asg i).2[4]? = some 0 ∧ (c.msgAt asg i).2[5]? = some 0

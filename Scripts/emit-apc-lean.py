@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Emit a powdr APC dump as a Lean `Circuit babyBear` literal.
 
-Usage: emit-apc-lean.py <name> <dump.json> [<name> <dump.json> ...] > Out.lean
+Usage: emit-apc-lean.py [--namespace NS] <name> <dump.json> [<name> <dump.json> ...] > Out.lean
 
-The dumps are the `APC_EXPORT_PATH` JSON files powdr writes (see
-`apc-dumps/README.md` in the powdr checkout); the same format
+Writes one `Stages.lean` for `ApcOptimizer/VmSpec/Audit/Apcs/<Apc>/`, whose namespace
+`--namespace` names (default `ApcOptimizer.OpenVM`; the audited APCs use
+`ApcOptimizer.OpenVM.<Apc>` and call the stages `unopt`, `opt`, `gated`). Run powdr's
+APC-builder tests with `APC_EXPORT_PATH=<dir> APC_EXPORT_LEVEL=3` to get every stage.
+
+The dumps are the `APC_EXPORT_PATH` JSON files powdr writes; the same format
 `ApcOptimizer/Implementation/JsonParser.lean` reads at runtime.
 """
 import json
@@ -75,6 +79,9 @@ def emit_asg(name: str, path: str) -> None:
 
 def main() -> None:
     args = sys.argv[1:]
+    ns = "ApcOptimizer.OpenVM"
+    if args[:1] == ["--namespace"]:
+        ns, args = args[1], args[2:]
     if len(args) < 2 or len(args) % 2:
         sys.exit(__doc__)
     print("import ApcOptimizer.VmSpec.OpenVm")
@@ -82,16 +89,17 @@ def main() -> None:
     print("set_option autoImplicit false")
     print("set_option maxHeartbeats 1000000")
     print()
-    print("/-! Real keccak APCs, emitted from powdr dumps -- see `RealApcLegality.lean`. -/")
+    print("/-! One APC at several points of powdr's pipeline, emitted from the stage dumps --")
+    print("    see `Audit/RealApcLegality.lean`. -/")
     print()
-    print("namespace ApcOptimizer.OpenVM")
+    print("namespace %s" % ns)
     print()
     for i in range(0, len(args), 2):
         if args[i].startswith("asg:"):
             emit_asg(args[i][4:], args[i + 1])
         else:
             emit(args[i], args[i + 1])
-    print("end ApcOptimizer.OpenVM")
+    print("end %s" % ns)
 
 
 main()

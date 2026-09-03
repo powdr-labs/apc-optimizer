@@ -3,13 +3,18 @@ import ApcOptimizer.VmSpec.OpenVm
 set_option autoImplicit false
 set_option maxHeartbeats 1000000
 
-/-! Real keccak APCs, emitted from powdr dumps -- see `RealApcLegality.lean`. -/
+/-! **The keccak basic block at pc `2105000`, at four points of powdr's pipeline.**
 
-namespace ApcOptimizer.OpenVM
+    `unopt`, `opt` and `gated` are emitted verbatim from the stage dumps by
+    `Scripts/emit-apc-lean.py`; `unoptChained` and `gatedPinned` are the two modifications the
+    proofs need, each defined by appending constraints rather than restating the circuit. One file
+    per stage carries its proofs -- see `Audit/Legality/All.lean`. -/
 
-/-- `apc2105000Unopt`, emitted verbatim from `apc_candidate_2105000_000_unopt.json`
+namespace ApcOptimizer.OpenVM.Keccak2105000
+
+/-- `unopt`, emitted verbatim from `apc_candidate_2105000_000_unopt.json`
     by `Scripts/emit-apc-lean.py`: 117 algebraic constraints, 71 bus interactions. -/
-def apc2105000Unopt : Circuit babyBear where
+def unopt : Circuit babyBear where
   algebraicConstraints :=
     [ .mul (.var ⟨"opcode_add_flag_0", some 31⟩) (.add (.var ⟨"opcode_add_flag_0", some 31⟩) (.mul (.const 2013265920) (.const 1)))
     , .mul (.var ⟨"opcode_sub_flag_0", some 32⟩) (.add (.var ⟨"opcode_sub_flag_0", some 32⟩) (.mul (.const 2013265920) (.const 1)))
@@ -272,9 +277,9 @@ def apc2105000Unopt : Circuit babyBear where
     , { busId := 0, multiplicity := .add (.add (.const 0) (.var ⟨"opcode_beq_flag_3", some 128⟩)) (.var ⟨"opcode_bne_flag_3", some 129⟩),
         payload := [.add (.add (.var ⟨"from_state__pc_3", some 108⟩) (.mul (.var ⟨"cmp_result_3", some 126⟩) (.var ⟨"imm_3", some 127⟩))) (.mul (.add (.const 1) (.mul (.const 2013265920) (.var ⟨"cmp_result_3", some 126⟩))) (.const 4)), .add (.var ⟨"from_state__timestamp_3", some 109⟩) (.const 2)] } ]
 
-/-- `apc2105000Opt`, emitted verbatim from `apc_candidate_2105000_039_trivial_simp.json`
+/-- `opt`, emitted verbatim from `apc_candidate_2105000_039_trivial_simp.json`
     by `Scripts/emit-apc-lean.py`: 3 algebraic constraints, 23 bus interactions. -/
-def apc2105000Opt : Circuit babyBear where
+def opt : Circuit babyBear where
   algebraicConstraints :=
     [ .mul (.var ⟨"cmp_result_3", some 126⟩) (.add (.var ⟨"cmp_result_3", some 126⟩) (.mul (.const 2013265920) (.const 1)))
     , .mul (.add (.const 1) (.mul (.const 2013265920) (.var ⟨"cmp_result_3", some 126⟩))) (.var ⟨"a__0_2", some 91⟩)
@@ -327,9 +332,9 @@ def apc2105000Opt : Circuit babyBear where
     , { busId := 3, multiplicity := .const 1,
         payload := [.add (.add (.mul (.const 15360) (.var ⟨"reads_aux__1__base__prev_timestamp_3", some 115⟩)) (.mul (.const 15360) (.var ⟨"reads_aux__1__base__timestamp_lt_aux__lower_decomp__0_3", some 116⟩))) (.mul (.const 2013265920) (.add (.mul (.const 15360) (.var ⟨"from_state__timestamp_0", some 1⟩)) (.const 138240))), .const 12] } ]
 
-/-- `apc2105000Gated`, emitted verbatim from `apc_candidate_2105000_040.json`
+/-- `gated`, emitted verbatim from `apc_candidate_2105000_040.json`
     by `Scripts/emit-apc-lean.py`: 4 algebraic constraints, 23 bus interactions. -/
-def apc2105000Gated : Circuit babyBear where
+def gated : Circuit babyBear where
   algebraicConstraints :=
     [ .mul (.var ⟨"cmp_result_3", some 126⟩) (.add (.var ⟨"cmp_result_3", some 126⟩) (.mul (.const 2013265920) (.const 1)))
     , .mul (.add (.const 1) (.mul (.const 2013265920) (.var ⟨"cmp_result_3", some 126⟩))) (.var ⟨"a__0_2", some 91⟩)
@@ -384,13 +389,13 @@ def apc2105000Gated : Circuit babyBear where
         payload := [.add (.add (.mul (.const 15360) (.var ⟨"reads_aux__1__base__prev_timestamp_3", some 115⟩)) (.mul (.const 15360) (.var ⟨"reads_aux__1__base__timestamp_lt_aux__lower_decomp__0_3", some 116⟩))) (.mul (.const 2013265920) (.add (.mul (.const 15360) (.var ⟨"from_state__timestamp_0", some 1⟩)) (.const 138240))), .const 12] } ]
 
 
-/-- `apc2105000Unopt` with its four fused instructions' bridge timestamps chained: block `i + 1`'s
+/-- `unopt` with its four fused instructions' bridge timestamps chained: block `i + 1`'s
     start is block `i`'s own start plus its own duration (`3, 3, 3` ticks, read off the literal
     delta each block's own bridge send already carries). Defined by appending to
-    `apc2105000Unopt` rather than restating it. -/
-def apc2105000UnoptChained : Circuit babyBear :=
-  { apc2105000Unopt with
-    algebraicConstraints := apc2105000Unopt.algebraicConstraints ++
+    `unopt` rather than restating it. -/
+def unoptChained : Circuit babyBear :=
+  { unopt with
+    algebraicConstraints := unopt.algebraicConstraints ++
       [ .add (.var ⟨"from_state__timestamp_1", some 37⟩)
           (.mul (.const 2013265920)
             (.add (.var ⟨"from_state__timestamp_0", some 1⟩) (.const 3)))
@@ -401,12 +406,12 @@ def apc2105000UnoptChained : Circuit babyBear :=
           (.mul (.const 2013265920)
             (.add (.var ⟨"from_state__timestamp_2", some 73⟩) (.const 3))) ] }
 
-/-- `apc2105000Gated` with `is_valid` pinned to `1`, closing off the padding row that makes
-    `apc2105000Gated_not_hasStepLayout` false. Defined by appending to `apc2105000Gated` rather
+/-- `gated` with `is_valid` pinned to `1`, closing off the padding row that makes
+    `gated_not_hasStepLayout` false. Defined by appending to `gated` rather
     than restating it. -/
-def apc2105000GatedPinned : Circuit babyBear :=
-  { apc2105000Gated with
-    algebraicConstraints := apc2105000Gated.algebraicConstraints ++
+def gatedPinned : Circuit babyBear :=
+  { gated with
+    algebraicConstraints := gated.algebraicConstraints ++
       [ .add (.var ⟨"is_valid", some 137⟩) (.mul (.const 2013265920) (.const 1)) ] }
 
-end ApcOptimizer.OpenVM
+end ApcOptimizer.OpenVM.Keccak2105000
