@@ -217,8 +217,8 @@ theorem VarRegistry.decodeBI_eval (reg : VarRegistry) (bi : BusInteraction (Dens
 theorem VarRegistry.decodeCS_satisfies (reg : VarRegistry) (d : DenseConstraintSystem p)
     (bs : BusSemantics p) (E : Variable → ZMod p) :
     (reg.decodeCS d).satisfies bs E ↔ d.satisfies bs (fun i => E (reg.resolve i)) := by
-  simp only [Circuit.satisfies, DenseConstraintSystem.satisfies, VarRegistry.decodeCS,
-    List.mem_map, forall_exists_index, and_imp]
+  simp only [Circuit.satisfies, Circuit.satisfiesAlgebraic, DenseConstraintSystem.satisfies,
+    VarRegistry.decodeCS, List.mem_map, forall_exists_index, and_imp]
   constructor
   · rintro ⟨h1, h2⟩
     refine ⟨fun c hc => ?_, fun bi hbi => ?_⟩
