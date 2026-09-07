@@ -50,36 +50,16 @@ theorem wrapChip_no_mem (_asg : ChipAssignment babyBear)
 
 def wrapOffs : List ℤ := [0, 3, -536870911, -536870911]
 
-/-- **`wrapChip` satisfies every clause of the *original* `StepLayout`.** `bridgeRecv`,
-    `bridgeSend` and `bridgeNoOther` are all met — the extra pair nets to zero — and its offsets
-    are inside `tOffsetMatch`'s range. So nothing in `Legal.lean` rejects a chip whose bridge
-    interactions have wrapped timestamps. -/
-def wrapChipLayout (P : OpenVmParams babyBear) (asg : ChipAssignment babyBear) :
-    StepLayout wrapChip rr asg P.maxWindow openVmTimestampBound where
-  pcFrom := 0
-  pcTo := 1
-  tStart := 1
-  tWindow := 3
-  tWindowPos := by decide
-  tWindowLt := P.inputWindowOk
-  bridgeRecv := by rfl
-  bridgeSend := by rfl
-  bridgeNoOther := wrapChip_bridgeNoOther asg
-  tOffset := fun i => wrapOffs.getD i.val 0
-  tOffsetMatch := by
-    intro i _
-    fin_cases i
-    · exact ⟨by decide, by decide, by show (1 : ZMod babyBear) = 1 + ((0 : ℤ) : ZMod babyBear); decide⟩
-    · exact ⟨by decide, by decide, by show (4 : ZMod babyBear) = 1 + ((3 : ℤ) : ZMod babyBear); decide⟩
-    · exact ⟨by decide, by decide, wrapChip_offset⟩
-    · exact ⟨by decide, by decide, wrapChip_offset⟩
-  memSendsOk := by
-    intro i hi _
-    exact absurd hi.2 (by fin_cases i <;> decide)
+/-! **`wrapChip` satisfied every clause of the *original* `StepLayout`.** `wrapChipLayout` and
+    `wrapChip_hasStepLayout` stood here, building one at `tStart = 1`, `tWindow = 3` and
+    `wrapOffs`: `bridgeRecv`/`bridgeSend` hold by `rfl`, `bridgeNoOther` is
+    `wrapChip_bridgeNoOther` — the extra pair nets to zero — every offset is inside
+    `tOffsetMatch`'s range, and `wrapChip_no_mem` makes every memory clause vacuous. Nothing in
+    that version of `Legal.lean` rejected a chip whose bridge interactions have wrapped
+    timestamps.
 
-theorem wrapChip_hasStepLayout (P : OpenVmParams babyBear) :
-    wrapChip.hasStepLayout rr P.maxWindow openVmTimestampBound :=
-  fun asg _ _ => ⟨wrapChipLayout P asg⟩
+    They are retracted: `StepLayout` now carries `negOffsetOnlyMemRecv`, and that clause fails at
+    exactly the wrapped pair (`wrapChip_fails_negOffset`), so no layout exists any more. -/
 
 /-- **…and `negOffsetOnlyMemRecv` is what rejects it.** Interactions `2` and `3` sit at offset
     `-(2^29 - 1)` while being on the execution bus, so the clause fails at exactly the place the

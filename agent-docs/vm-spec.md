@@ -7,10 +7,12 @@ so that a whole VM's worth of guest chips, not just one circuit, can be optimize
 
 It is a separate, still-WIP audit surface, excluded from the default `lake build` target and from
 `ApcOptimizer.lean`'s import closure (see that file's comment); build it explicitly with
-`lake build ApcOptimizer.VmSpec` (and `lake build ApcOptimizer.VmSpec.Audit.RealApcLegality` for
-the slow real-circuit file). `ApcOptimizer/VmSpec.lean`'s own module docstring is the audit-tier
-map — which files are audited (`Basic.lean`, `Legal.lean`, `OpenVm.lean`, `Theorems.lean`, and
-`Audit/` as evidence for those), which are argument-only (`Implementation/`) and so need no audit.
+`lake build ApcOptimizer.VmSpec` (and `lake build ApcOptimizer.VmSpec.Audit.Legality.All` for the
+slow real-circuit corpus; the counterexample files are their own roots — `Audit.BridgeOffsetGap`,
+which pulls in `AdmissibleGap`, and `Audit.InputTimeGap`). `ApcOptimizer/VmSpec.lean`'s own
+module docstring is the audit-tier map — which files are audited (`Basic.lean`, `Legal.lean`,
+`OpenVm.lean`, `Theorems.lean`, and `Audit/` as evidence for those), which are argument-only
+(`Implementation/`) and so need no audit.
 This document is the rationale and the known gaps, not a restatement of that map.
 
 ## The VM-level statement (`Basic.lean`)
@@ -162,7 +164,7 @@ circuit at each point of powdr's pipeline (emitted by `Scripts/emit-apc-lean.py`
 modifications a proof needs, `Layout.lean` is the placement data the optimized and gated stages
 share, and one file per stage carries that stage's proofs — split because each stage's
 `hasStepLayout` is a slow `decide`, so they compile in parallel. `Apcs/Common.lean` holds what no
-APC owns; `Audit/RealApcLegality.lean` imports them all and is the index.
+APC owns; `Audit/Legality/All.lean` imports them all and is the index.
 
 Five APCs are audited. Three of them at three points of powdr's own optimizer pipeline — same
 block, same semantics, three forms, so a difference between results is a statement about the

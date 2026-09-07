@@ -263,40 +263,6 @@ noncomputable def theAsg (P : OpenVmParams babyBear) : VmAssignment babyBear (th
 /-- The record the first access reads and writes back. -/
 def fA : MemoryPayload babyBear := { addressSpace := 2, pointer := 7, data := #v[1, 0, 0, 0] }
 
-/-- The record the second access reads and writes back — same cell, different value. -/
-def fB : MemoryPayload babyBear := { addressSpace := 2, pointer := 7, data := #v[2, 0, 0, 0] }
-
-theorem fA_bytes : ∀ d ∈ fA.data, isByte d := by
-  intro d hd
-  simp [fA] at hd
-  rcases hd with rfl | rfl <;> · simp only [isByte]; decide
-
-theorem fB_bytes : ∀ d ∈ fB.data, isByte d := by
-  intro d hd
-  simp [fB] at hd
-  rcases hd with rfl | rfl <;> · simp only [isByte]; decide
-
-theorem initEffect_canProduce : (memoryInitHostChip (p := babyBear)).canProduce initEffect := by
-  intro m hm
-  by_cases h2 : k2 = m
-  · subst h2
-    exact ⟨rfl, by simp [initEffect], fA, rfl, fA_bytes, rfl, Or.inr (Or.inl (by decide))⟩
-  · by_cases h4 : k4 = m
-    · subst h4
-      exact ⟨rfl, by simp [initEffect, h2], fB, rfl, fB_bytes, rfl, Or.inr (Or.inl (by decide))⟩
-    · exact absurd (by simp [initEffect, h2, h4] : initEffect m = 0) hm
-
-theorem finEffect_canProduce :
-    (memoryFinalizeHostChip (p := babyBear)).canProduce finEffect := by
-  intro m hm
-  by_cases h3 : k3 = m
-  · subst h3
-    exact ⟨rfl, by simp [finEffect], fA, rfl, Or.inr (Or.inl (by decide))⟩
-  · by_cases h5 : k5 = m
-    · subst h5
-      exact ⟨rfl, by simp [finEffect, h3], fB, rfl, Or.inr (Or.inl (by decide))⟩
-    · exact absurd (by simp [finEffect, h3, h5] : finEffect m = 0) hm
-
 /-- The three non-empty host contributions cancel exactly what the guest instance writes. -/
 theorem host_eff (m : BusMessage babyBear) :
     initEffect m + finEffect m + connEffect m = - badChip.allEffects asg0 m := by
@@ -335,7 +301,8 @@ theorem initEffect_not_producible :
   rintro ⟨-, hinj, -⟩
   exact absurd (hinj k2 k4 (by decide) (by decide) (by decide) (by decide)) (by decide)
 
-/-! `theAsg_satisfiesHost`, `theAsg_vmSat` and `not_forcesAdmissibleOF` stood here. They are
+/-! `initEffect_canProduce`, `finEffect_canProduce`, `theAsg_satisfiesHost`, `theAsg_vmSat` and
+    `not_forcesAdmissibleOF` stood here. They are
     retracted: `initEffect_not_producible` shows the run's host side is no longer legal, so
     `badChip` — though still a legal guest, and still inadmissible — no longer sits in any
     satisfying run. `theAsg_balances` is kept: the run does still balance, which is why nothing
@@ -806,79 +773,9 @@ theorem chipB_not_admissibleOF (asg : ChipAssignment babyBear) :
   rw [chipB_msgs1OF asg] at hmem
   exact absurd (hmem [some 2, some 7]) (by decide)
 
-theorem chipA_payloadOk (asg : ChipAssignment babyBear)
-    (i : Fin chipA.busInteractions.length) : rr.payloadOk (chipA.msgAt asg i) := by
-  fin_cases i
-  · exact trivial
-  · exact trivial
-  all_goals
-    show (2 : ZMod babyBear).val = 1 ∨ (2 : ZMod babyBear).val = 2 → _
-    intro _ d hd
-    simp [Expression.eval] at hd
-    rcases hd with rfl | rfl <;> · simp only [isByte]; decide
-
-def offsA : List ℤ := [0, 3, 1, 2]
-def offsB : List ℤ := [0, 3, -2, -1]
-
-def chipALayout (P : OpenVmParams babyBear) (asg : ChipAssignment babyBear) :
-    StepLayout chipA rr asg P.maxWindow openVmTimestampBound where
-  pcFrom := 0
-  pcTo := 1
-  tStart := 1
-  tWindow := 3
-  tWindowPos := by decide
-  tWindowLt := P.inputWindowOk
-  bridgeRecv := by rfl
-  bridgeSend := by rfl
-  bridgeNoOther := by
-    rintro ⟨b, pl⟩ hb h1 h2
-    simp only at hb
-    subst hb
-    simp only [Prod.mk.injEq, true_and, ne_eq] at h1 h2
-    have h2' : ¬ pl = [(1 : ZMod babyBear), 4] := fun h => h2 (by rw [h]; decide)
-    have e1 : ¬ (([0, 1] : List (ZMod babyBear)) = pl) := fun h => h1 h.symm
-    have e2 : ¬ (([1, 4] : List (ZMod babyBear)) = pl) := fun h => h2' h.symm
-    simp [Circuit.allEffects, chipA, kc, BusInteraction.eval, Expression.eval,
-      show rr.execBusId = 0 from rfl, e1, e2]
-  tOffset := fun i => offsA.getD i.val 0
-  tOffsetMatch := by
-    intro i _
-    fin_cases i
-    · exact ⟨by decide, by decide, by show (1 : ZMod babyBear) = 1 + ((0 : ℤ) : ZMod babyBear); decide⟩
-    · exact ⟨by decide, by decide, by show (4 : ZMod babyBear) = 1 + ((3 : ℤ) : ZMod babyBear); decide⟩
-    · exact ⟨by decide, by decide, by show (2 : ZMod babyBear) = 1 + ((1 : ℤ) : ZMod babyBear); decide⟩
-    · exact ⟨by decide, by decide, by show (3 : ZMod babyBear) = 1 + ((2 : ℤ) : ZMod babyBear); decide⟩
-  memSendsOk := fun i _ _ => chipA_payloadOk asg i
-
-def chipBLayout (P : OpenVmParams babyBear) (asg : ChipAssignment babyBear) :
-    StepLayout chipB rr asg P.maxWindow openVmTimestampBound where
-  pcFrom := 1
-  pcTo := 3
-  tStart := 4
-  tWindow := 3
-  tWindowPos := by decide
-  tWindowLt := P.inputWindowOk
-  bridgeRecv := by rfl
-  bridgeSend := by rfl
-  bridgeNoOther := by
-    rintro ⟨b, pl⟩ hb h1 h2
-    simp only at hb
-    subst hb
-    simp only [Prod.mk.injEq, true_and, ne_eq] at h1 h2
-    have h2' : ¬ pl = [(3 : ZMod babyBear), 7] := fun h => h2 (by rw [h]; decide)
-    have e1 : ¬ (([1, 4] : List (ZMod babyBear)) = pl) := fun h => h1 h.symm
-    have e2 : ¬ (([3, 7] : List (ZMod babyBear)) = pl) := fun h => h2' h.symm
-    simp [Circuit.allEffects, chipB, kc, BusInteraction.eval, Expression.eval,
-      show rr.execBusId = 0 from rfl, e1, e2]
-  tOffset := fun i => offsB.getD i.val 0
-  tOffsetMatch := by
-    intro i _
-    fin_cases i
-    · exact ⟨by decide, by decide, by show (4 : ZMod babyBear) = 4 + ((0 : ℤ) : ZMod babyBear); decide⟩
-    · exact ⟨by decide, by decide, by show (7 : ZMod babyBear) = 4 + ((3 : ℤ) : ZMod babyBear); decide⟩
-    · exact ⟨by decide, by decide, by show (2 : ZMod babyBear) = 4 + ((-2 : ℤ) : ZMod babyBear); decide⟩
-    · exact ⟨by decide, by decide, by show (3 : ZMod babyBear) = 4 + ((-1 : ℤ) : ZMod babyBear); decide⟩
-  memSendsOk := fun i hi _ => absurd hi (chipB_no_memSend asg i)
+/-! `chipALayout` and `chipBLayout` stood here: a `StepLayout` for each chip, which is what made
+    the run one of *legal* guests. Both are retracted — `chipA_not_legalGuest`/
+    `chipB_not_legalGuest` below show the pairing clause admits no layout for either chip. -/
 
 /-- `chipA` has no active memory *receive* — it only writes. -/
 theorem chipA_no_memRecv (asg : ChipAssignment babyBear)

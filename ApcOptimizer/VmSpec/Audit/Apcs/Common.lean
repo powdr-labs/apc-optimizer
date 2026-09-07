@@ -218,81 +218,6 @@ theorem acceptsAt {c : Circuit babyBear} {asg : ChipAssignment babyBear}
 
 --------- The whole step layout, from four checkers ---------
 
-/-- **`Circuit.hasStepLayout` from four `Bool`s and the gadget facts.** The bridge, the placement,
-    the memory ordering and the byte invariant are each decided against the circuit powdr emitted;
-    what is left for the caller is exactly what a decidable check cannot see:
-
-    * `hlook` — where each memory *receive* reaches back to. Nothing in the algebraic constraints
-      says; it comes off the lt gadget, and `lookback_of_gadget` returns this pair verbatim.
-    * `hext` — why a fresh memory *send* is byte-valued, for the sends `ByteCheck.lean` marks
-      `.external`. That is a lookup table's promise, not a shape.
-
-    Everything else — which interaction sits where, which are sends, which order they fall in — is
-    read off the recipes and the interaction list. `vs` and `vsB` are the variable lists the
-    placement and the byte check normalize against; a fused APC wants different ones, since
-    `placeCheckAll` reads every stateful payload and `byteCheckAll` only the memory sends. -/
-theorem hasStepLayout_of_checks {c : Circuit babyBear}
-    {vs vsB : List Variable} {rules : List (PinRule babyBear)}
-    {baseE pcFromE pcToE : Expression babyBear} {baseF : LinForm babyBear}
-    {R : List (Recipe babyBear)} {W : List ByteWitness}
-    {maxWindow d : ℕ} (hd : 0 < d) (hw : d < maxWindow)
-    (hrules : ∀ asg : ChipAssignment babyBear, c.satisfiesAlgebraic asg →
-      ∀ q ∈ rules, q.1.eval asg = q.2)
-    (hbase : Expression.toLin vs rules baseE = some baseF)
-    (hbridge : ∀ asg : ChipAssignment babyBear, c.satisfiesAlgebraic asg →
-      c.allEffects asg (0, [pcFromE.eval asg, baseE.eval asg]) = -1 ∧
-      c.allEffects asg (0, [pcToE.eval asg, baseE.eval asg + ((d : ℕ) : ZMod babyBear)]) = 1 ∧
-      ∀ m : BusMessage babyBear, m.1 = 0 →
-        m ≠ (0, [pcFromE.eval asg, baseE.eval asg]) →
-        m ≠ (0, [pcToE.eval asg, baseE.eval asg + ((d : ℕ) : ZMod babyBear)]) →
-        c.allEffects asg m = 0)
-    (hplace :
-      placeCheckAll vs rules apcRules.isStateful openVmTsPos baseF c.busInteractions R = true)
-    (horder :
-      memOrderCheck rules openVmMemBusId openVmTimestampBound c.busInteractions R = true)
-    (hfits : (List.range c.busInteractions.length).all
-      (fun i => (R.getD i (.fixed 0)).fits openVmTimestampBound d) = true)
-    (hbyte : byteCheckAll vsB rules c.busInteractions W = true)
-    (hlook : ∀ asg : ChipAssignment babyBear, c.satisfiesAlgebraic asg →
-      c.satisfiesStateless apcRules asg →
-      ∀ i : Fin c.busInteractions.length, ∀ (k : ℤ) (radix : ℕ) (loE hiE : Expression babyBear),
-        R.getD i.val (.fixed 0) = .lookback k radix loE hiE →
-        (R.getD i.val (.fixed 0)).back asg < openVmTimestampBound ∧
-          apcRules.getTimestamp (c.msgAt asg i)
-            = baseE.eval asg + (((R.getD i.val (.fixed 0)).place asg : ℤ) : ZMod babyBear))
-    (hext : ∀ asg : ChipAssignment babyBear, c.satisfiesAlgebraic asg →
-      c.satisfiesStateless apcRules asg →
-      ∀ i : Fin c.busInteractions.length, W.getD i.val .notSend = .external →
-        c.statefulSend apcRules asg i →
-        (∀ j : Fin c.busInteractions.length, j < i → c.activeStateful apcRules asg j →
-          apcRules.payloadOk (c.msgAt asg j)) →
-        apcRules.payloadOk (c.msgAt asg i)) :
-    c.hasStepLayout apcRules maxWindow openVmTimestampBound := by
-  haveI : Fact (1 < babyBear) := ⟨by decide⟩
-  intro asg halg hacc
-  have hr := hrules asg halg
-  have hback : ∀ i : Fin c.busInteractions.length,
-      (R.getD i.val (.fixed 0)).back asg < openVmTimestampBound := by
-    intro i
-    cases hrc : R.getD i.val (.fixed 0) with
-    | fixed k => simp [Recipe.back, openVmTimestampBound, openVmTimestampBits]
-    | lookback k radix loE hiE =>
-      rw [← hrc]; exact (hlook asg halg hacc i k radix loE hiE hrc).1
-  have hfit : ∀ i : Fin c.busInteractions.length,
-      (R.getD i.val (.fixed 0)).fits openVmTimestampBound d = true :=
-    fun i => List.all_eq_true.mp hfits i.val (List.mem_range.mpr i.isLt)
-  obtain ⟨hrecv, hsend, hother⟩ := hbridge asg halg
-  refine ⟨_, _, _, d, hd, hw, hrecv, hsend, hother,
-    fun i => (R.getD i.val (.fixed 0)).place asg, ?_, ?_⟩
-  · exact fun i hi => placeCheck_placed hr hbase openVmReadsTimestampAt rfl hplace i hi
-      (hfit i) (hback i) (fun k radix loE hiE hrc => (hlook asg halg hacc i k radix loE hiE hrc).2)
-  · intro i hsendI hlow
-    refine memSendsOk_of_sendsOk (byteCheck_sendsOk hr hbyte
-      (fun i hwit hs hl => hext asg halg hacc i hwit hs hl)) i hsendI ?_
-    intro j hji hactj
-    exact hlow j (memOrderCheck_sound horder hr (Fin.lt_def.mp hji) hactj.2 hsendI.2
-      hsendI.1.2 (hback j) (hback i)) hactj
-
 /-- **Read a circuit's bus ids off a precomputed list.** A per-interaction case split that
     `decide`s `(c.busInteractions.get i).busId = …` makes the elaborator whnf the whole circuit
     once per case, which for a twenty-interaction APC exhausts the heartbeat budget. Proving the
@@ -307,11 +232,23 @@ theorem busId_get_eq {c : Circuit babyBear} {ids : List Nat}
     List.getElem?_eq_getElem i.isLt]
   rfl
 
-/-- `hasStepLayout_of_checks` with the memory-access discipline of `Circuit.legalGuest`
-    (`VmSpec/Legal.lean`). Same checks and the same layout — `tOffset` is still the recipes'
-    `place` — plus the six clauses a concrete APC discharges off its recipe list and payloads:
-    `partner` names the other half of each memory access (§4.6.1), and the last two say its memory
-    sends carry distinct ticks inside `[0, d)`. -/
+/-- **`Circuit.hasStepLayout` from four `Bool`s and the gadget facts.** The bridge, the placement,
+    the memory ordering and the byte invariant are each decided against the circuit powdr emitted;
+    `tOffset` is the recipes' `place`. What is left for the caller is exactly what a decidable
+    check cannot see:
+
+    * `hlook` — where each memory *receive* reaches back to. Nothing in the algebraic constraints
+      says; it comes off the lt gadget, and `lookback_of_gadget` returns this pair verbatim.
+    * `hext` — why a fresh memory *send* is byte-valued, for the sends `ByteCheck.lean` marks
+      `.external`. That is a lookup table's promise, not a shape.
+    * the six memory-access clauses a concrete APC discharges off its recipe list and payloads:
+      `partner` names the other half of each access (§4.6.1), and the last two say its memory
+      sends carry distinct ticks inside `[0, d)`.
+
+    Everything else — which interaction sits where, which are sends, which order they fall in — is
+    read off the recipes and the interaction list. `vs` and `vsB` are the variable lists the
+    placement and the byte check normalize against; a fused APC wants different ones, since
+    `placeCheckAll` reads every stateful payload and `byteCheckAll` only the memory sends. -/
 theorem hasStepLayout_of_checks {c : Circuit babyBear}
     {vs vsB : List Variable} {rules : List (PinRule babyBear)}
     {baseE pcFromE pcToE : Expression babyBear} {baseF : LinForm babyBear}
@@ -392,9 +329,9 @@ theorem hasStepLayout_of_checks {c : Circuit babyBear}
     fun i => List.all_eq_true.mp hfits i.val (List.mem_range.mpr i.isLt)
   obtain ⟨hrecv, hsend, hother⟩ := hbridge asg halg
   refine ⟨⟨_, _, _, d, hd, hw, hrecv, hsend, hother,
-    fun i => (R.getD i.val (.fixed 0)).place asg, ?_, ?_⟩,
+    fun i => (R.getD i.val (.fixed 0)).place asg, ?_,
     hdistinct asg halg hacc, hwindow asg halg hacc, hneg asg halg hacc, partner, hinvol,
-    hmult asg halg hacc, htime asg halg hacc⟩
+    hmult asg halg hacc, htime asg halg hacc, ?_⟩⟩
   · exact fun i hi => placeCheck_placed hr hbase openVmReadsTimestampAt rfl hplace i hi
       (hfit i) (hback i) (fun k radix loE hiE hrc => (hlook asg halg hacc i k radix loE hiE hrc).2)
   · intro i hsendI hlow

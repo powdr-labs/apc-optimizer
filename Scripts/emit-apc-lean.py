@@ -90,7 +90,7 @@ def main() -> None:
     print("set_option maxHeartbeats 1000000")
     print()
     print("/-! One APC at several points of powdr's pipeline, emitted from the stage dumps --")
-    print("    see `Audit/RealApcLegality.lean`. -/")
+    print("    see `Audit/Legality/All.lean`. -/")
     print()
     print("namespace %s" % ns)
     print()
