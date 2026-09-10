@@ -4,3 +4,5 @@ import ApcOptimizer.Sp1Semantics
 import ApcOptimizer.Implementation.JsonParser
 import ApcOptimizer.Utils.Dsl
 import ApcOptimizer.Utils.Size
+
+import ApcOptimizer.VmSpec

@@ -4,8 +4,8 @@
 # through proof terms and types, from the roots below (plus every `@[csimp]` theorem, which is
 # auto-detected: the compiler references it, so a proof-term walk cannot see the use).
 #
-# Format: `#` starts a comment; blank lines are ignored; `[roots]` / `[ignore]` switch sections.
-# Names are fully qualified.
+# Format: `#` starts a comment; blank lines are ignored; `[roots]` / `[skip-modules]` / `[ignore]`
+# switch sections. Names are fully qualified; `[skip-modules]` holds module-name prefixes.
 
 # The theorems we ultimately care about: the audited correctness statements in
 # `ApcOptimizer/Optimizer.lean`. Everything a correct optimizer needs is reachable from these.
@@ -15,15 +15,72 @@ simpleOptimizer_maintainsCorrectness
 ApcOptimizer.OpenVM.openVmOptimizer_maintainsCorrectness
 ApcOptimizer.SP1.sp1Optimizer_maintainsCorrectness
 
-# Theorems the closure cannot see are used, so they must be listed by hand. The only class so far:
-# a `rfl`-lemma named in a `simp only`/`rw` list whose rewrite step collapses to `Eq.refl`, leaving
-# no reference to the lemma in the resulting proof term.
+# The VM-level statements in `ApcOptimizer/VmSpec/`: the OpenVM substitution theorems
+# (`VmSpec/Theorems.lean`), the chip-fusion equivalence (`Implementation/Fusion.lean`) and that
+# legality survives fusion (`Implementation/FuseLegal.lean`).
+ApcOptimizer.OpenVM.openVm_vmSoundReplacement
+ApcOptimizer.OpenVM.openVm_vmCompleteReplacement
+ApcOptimizer.OpenVM.openVm_vmEquivalent
+vmSoundReplacement_fuse_cons
+vmCompleteReplacement_fuse_cons
+vmEquivalent_fuse_cons
+Circuit.legalGuest_fuse
+
+# `ApcOptimizer/VmSpec/Audit/` audits the audit surface: each file is a gap witness or a decidable
+# checker, evidence that the spec's hypotheses are checkable and non-vacuous rather than an
+# ingredient of any theorem. Nothing is meant to consume them, so reachability says nothing about
+# them -- they are not scanned, and what they use counts as used.
+[skip-modules]
+ApcOptimizer.VmSpec.Audit
+
+# Theorems the closure cannot see are used, so they must be listed by hand.
 [ignore]
-# `(Task.spawn f).get = f ()`, used in `denseCollectForcedV_eq_serial` (Proofs/DomainBatch.lean);
-# `Task.get` is opaque, so the `simp only` needs the lemma even though it rewrites by `rfl`.
-ApcOptimizer.Dense.get_spawn
 # `denseNrmGo`'s two leaf arms (Normalize.lean). `denseNrmGo_add`/`_mul` need them to reduce a
-# leaf child *without* unfolding the walk on a compound one; both rewrite by `rfl`.
+# leaf child *without* unfolding the walk on a compound one; both rewrite by `rfl`, leaving no
+# reference to the lemma in the resulting proof term.
 ApcOptimizer.Dense.denseNrmGo_const
 ApcOptimizer.Dense.denseNrmGo_var
 
+# `VmSpec/Implementation/Validation.lean` -- sanity lemmas about the spec, deliberately not an
+# ingredient of it: the `VmSat.*_perm` pair justifies a design choice in `CanProduce` (that it
+# needn't existentially permute a chip type's realized instances, since `VmSat` doesn't see their
+# order), and the rest are the preorder/equivalence laws of the replacement relations.
+VmSat.of_perm
+VmSat.perm_iff
+vmCompleteReplacement_iff
+VmEquivalent.refl
+VmEquivalent.symm
+VmEquivalent.trans
+canProduce_idle
+
+# `VmSpec/OrderFree.lean`'s permutation lemmas: the order-freeness of the rely, which is the point
+# of that file rather than a step in any proof against it.
+ApcOptimizer.OpenVM.OrderFree.admissibleMemoryBusM_perm
+ApcOptimizer.OpenVM.OrderFree.entryKeyed_perm
+ApcOptimizer.OpenVM.OrderFree.tsBounded_perm
+ApcOptimizer.OpenVM.OrderFree.openVmAdmissibleOF_perm
+
+# Named in a `simp`/`rw` list whose rewrite collapses to `Eq.refl`.
+hostNet_eq_zero_of_all_zero
+payloadOk_of_exists
+ApcOptimizer.OpenVM.openVmHost_forcesAccepts
+ApcOptimizer.OpenVM.memory_maintains
+VmChain.Chain.p_pos
+ApcOptimizer.OpenVM.busStateOf_append
+ApcOptimizer.OpenVM.busStateOf_nil
+
+# Standalone results of their file that the theorems above do not consume: bridge-window
+# disjointness (the strengthening `ChainDisjoint.lean` exists to prove) and the record-counting
+# corollaries stated alongside the ones `Forces.lean`/`MemChain.lean` do use.
+ApcOptimizer.OpenVM.bridge_windows_disjoint
+ApcOptimizer.OpenVM.recvCount_eq_zero_of_no_send
+ApcOptimizer.OpenVM.inputRead_no_send_of
+ApcOptimizer.OpenVM.no_send_of_sendCountOf_zero
+ApcOptimizer.OpenVM.no_recv_of_recvCountOf_zero
+
+# `FuseLegal.lean`'s unfolding lemmas for `Circuit.fuse`, stated as a set: these four are the
+# members no clause of `Circuit.legalGuest_fuse` happens to need.
+Circuit.fuse_busInteractions
+Circuit.fuseInl_val
+Circuit.fuseInr_val
+Circuit.fuseInl_ne_inr

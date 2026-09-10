@@ -10,6 +10,10 @@ import Main
     the use. Auto-generated declarations (structure projections, `injEq`, equation lemmas, …) are
     excluded: they carry no source range and are not something a human wrote.
 
+    Modules under a `[skip-modules]` prefix are not scanned: their theorems are standalone evidence
+    that nothing is meant to consume, so "unreachable" says nothing about them. What they declare
+    seeds the closure instead, so a lemma one of them uses counts as used.
+
     `Scripts/check-proof-integrity.sh` runs this from the repo root and fails CI if anything is
     flagged. To resolve a flag: delete the dead theorem, or — if it really is used through a channel
     the term walk cannot see (see the `[ignore]` section of the seed) — record it there. -/
@@ -23,10 +27,12 @@ def seedPath : System.FilePath := "Scripts/unused-theorems.txt"
 structure Seed where
   roots : Array Name := #[]
   ignore : Std.HashSet Name := {}
+  skipModules : Array String := #[]
 
 -- `String.trim` (String → String) is deprecated in favour of a Slice-returning variant.
 set_option linter.deprecated false in
-/-- Parse the seed file: `#` comments, blank lines, and `[roots]` / `[ignore]` section headers. -/
+/-- Parse the seed file: `#` comments, blank lines, and `[roots]` / `[ignore]` /
+    `[skip-modules]` section headers. -/
 def parseSeed (content : String) : Seed := Id.run do
   let mut seed : Seed := {}
   let mut sect := "roots"
@@ -35,10 +41,18 @@ def parseSeed (content : String) : Seed := Id.run do
     if line.isEmpty || line.startsWith "#" then continue
     if line == "[roots]" then sect := "roots"; continue
     if line == "[ignore]" then sect := "ignore"; continue
-    let n := line.toName
-    if sect == "roots" then seed := { seed with roots := seed.roots.push n }
-    else seed := { seed with ignore := seed.ignore.insert n }
+    if line == "[skip-modules]" then sect := "skip"; continue
+    if sect == "skip" then seed := { seed with skipModules := seed.skipModules.push line }
+    else
+      let n := line.toName
+      if sect == "roots" then seed := { seed with roots := seed.roots.push n }
+      else seed := { seed with ignore := seed.ignore.insert n }
   return seed
+
+/-- Whether a module is one the seed's `[skip-modules]` prefixes cover. -/
+def isSkipped (skip : Array String) (m : Name) : Bool :=
+  let s := m.toString
+  skip.any fun pre => s == pre || (pre ++ ".").isPrefixOf s
 
 def isProjectModule (m : Name) : Bool :=
   let s := m.toString
@@ -90,12 +104,26 @@ def csimpRoots (env : Environment) (idxs : Std.HashSet Nat) : Array Name :=
   (Lean.Compiler.CSimp.ext.getState env).map.fold
     (fun acc _ v => if isProjectConst env idxs v.thmName then acc.push v.thmName else acc) #[]
 
+/-- Everything a skipped module declares, as roots: those modules are standalone evidence that
+    nothing else consumes, so what they use is used. -/
+def skippedRoots (env : Environment) (idxs : Std.HashSet Nat) (skip : Array String) :
+    Array Name := Id.run do
+  let mut out : Array Name := #[]
+  for i in idxs do
+    if !isSkipped skip env.header.moduleNames[i]! then continue
+    for ci in env.header.moduleData[i]!.constants do
+      if !ci.name.isInternalDetail then out := out.push ci.name
+  return out
+
 /-- Every human-written theorem in a project module: a `thmInfo` that is not internal, not a
-    structure projection, and carries a source declaration range. -/
+    structure projection, and carries a source declaration range. Modules the seed lists under
+    `[skip-modules]` are left out. -/
 def deadTheorems (env : Environment) (idxs : Std.HashSet Nat) (cl : Std.HashSet Name)
-    (ignore : Std.HashSet Name) : CommandElabM (Array (Name × Name × Nat)) := do
+    (ignore : Std.HashSet Name) (skip : Array String) :
+    CommandElabM (Array (Name × Name × Nat)) := do
   let mut out : Array (Name × Name × Nat) := #[]
   for i in idxs do
+    if isSkipped skip env.header.moduleNames[i]! then continue
     for ci in env.header.moduleData[i]!.constants do
       match ci with
       | .thmInfo _ =>
@@ -114,11 +142,13 @@ elab "#checkUnusedTheorems" : command => do
   let seed := parseSeed content
   let idxs := projectModuleIdxs env
   let csimp := csimpRoots env idxs
-  let cl := closure env idxs (seed.roots ++ csimp)
-  let dead := (← deadTheorems env idxs cl seed.ignore).qsort
+  let skipped := skippedRoots env idxs seed.skipModules
+  let cl := closure env idxs (seed.roots ++ csimp ++ skipped)
+  let dead := (← deadTheorems env idxs cl seed.ignore seed.skipModules).qsort
     (fun a b => if a.1 == b.1 then a.2.2 < b.2.2 else a.1.toString < b.1.toString)
   logInfo m!"checked {cl.size} reachable constants from {seed.roots.size} seeded roots \
-    + {csimp.size} @[csimp] theorems; {seed.ignore.size} ignored"
+    + {csimp.size} @[csimp] theorems; {seed.ignore.size} ignored, \
+    {seed.skipModules.size} module prefix(es) skipped"
   if dead.isEmpty then
     logInfo "OK: no unused theorems."
   else

@@ -1,0 +1,398 @@
+import ApcOptimizer.VmSpec.Implementation.Realizes
+import ApcOptimizer.VmSpec.Implementation.Validation
+import Mathlib.Data.List.Forall2
+import Mathlib.Tactic.LinearCombination
+
+set_option autoImplicit false
+
+/-! Connecting `Spec.lean`'s per-chip replacement conditions to `Basic.lean`'s VM-level
+    `VmEquivalent`. This file proves the **soundness** half: if every guest chip is replaced by a
+    `Circuit.isSoundReplacementOf`, the optimized VM can produce no effect the original could not
+    (`vmSoundReplacement_of_forall₂`).
+
+    Only *one* chip is ever replaced at a time (`vmSoundReplacement_cons`). Replacing many is then
+    a chain of single steps: `VmSoundReplacement.trans` composes them, and
+    `VmSoundReplacement.of_perm` rotates the list between steps so that the chip to replace next
+    is always at the head. That is what `Validation.lean`'s "the guest-chip list is a set" buys.
+
+    In a single step, two vocabularies have to be bridged:
+
+    * `VmSat` gives each guest instance only `Circuit.satisfiesAlgebraic`, whereas
+      `Circuit.satisfies` also demands `BusSemantics.accepts` on every active message.
+      `Host.forcesAccepts` (`Realizes.lean`) is the missing half, and it is derived, not assumed.
+
+    * `Circuit.sideEffects` — what a sound replacement preserves — covers only *stateful* buses,
+      whereas `VmAssignment.busEffect` sums over *all* of them. So replacing a guest chip may well
+      unbalance the stateless buses (dropping a redundant range check is exactly this), and the
+      host's lookup chips have to be rebuilt to match. `Host.absorbsStateless` is the permission
+      to do that, and it pins every IO-labeled chip, so the observed `VmEffect` is carried across
+      untouched.
+
+    Where the assumptions live: everything about the guest chips is `Circuit.legalGuest`, every
+    clause of which has the shape "the chip's algebraic constraints imply X", and it is required
+    only of the chips the optimizer was *given* — `VmSat` carries it for what the optimizer
+    produced, through the `Host.legalGuest` field. Everything else is a property of the fixed VM,
+    collected into the single `Host.realizes`. -/
+
+variable {p : ℕ}
+
+--------- Choosing the original assignment a sound replacement promises ---------
+
+open Classical in
+/-- The original-circuit assignment `Circuit.isSoundReplacementOf` promises for `asg`, as a total
+    function (`asg` itself on inputs where no such assignment exists, which
+    `soundWitness_spec`'s hypothesis rules out). -/
+noncomputable def soundWitness (optimized original : Circuit p) (bs : BusSemantics p)
+    (asg : ChipAssignment p) : ChipAssignment p :=
+  if h : ∃ asg', original.satisfies bs asg' ∧
+      optimized.sideEffects bs asg = original.sideEffects bs asg'
+    then h.choose else asg
+
+theorem soundWitness_spec {optimized original : Circuit p} {bs : BusSemantics p}
+    {asg : ChipAssignment p}
+    (h : ∃ asg', original.satisfies bs asg' ∧
+      optimized.sideEffects bs asg = original.sideEffects bs asg') :
+    original.satisfies bs (soundWitness optimized original bs asg) ∧
+      optimized.sideEffects bs asg =
+        original.sideEffects bs (soundWitness optimized original bs asg) := by
+  rw [soundWitness, dif_pos h]
+  exact h.choose_spec
+
+--------- Splitting a guest assignment at the first chip type ---------
+
+theorem guestNet_cons {c : Circuit p} {R : Guest p} {l : List (ChipAssignment p)}
+    {gA : GuestAssignment p R} {gA' : GuestAssignment p (c :: R)}
+    (h0 : gA' 0 = l) (hs : ∀ i : Fin R.length, gA' i.succ = gA i) (m : BusMessage p) :
+    gA'.busEffect m = (l.map (fun asg => c.allEffects asg m)).sum + gA.busEffect m := by
+  show (∑ t : Fin (R.length + 1),
+      ((gA' t).map (fun asg => ((c :: R).get t).allEffects asg m)).sum)
+    = (l.map (fun asg => c.allEffects asg m)).sum
+      + ∑ t : Fin R.length, ((gA t).map (fun asg => (R.get t).allEffects asg m)).sum
+  rw [Fin.sum_univ_succ, h0]
+  exact congrArg₂ (· + ·) rfl (Finset.sum_congr rfl (fun i _ => by rw [hs i]; rfl))
+
+theorem guestInstanceCount_cons {c : Circuit p} {R : Guest p}
+    {l : List (ChipAssignment p)} {gA : GuestAssignment p R}
+    {gA' : GuestAssignment p (c :: R)}
+    (h0 : gA' 0 = l) (hs : ∀ i : Fin R.length, gA' i.succ = gA i) :
+    gA'.instanceCount = l.length + gA.instanceCount := by
+  show (∑ t : Fin (R.length + 1), (gA' t).length)
+    = l.length + ∑ t : Fin R.length, (gA t).length
+  rw [Fin.sum_univ_succ, h0]
+  exact congrArg₂ (· + ·) rfl (Finset.sum_congr rfl (fun i _ => by rw [hs i]))
+
+--------- Carrying the observed effect across ---------
+
+/-- Two assignments over the same host with the same IO-labeled chip instances have the same
+    observable effect, whatever their guest chips do. -/
+theorem effects_eq_of_io {host : Host p} {G G' : Guest p}
+    {a : VmAssignment p ⟨host, G⟩} {a' : VmAssignment p ⟨host, G'⟩}
+    (hio : ∀ i : Fin host.chips.length, (host.chips.get i).isIo = true →
+      a.hostAssignment i = a'.hostAssignment i) :
+    a.effects = a'.effects := by
+  show (List.finRange host.chips.length).filterMap
+      (fun t => if (host.chips.get t).isIo then some (a.hostAssignment t) else none)
+    = (List.finRange host.chips.length).filterMap
+      (fun t => if (host.chips.get t).isIo then some (a'.hostAssignment t) else none)
+  refine List.filterMap_congr (fun t _ => ?_)
+  cases h : (host.chips.get t).isIo
+  · rfl
+  · simp [hio t h]
+
+--------- A filtered replacement core, shared by both directions ---------
+
+/-- **The half of `Circuit.isSoundReplacementOf` the VM-level lifting actually consumes**, and only
+    on assignments passing `P`.
+
+    Two things are dropped relative to `Circuit.isSoundReplacementOf`. Its `guaranteesInvariants`
+    conjunct, which no step of the lifting reads. And the unconditional quantifier: the lifting
+    applies this only to assignments a `VmSat` run actually realizes, so a filter on them costs
+    nothing and is what lets the *completeness* direction — whose per-chip guarantee is gated on
+    `Circuit.admissible` — reuse the very same induction. -/
+def Circuit.replacesOn (optimized original : Circuit p) (bs : BusSemantics p)
+    (P : ChipAssignment p → Prop) : Prop :=
+  ∀ asg, P asg → optimized.satisfies bs asg →
+    ∃ asg', original.satisfies bs asg' ∧
+      optimized.sideEffects bs asg = original.sideEffects bs asg'
+
+/-- **What the VM guarantees of the assignments it realizes.** A claim about the VM, not about any
+    guest circuit — the shape of `Host.ordersRanks` (`Realizes.lean`), and like it, quantified over
+    whatever legal chips the host is running.
+
+    For `P := fun c asg => c.admissible bs asg` this is the one obligation VM-level completeness
+    rests on (`Host.forcesAdmissible`); at `P := fun _ _ => True` it is vacuous, which is why
+    soundness pays nothing for the generalization. -/
+def Host.forcesOn (host : Host p) (P : Circuit p → ChipAssignment p → Prop) : Prop :=
+  ∀ (G : Guest p), host.legalGuests G →
+    ∀ (a : VmAssignment p ⟨host, G⟩), VmSat ⟨host, G⟩ a →
+      ∀ (t : Fin G.length), ∀ asg ∈ a.guestAssignments t, P (G.get t) asg
+
+/-- **The VM only ever realizes `Circuit.admissible` guest assignments.**
+
+    This is an *assumption* about the machine, and a real one: it is not a property of any single
+    circuit, and it cannot be made one. `Circuit.admissible` is a memory-discipline claim — a
+    record read back carries what was written — and a chip's own constraints do not force it. A
+    real APC with two main-memory accesses at independently computed pointers has satisfying,
+    bus-accepting assignments that violate it whenever the two pointers coincide
+    (`Audit/Apcs/TwoLoads/`). What makes it true of a *run* is global: bus balance plus the fact
+    that at most one record per address enters an instance's window from outside.
+
+    So it sits here, in the shape of `Host.ordersRanks`, to be discharged later from `VmSat`'s own
+    `balances` conjunct and the window machinery of `Chain.lean`/`OpenVmChain.lean` — exactly as
+    `Host.forcesAccepts` is derived rather than assumed. Nothing below looks inside
+    `Circuit.admissible`, so this statement is unchanged by a change of memory discipline. -/
+def Host.forcesAdmissible (host : Host p) (bs : BusSemantics p) : Prop :=
+  host.forcesOn (fun c asg => c.admissible bs asg)
+
+theorem Host.forcesOn_true (host : Host p) : host.forcesOn (fun _ _ => True) :=
+  fun _ _ _ _ _ _ _ => trivial
+
+theorem replacesOn_of_isSoundReplacementOf {optimized original : Circuit p} {bs : BusSemantics p}
+    (h : optimized.isSoundReplacementOf original bs) :
+    optimized.replacesOn original bs (fun _ => True) :=
+  fun asg _ hsat => h.1 asg hsat
+
+--------- One substitution ---------
+
+/-- **The soundness half of the VM-level connection, for a single chip.** Replacing one guest
+    chip by a `Circuit.isSoundReplacementOf` of it, leaving the rest of the VM alone, produces no
+    effect the original could not.
+
+    The witness keeps every IO-labeled host chip — memory, input — exactly as it was, replaces
+    each instance of the substituted chip by the assignment `Circuit.isSoundReplacementOf`
+    promises, and lets `Host.absorbsStateless` rebuild the lookup chips around the difference.
+
+    Legality is required of the list being *run* — the optimized one. Nothing is asked of `c`:
+    `VmSat` carries no circuit-level property, so the restored run has nothing to re-establish. -/
+theorem vmSoundReplacement_consOn [Fact p.Prime]
+    {host : Host p} {bs : BusSemantics p} {rm : RankModel p} {r0 : GuestBusRules p}
+    {memAddress : BusMessage p → List (Option (ZMod p))}
+    {P : Circuit p → ChipAssignment p → Prop}
+    {c c' : Circuit p} {R : Guest p}
+    (hHost : host.realizes bs rm r0 memAddress)
+    (hP : host.forcesOn P)
+    (hLegal : ∀ d ∈ c' :: R, host.legalGuest d)
+    (hSound : c'.replacesOn c bs (P c')) :
+    VmSoundReplacement host (c :: R) (c' :: R) := by
+  rintro e ⟨a', hsat', rfl⟩
+  -- The host forces every optimized guest instance to be `Circuit.satisfies`-good.
+  have hsat'g : ∀ (t : Fin (c' :: R).length), ∀ asg ∈ a'.guestAssignments t,
+      ((c' :: R).get t).satisfies bs asg :=
+    hHost.forcesAccepts (c' :: R) hLegal a' hsat'
+  -- Per instance of the replaced chip, the original assignment soundness promises.
+  set w : ChipAssignment p → ChipAssignment p := soundWitness c' c bs with hw
+  have hwit : ∀ asg ∈ a'.guestAssignments 0,
+      c.satisfies bs (w asg) ∧ c'.sideEffects bs asg = c.sideEffects bs (w asg) :=
+    fun asg hasg =>
+      soundWitness_spec (hSound asg (hP (c' :: R) hLegal a' hsat' 0 asg hasg) (hsat'g 0 asg hasg))
+  set gA : GuestAssignment p (c :: R) :=
+    Fin.cons ((a'.guestAssignments 0).map w) (Fin.tail a'.guestAssignments) with hgA
+  have hg0 : gA 0 = (a'.guestAssignments 0).map w := by rw [hgA]; exact Fin.cons_zero _ _
+  have hgs : ∀ i : Fin R.length, gA i.succ = a'.guestAssignments i.succ := by
+    intro i; rw [hgA]; exact Fin.cons_succ _ _ i
+  have hsatG : ∀ t : Fin (c :: R).length, ∀ asg ∈ gA t, ((c :: R).get t).satisfies bs asg := by
+    intro t
+    induction t using Fin.cases with
+    | zero =>
+      rw [hg0]
+      intro asg hasg
+      obtain ⟨asg0, hasg0, rfl⟩ := List.mem_map.mp hasg
+      exact (hwit asg0 hasg0).1
+    | succ i =>
+      intro asg hasg
+      rw [hgs i] at hasg
+      exact hsat'g i.succ asg hasg
+  -- Stateful buses see no change at all: that is exactly what `sideEffects` preservation says.
+  have hstateful : ∀ m : BusMessage p, bs.isStateful m.1 = true →
+      gA.busEffect m = a'.guestAssignments.busEffect m := by
+    intro m hm
+    have h1 := guestNet_cons (gA := Fin.tail a'.guestAssignments) (gA' := gA) hg0 hgs m
+    have h2 := guestNet_cons (c := c') (l := a'.guestAssignments 0)
+      (gA := Fin.tail a'.guestAssignments) (gA' := a'.guestAssignments) rfl (fun _ => rfl) m
+    rw [h1, h2, add_left_inj, List.map_map]
+    refine congrArg List.sum (List.map_congr_left (fun asg hasg => ?_))
+    show c.allEffects (w asg) m = c'.allEffects asg m
+    rw [allEffects_eq_sideEffects hm, allEffects_eq_sideEffects hm, ← (hwit asg hasg).2]
+  -- The stateless imbalance the replacement leaves behind.
+  set δ : BusState p := fun m => a'.guestAssignments.busEffect m - gA.busEffect m with hδ
+  have hδspec : ∀ m : BusMessage p, δ m ≠ 0 →
+      bs.isStateful m.1 = false ∧ ∃ mult : ZMod p, mult ≠ 0 ∧ bs.accepts ⟨m.1, mult, m.2⟩ := by
+    intro m hm
+    have hne : a'.guestAssignments.busEffect m ≠ gA.busEffect m := sub_ne_zero.mp hm
+    refine ⟨?_, ?_⟩
+    · by_contra hst
+      exact hne (hstateful m (by simpa using hst)).symm
+    · -- Some instance, original or optimized, actively carries `m`; its chip `satisfies`.
+      have hactive : ∃ (d : Circuit p) (asg : ChipAssignment p),
+          d.satisfies bs asg ∧ d.allEffects asg m ≠ 0 := by
+        by_cases hz : a'.guestAssignments.busEffect m = 0
+        · obtain ⟨t, asg, hasg, hne'⟩ :=
+            exists_instance_of_guestNet_ne_zero (fun hc => hne (hz.trans hc.symm))
+          exact ⟨(c :: R).get t, asg, hsatG t asg hasg, hne'⟩
+        · obtain ⟨t, asg, hasg, hne'⟩ := exists_instance_of_guestNet_ne_zero hz
+          exact ⟨(c' :: R).get t, asg, hsat'g t asg hasg, hne'⟩
+      obtain ⟨d, asg, hdsat, hdne⟩ := hactive
+      obtain ⟨bi, hbi, hmsg, hmult⟩ := exists_active_of_allEffects_ne_zero hdne
+      refine ⟨(bi.eval asg).multiplicity, hmult, ?_⟩
+      rw [← show ((bi.eval asg).busId, (bi.eval asg).payload) = m from hmsg]
+      exact hdsat.2 bi hbi hmult
+  obtain ⟨hA', hA'legal, hA'net, hA'io⟩ :=
+    hHost.absorbsStateless a'.hostAssignment (hsat'.satisfiesHost) δ hδspec
+  have hsat : VmSat (⟨host, c :: R⟩ : Vm p) ⟨gA, hA'⟩ := by
+    refine ⟨fun t asg hasg => (hsatG t asg hasg).1, hA'legal, fun m => ?_, ?_⟩
+    · have hb : a'.guestAssignments.busEffect m + a'.hostAssignment.busEffect m = 0 :=
+        hsat'.balances m
+      have hn : hA'.busEffect m = a'.hostAssignment.busEffect m + δ m := congrFun hA'net m
+      rw [busEffect_apply, hn, hδ]
+      show gA.busEffect m +
+        (a'.hostAssignment.busEffect m + (a'.guestAssignments.busEffect m - gA.busEffect m)) = 0
+      linear_combination hb
+    · -- Instance counts are preserved exactly (the new list is a `map`), so the budget transfers.
+      show gA.instanceCount ≤ host.maxInstances
+      have h1 := guestInstanceCount_cons (gA := Fin.tail a'.guestAssignments) (gA' := gA) hg0 hgs
+      have h2 := guestInstanceCount_cons (c := c') (l := a'.guestAssignments 0)
+        (gA := Fin.tail a'.guestAssignments) (gA' := a'.guestAssignments) rfl (fun _ => rfl)
+      rw [h1, List.length_map, ← h2]
+      exact hsat'.withinBudget
+  exact ⟨⟨gA, hA'⟩, hsat, effects_eq_of_io hA'io⟩
+
+--------- Many substitutions ---------
+
+/-- The induction behind `vmSoundReplacement_of_forall₂`: `S` accumulates the chips already
+    replaced, rotated to the back of the list, so the next chip to replace is always at the head.
+
+    Note that legality is needed of *both* lists, not just the optimized one: the intermediate
+    lists mix chips from each, and `Host.forcesAccepts` applies to a whole list. -/
+theorem vmSoundReplacement_appendOn [Fact p.Prime]
+    {host : Host p} {bs : BusSemantics p} {rm : RankModel p} {r0 : GuestBusRules p}
+    {memAddress : BusMessage p → List (Option (ZMod p))}
+    {P : Circuit p → ChipAssignment p → Prop}
+    (hHost : host.realizes bs rm r0 memAddress) (hP : host.forcesOn P)
+    {T T' : Guest p}
+    (hSound : List.Forall₂ (fun c c' => c'.replacesOn c bs (P c')) T T') :
+    host.legalGuests (T ++ T') →
+    ∀ S : Guest p, host.legalGuests S →
+        VmSoundReplacement host (T ++ S) (S ++ T') := by
+  induction hSound with
+  | nil => intro _ S _; simpa using VmSoundReplacement.refl host S
+  | @cons c c' U U' hcc _ ih =>
+    intro hLegal S hLS
+    have hmemU : ∀ d ∈ U, d ∈ (c :: U) ++ (c' :: U') := fun d hd => by simp [hd]
+    have hmemU' : ∀ d ∈ U', d ∈ (c :: U) ++ (c' :: U') := fun d hd => by simp [hd]
+    have hlc' : host.legalGuest c' := hLegal c' (by simp)
+    have h1 : VmSoundReplacement host (c :: (U ++ S)) (c' :: (U ++ S)) := by
+      refine vmSoundReplacement_consOn hHost hP (fun d hd => ?_) hcc
+      rcases List.mem_cons.mp hd with rfl | hd
+      · exact hlc'
+      · rcases List.mem_append.mp hd with hd | hd
+        · exact hLegal d (hmemU d hd)
+        · exact hLS d hd
+    have h2 : VmSoundReplacement host (c' :: (U ++ S)) (U ++ (S ++ [c'])) :=
+      VmSoundReplacement.of_perm (by
+        rw [← List.append_assoc]
+        exact (List.perm_append_singleton c' (U ++ S)).symm)
+    have h3 : VmSoundReplacement host (U ++ (S ++ [c'])) ((S ++ [c']) ++ U') := by
+      refine ih (fun d hd => ?_) (S ++ [c']) (fun d hd => ?_)
+      · rcases List.mem_append.mp hd with hd | hd
+        · exact hLegal d (hmemU d hd)
+        · exact hLegal d (hmemU' d hd)
+      · rcases List.mem_append.mp hd with hd | hd
+        · exact hLS d hd
+        · rw [List.mem_singleton.mp hd]; exact hlc'
+    simpa using h1.trans (h2.trans h3)
+
+/-- **The soundness half of the VM-level connection.** If every guest chip of `G'` is a sound
+    replacement for the corresponding chip of `G`, then `G'` is a `VmSoundReplacement` for `G`
+    against `host`: every effect the optimized guest chips can produce, the original ones can
+    produce too.
+
+    Legality is required of *both* lists at once, and the `G'` half is not redundant: the
+    intermediate lists of `vmSoundReplacement_append` mix chips from each, and `Host.forcesAccepts`
+    runs its balancing argument over whichever whole list the VM is executing. That single
+    hypothesis is also all that is assumed about the optimizer's output — the interaction-count
+    bound that keeps those arguments from wrapping around `ZMod p` is a clause of legality
+    (`Circuit.legalGuest`'s `size`), so it rides along.
+
+    Whoever supplies this has to establish `G'` legal *somehow*; per-chip soundness does not give
+    it — nothing in `Circuit.isSoundReplacementOf` rules out a sound replacement that violates
+    `Circuit.statelessSendOnly` outright. -/
+theorem vmSoundReplacement_of_forall₂On [Fact p.Prime]
+    {host : Host p} {bs : BusSemantics p} {rm : RankModel p} {r0 : GuestBusRules p}
+    {memAddress : BusMessage p → List (Option (ZMod p))}
+    {P : Circuit p → ChipAssignment p → Prop}
+    {G G' : Guest p}
+    (hHost : host.realizes bs rm r0 memAddress) (hP : host.forcesOn P)
+    (hLegal : host.legalGuests (G ++ G'))
+    (hSound : List.Forall₂ (fun c c' => c'.replacesOn c bs (P c')) G G') :
+    VmSoundReplacement host G G' := by
+  simpa using vmSoundReplacement_appendOn hHost hP hSound hLegal [] (by simp [Host.legalGuests])
+
+/-- **The soundness half of the VM-level connection**, at the unfiltered instance. -/
+theorem vmSoundReplacement_of_forall₂ [Fact p.Prime]
+    {host : Host p} {bs : BusSemantics p} {rm : RankModel p} {r0 : GuestBusRules p}
+    {memAddress : BusMessage p → List (Option (ZMod p))}
+    {G G' : Guest p}
+    (hHost : host.realizes bs rm r0 memAddress)
+    (hLegal : host.legalGuests (G ++ G'))
+    (hSound : List.Forall₂ (fun c c' => c'.isSoundReplacementOf c bs) G G') :
+    VmSoundReplacement host G G' :=
+  vmSoundReplacement_of_forall₂On hHost host.forcesOn_true hLegal
+    (List.Forall₂.imp (fun _ _ h => replacesOn_of_isSoundReplacementOf h) hSound)
+
+--------- The completeness half ---------
+
+open Classical in
+/-- Witness generation as a *total* assignment: `Derivations.witgen` on the optimized circuit's own
+    variables, and anything at all elsewhere. `Circuit.isCompleteReplacementOf` constrains only the
+    former, so this is the assignment it talks about. -/
+noncomputable def witgenTotal {optimized original : Circuit p} {ds : Derivations p}
+    (hcover : ds.cover original.vars optimized.vars) (asg : ChipAssignment p) :
+    ChipAssignment p :=
+  fun v => if hv : v ∈ optimized.vars then ds.witgen hcover asg v hv else 0
+
+/-- **Per-chip completeness gives the replacement core with the circuits swapped.**
+
+    `Circuit.isCompleteReplacementOf` says the optimized circuit is satisfied by the assignment
+    witness generation builds, with the same side effects — which is exactly the existential
+    `Circuit.replacesOn` asks for, read in the other direction. The one thing it asks in return is
+    `Circuit.admissible` of the original assignment, and that is what the filter carries. -/
+theorem replacesOn_of_isCompleteReplacementOf {optimized original : Circuit p}
+    {bs : BusSemantics p} {ds : Derivations p}
+    (hpid : ∀ v ∈ original.vars, v.powdrId?.isSome)
+    (h : optimized.isCompleteReplacementOf original bs ds) :
+    original.replacesOn optimized bs (fun asg => original.admissible bs asg) := by
+  intro asg hadm hsat
+  obtain ⟨-, hcover, hmain⟩ := h hpid
+  obtain ⟨hsat', -, heff⟩ :=
+    hmain asg hadm hsat (witgenTotal hcover asg) (fun v hv => by simp [witgenTotal, hv])
+  exact ⟨witgenTotal hcover asg, hsat', heff⟩
+
+/-- **The completeness half of the VM-level connection.** If every guest chip of `G'` is a complete
+    replacement for the corresponding chip of `G`, then the optimized VM can still produce every
+    effect the original could.
+
+    No new induction: `VmCompleteReplacement host G G'` *is* `VmSoundReplacement host G' G`, and
+    `Circuit.isCompleteReplacementOf` supplies precisely the per-chip core that lifting consumes,
+    with witness generation as the existential's witness
+    (`replacesOn_of_isCompleteReplacementOf`). What the swap costs is the filter: the per-chip
+    guarantee holds only of `Circuit.admissible` assignments, so the lifting may only be applied to
+    instances the VM actually realizes and only if those are admissible — `Host.forcesAdmissible`,
+    the single assumption this rests on beyond soundness's own.
+
+    The powdr-ID side condition rides in the relation rather than as a separate hypothesis because
+    `List.Forall₂` carries no membership to discharge it with; it is `Spec.lean`'s standing
+    assumption on input circuits. -/
+theorem vmCompleteReplacement_of_forall₂ [Fact p.Prime]
+    {host : Host p} {bs : BusSemantics p} {rm : RankModel p} {r0 : GuestBusRules p}
+    {memAddress : BusMessage p → List (Option (ZMod p))}
+    {G G' : Guest p}
+    (hHost : host.realizes bs rm r0 memAddress)
+    (hAdm : host.forcesAdmissible bs)
+    (hLegal : host.legalGuests (G ++ G'))
+    (hComplete : List.Forall₂ (fun c c' => (∀ v ∈ Circuit.vars c, v.powdrId?.isSome) ∧
+      ∃ ds : Derivations p, Circuit.isCompleteReplacementOf c' c bs ds) G G') :
+    VmCompleteReplacement host G G' := by
+  refine vmSoundReplacement_of_forall₂On (P := fun c asg => c.admissible bs asg) hHost hAdm
+    (fun d hd => hLegal d (by rcases List.mem_append.mp hd with h | h <;> simp [h])) ?_
+  exact List.Forall₂.imp (fun _ _ h => replacesOn_of_isCompleteReplacementOf h.1 h.2.choose_spec)
+    hComplete.flip
