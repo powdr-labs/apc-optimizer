@@ -6,6 +6,8 @@ apc-optimizer benchmark inputs and the scripts that run them.
   **effectiveness** (circuit size before / after). `--vm {openvm,sp1}` picks the VM (default
   `openvm`), the positional argument picks the set (default `openvm-eth` / `rsp`).
 - [`runtime_bench.py`](./runtime_bench.py) — bench the optimizer's **runtime** (OpenVM only).
+- [`history/`](./history/) — the sha256 runtime CI measured over the merged PRs, as a CSV plus the
+  scripts that collect and plot it.
 
 Sets are grouped by VM, each with its own README:
 
