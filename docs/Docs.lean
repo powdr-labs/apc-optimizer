@@ -192,6 +192,8 @@ def Circuit.guaranteesInvariants (circuit : Circuit p)
 
 Soundness requires an executable reconstruction program, rather than only the existence of an original witness. Its expressions use constants, variables, addition, multiplication, and zero tests. Assignment blocks execute in sequence, with each block reading the values before that block. Only variables present in the optimized circuit are supplied; all others start at zero.
 
+Programs are limited to 5,000,000 nodes, counting every expression constructor, assignment, and block. If the candidate exceeds the limit, the optimizer returns the original circuit with empty hints. Reconstruction materializes intermediate values to avoid repeated evaluation.
+
 The returned program must recover a satisfying original witness with the same stateful bus effects:
 
 ```anchor isSoundReplacementOf
@@ -204,7 +206,8 @@ def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
       optimizedCircuit.sideEffects busSemantics assignment =
         originalCircuit.sideEffects busSemantics assignment') ∧
   (originalCircuit.guaranteesInvariants busSemantics →
-    optimizedCircuit.guaranteesInvariants busSemantics)
+    optimizedCircuit.guaranteesInvariants busSemantics) ∧
+  hints.nodes ≤ maxReconstructionNodes
 ```
 
 # Completeness

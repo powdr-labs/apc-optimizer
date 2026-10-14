@@ -149,19 +149,47 @@ theorem densePipeline_respectsDeg (b : DegreeBound) :
       (denseIterateToFixpoint_respectsDeg (guardAll_chain_respectsDeg b _))
       (guardAll_chain_respectsDeg b _))
 
+def PassResult.limitHints {cs : Circuit p} {bs : BusSemantics p}
+    (limit : Nat) (r : PassResult cs bs) : PassResult cs bs :=
+  if r.hints.nodes ≤ limit then r else ⟨cs, [], [], PassCorrect.refl cs bs⟩
+
+theorem PassResult.limitHints_nodes {cs : Circuit p} {bs : BusSemantics p}
+    (limit : Nat) (r : PassResult cs bs) : (r.limitHints limit).hints.nodes ≤ limit := by
+  unfold limitHints
+  split_ifs with h
+  · exact h
+  · simp [Reconstruction.nodes]
+
+theorem PassResult.limitHints_degree {cs : Circuit p} {bs : BusSemantics p}
+    (limit : Nat) (r : PassResult cs bs) {b : DegreeBound}
+    (hin : cs.withinDegree b) (hout : r.out.withinDegree b) :
+    (r.limitHints limit).out.withinDegree b := by
+  unfold limitHints
+  split_ifs
+  · exact hout
+  · exact hin
+
+attribute [irreducible] PassResult.limitHints
+
 /-- The circuit optimizer: encode once into the dense `VarId` representation, run `densePipeline`,
     then decode the result and its derivations once. `decode ∘ encode = id` turns the dense
     pipeline's `PassCorrect` into one against the original system. -/
 def pipeline (b : DegreeBound) : VerifiedPassW p := fun cs bs facts =>
   let e := VarRegistry.empty.encodeCS cs
   let r := densePipeline b e.1 e.2 (VarRegistry.empty.encodeCS_covered cs) bs facts
-  ⟨r.reg'.decodeCS r.out, r.reg'.decodeDerivs r.derivs, r.hints, by
-    have hc := r.correct
-    rw [(VarRegistry.empty.decodeCS_encodeCS cs : e.1.decodeCS e.2 = cs)] at hc
-    exact hc⟩
+  PassResult.limitHints maxReconstructionNodes
+    ⟨r.reg'.decodeCS r.out, r.reg'.decodeDerivs r.derivs, r.hints, by
+      have hc := r.correct
+      rw [(VarRegistry.empty.decodeCS_encodeCS cs : e.1.decodeCS e.2 = cs)] at hc
+      exact hc⟩
+
+theorem pipeline_hints_bound (b : DegreeBound) (cs : Circuit p) (bs : BusSemantics p)
+    (facts : BusFacts p bs) : (pipeline b cs bs facts).hints.nodes ≤ maxReconstructionNodes :=
+  PassResult.limitHints_nodes _ _
 
 theorem pipeline_respectsDeg (b : DegreeBound) : RespectsDeg b (pipeline (p := p) b) := by
   intro cs bs facts hin
+  apply PassResult.limitHints_degree _ _ hin
   exact densePipeline_respectsDeg b (VarRegistry.empty.encodeCS cs).1
     (VarRegistry.empty.encodeCS cs).2 (VarRegistry.empty.encodeCS_covered cs) bs facts
     (by rw [VarRegistry.empty.decodeCS_encodeCS cs]; exact hin)
@@ -311,8 +339,9 @@ theorem Circuit.sideEffects_congr {cs : Circuit p} {bs : BusSemantics p}
 
 theorem PassCorrect.toSound {cs out : Circuit p} {ds : Derivations p}
     {bs : BusSemantics p} {hints : Reconstruction Variable p}
-    (h : PassCorrect cs out ds bs hints) : out.isSoundReplacementOf cs bs hints := by
-  refine ⟨?_, h.2.1⟩
+    (h : PassCorrect cs out ds bs hints) (hlimit : hints.nodes ≤ maxReconstructionNodes) :
+    out.isSoundReplacementOf cs bs hints := by
+  refine ⟨?_, h.2.1, hlimit⟩
   intro env hsat
   let restricted := fun v => if v ∈ out.vars then env v else 0
   have hagree : ∀ v ∈ out.vars, restricted v = env v := by
@@ -410,11 +439,9 @@ theorem optimizerCore_correct {bs : BusSemantics p} (b : DegreeBound) (facts : B
     (cs : Circuit p) :
     (optimizerCore b facts cs).1.isSoundReplacementOf cs bs (optimizerCore b facts cs).2.2 ∧
       (optimizerCore b facts cs).1.isCompleteReplacementOf cs bs (optimizerCore b facts cs).2.1 := by
-  refine ⟨(pipeline b cs bs facts).correct.toSound, ?_⟩
-  intro hpow
-  -- Phrase the goal in `pipeline` terms up front: the coverage proof is one of its components, so
-  -- `refine` would otherwise have to bridge the `optimizerCore` projections by `whnf`.
   simp only [optimizerCore]
+  refine ⟨(pipeline b cs bs facts).correct.toSound (pipeline_hints_bound b cs bs facts), ?_⟩
+  intro hpow
   -- `PassCorrect` components (`Basic.lean`): no new powdr-ID column, and real-trace completeness.
   have hS := (pipeline b cs bs facts).correct.2.2.1
   have hcomp := (pipeline b cs bs facts).correct.2.2.2

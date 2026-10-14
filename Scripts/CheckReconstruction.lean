@@ -33,6 +33,7 @@ def check (ok : Bool) (msg : String) : IO Unit :=
 
 def checkCircuit (name : String) (input : Circuit 17) (mustShrink : Bool) : IO Unit := do
   let (output, _, hints) := simpleOptimizer bs ⟨4, 4⟩ input
+  check (hints.nodes ≤ maxReconstructionNodes) s!"{name}: reconstruction exceeds the global limit"
   let vars := output.vars.eraseDups
   check (vars.length ≤ 3) s!"{name}: unexpectedly large test output"
   if mustShrink then
@@ -52,10 +53,31 @@ def checkCircuit (name : String) (input : Circuit 17) (mustShrink : Bool) : IO U
   check (count > 0) s!"{name}: no satisfying output witness exercised"
   IO.println s!"{name}: {count} optimized witnesses reconstructed"
 
+def checkLimit : IO Unit := do
+  let input : Circuit 17 := ⟨[eqn (.var x) (.const 3)], [bus (.var y)]⟩
+  let result := pipeline ⟨4, 4⟩ input bs (BusFacts.trivial bs)
+  check (result.hints.nodes > 0) "budget test needs a nonempty reconstruction"
+  let accepted := result.limitHints result.hints.nodes
+  check (accepted.hints.nodes == result.hints.nodes &&
+    ApcOptimizer.Serialize.serializeSystem accepted.out accepted.derivs ==
+      ApcOptimizer.Serialize.serializeSystem result.out result.derivs)
+    "a reconstruction exactly at the limit must be accepted"
+  let rejected := result.limitHints (result.hints.nodes - 1)
+  check (rejected.hints.nodes == 0 && rejected.derivs.isEmpty &&
+    ApcOptimizer.Serialize.serializeSystem rejected.out ==
+      ApcOptimizer.Serialize.serializeSystem input)
+    "over-budget results must fall back to the original circuit with empty hints"
+
 end ReconstructionTests
 
 open ReconstructionTests in
 def main : IO Unit := do
+  let conditional : WitnessExpr Variable 17 :=
+    .ifZero (.const 0) (.add (.var x) (.const 1)) (.mul (.var y) (.const 2))
+  let counted : Reconstruction Variable 17 := [[], [(x, conditional)]]
+  check (conditional.nodes == 8 && counted.nodes == 11)
+    "the budget must count both branches, assignments, and empty blocks"
+  checkLimit
   let env : Variable → F := fun v => if v = y then 5 else 12
   let simultaneous : Reconstruction Variable 17 := [[(x, .var y), (y, .const 7)]]
   check (simultaneous.eval env x == 5) "block assignments must be simultaneous"

@@ -55,6 +55,9 @@ witness. `opt-export` includes a `reconstruction` object: `inputs` maps internal
 to exported column references, and `blocks` lists simultaneous assignments executed in order.
 Initialize all other variables to zero. Expressions support `const`, `var`, `add`, `mul`, and
 `if_zero`; arithmetic is over the circuit's field. Soundness checks this computed witness directly.
+The audited limit is 5,000,000 nodes per reconstruction (expression constructors, assignments,
+and blocks). Larger candidates fall back to the original circuit with empty hints. The verified
+evaluator materializes assignments so references do not repeat earlier arithmetic.
 
 ## Benchmark
 

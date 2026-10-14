@@ -31,7 +31,27 @@ assumptions).
 `Reconstruction` executes sequential blocks of simultaneous assignments. Pass composition appends
 these blocks in reverse pass order. Dense passes supply symbolic backward maps; the bridge emits
 finite blocks, omitting unchanged variables. `RecoveryMap` boxes these maps to prevent Lean's
-arity expansion from repeating their analysis at every lookup.
+arity expansion from repeating their analysis at every lookup. It has two constructors so the
+compiler cannot erase the box. Fresh-variable passes return the map together with their result.
+The verified evaluator materializes block values instead of recursively recomputing dependencies.
+
+`isSoundReplacementOf` requires at most `maxReconstructionNodes = 5,000,000` nodes.
+`PassResult.limitHints` returns the identity pass when the candidate exceeds the cap. Each
+expression constructor, assignment, and block counts once, including both conditional branches
+and empty blocks. `Scripts/measure-reconstruction.py --output sizes.json` measures exported hints.
+The uncapped pipeline measured across all 303 benchmark inputs gave:
+
+| Benchmark | Cases | Maximum hint nodes |
+| --- | ---: | ---: |
+| OpenVM/keccak | 1 | 313,426 |
+| OpenVM/openvm-eth | 100 | 52,765 |
+| OpenVM/sha256 | 1 | 1,909,633 |
+| OpenVM/wasm-eth | 100 | 197,678 |
+| SP1/keccak | 1 | 86,260 |
+| SP1/rsp | 100 | 17,829 |
+
+The cap gives 2.6× headroom over the largest case (OpenVM SHA-256); none of these cases
+requires fallback. These are per-circuit counts, not a bound on optimizer construction time.
 
 **Derived variables.** Alongside the circuit and reconstruction, the optimizer returns a `Derivations` list — a
 `ComputationMethod` (powdr's `Constant`/`QuotientOrZero`/`IfEqZero`, with an `eval`) for each

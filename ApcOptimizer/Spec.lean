@@ -112,8 +112,19 @@ def WitnessExpr.eval {α : Type} : WitnessExpr α p → (α → ZMod p) → ZMod
   | .mul a b, env => a.eval env * b.eval env
   | .ifZero c a b, env => if c.eval env = 0 then a.eval env else b.eval env
 
+def WitnessExpr.nodes {α : Type} : WitnessExpr α p → Nat
+  | .const _ | .var _ => 1
+  | .add a b | .mul a b => 1 + a.nodes + b.nodes
+  | .ifZero c a b => 1 + c.nodes + a.nodes + b.nodes
+
 /-- Sequential blocks of simultaneous assignments; omitted variables retain their value. -/
 abbrev Reconstruction (α : Type) (p : ℕ) := List (List (α × WitnessExpr α p))
+
+/-- Count every expression constructor, assignment, and block, including empty blocks. -/
+def Reconstruction.nodes {α : Type} (hints : Reconstruction α p) : Nat :=
+  (hints.map (fun block => 1 + (block.map (fun (_, e) => 1 + e.nodes)).sum)).sum
+
+def maxReconstructionNodes : Nat := 5000000
 
 def Reconstruction.eval {α : Type} [DecidableEq α] (hints : Reconstruction α p)
     (env : α → ZMod p) : α → ZMod p :=
@@ -321,7 +332,8 @@ def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
       optimizedCircuit.sideEffects busSemantics assignment =
         originalCircuit.sideEffects busSemantics assignment') ∧
   (originalCircuit.guaranteesInvariants busSemantics →
-    optimizedCircuit.guaranteesInvariants busSemantics)
+    optimizedCircuit.guaranteesInvariants busSemantics) ∧
+  hints.nodes ≤ maxReconstructionNodes
 -- ANCHOR_END: isSoundReplacementOf
 
 -- ANCHOR: isCompleteReplacementOf
