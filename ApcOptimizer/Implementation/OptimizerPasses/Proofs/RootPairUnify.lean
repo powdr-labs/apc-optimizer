@@ -1025,46 +1025,43 @@ private theorem denseAnyVarBoundIdx_eq (bs : BusSemantics p) (facts : BusFacts p
               (fun v => denseFindDomainAlg domCs v) bi x hp1 B ?_)
             rw [denseScaledSlotBoundD_eq bs facts domCs _ (fun _ => rfl) bi x, hb])
 
-/-- The pass with indexed lookups, installed as `denseRootPairUnifyF`'s compiled body. The scan
-    takes its bound lookup as a function, so the indexed answers being pointwise equal
-    (`denseAnyVarBoundIdx_eq`) makes the two bodies the same term. -/
+private theorem denseRpSigmaFast_eq [Fact p.Prime] (bs : BusSemantics p)
+    (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
+    denseRpSigmaFast bs facts d = denseRpSigma bs facts d := by
+  have hbnd : (fun x => denseAnyVarBoundIdx bs facts
+        (fun v => denseVarBucketLookup (denseVarBucket denseBIVars d.busInteractions) v)
+        (fun v => (denseFindDomainMap d.algebraicConstraints)[v]?) x)
+      = denseAnyVarBound bs facts d.busInteractions d.algebraicConstraints := by
+    funext x
+    exact denseAnyVarBoundIdx_eq bs facts d.busInteractions d.algebraicConstraints
+      (fun v => (denseFindDomainMap d.algebraicConstraints)[v]?)
+      (fun v => denseFindDomainMap_getElem? d.algebraicConstraints v) one_ne_zero x
+  unfold denseRpSigmaFast denseRpSigma
+  change denseRpScan (fun x => denseAnyVarBoundIdx bs facts
+    (fun v => denseVarBucketLookup (denseVarBucket denseBIVars d.busInteractions) v)
+    (fun v => (denseFindDomainMap d.algebraicConstraints)[v]?) x) _ _ _ = _
+  rw [hbnd]
+
 @[csimp] theorem denseRootPairUnifyF_eq_fast :
     @denseRootPairUnifyF = @denseRootPairUnifyFFast := by
   funext p pw bs facts d
   by_cases hp : pw.isPrime = true
   · haveI : Fact p.Prime := ⟨pw.correct hp⟩
-    have hbnd : (fun x => denseAnyVarBoundIdx bs facts
-          (fun v => denseVarBucketLookup (denseVarBucket denseBIVars d.busInteractions) v)
-          (fun v => (denseFindDomainMap d.algebraicConstraints)[v]?) x)
-        = denseAnyVarBound bs facts d.busInteractions d.algebraicConstraints := by
-      funext x
-      exact denseAnyVarBoundIdx_eq bs facts d.busInteractions d.algebraicConstraints
-        (fun v => (denseFindDomainMap d.algebraicConstraints)[v]?)
-        (fun v => denseFindDomainMap_getElem? d.algebraicConstraints v) one_ne_zero x
-    show (if pw.isPrime = true then
-        (if (denseRpSigma bs facts d).map.isEmpty then d
-         else d.substF (denseRpSigma bs facts d).fn)
-      else d)
-      = (if pw.isPrime = true then
-        (if (denseRpScan (fun x => denseAnyVarBoundIdx bs facts
-              (fun v => denseVarBucketLookup (denseVarBucket denseBIVars d.busInteractions) v)
-              (fun v => (denseFindDomainMap d.algebraicConstraints)[v]?) x)
-            (denseRpLiveGroups (denseRpGroups denseZModOps d.algebraicConstraints)) ∅
-            DenseSolved.empty).map.isEmpty then d
-         else d.substF (denseRpScan (fun x => denseAnyVarBoundIdx bs facts
-              (fun v => denseVarBucketLookup (denseVarBucket denseBIVars d.busInteractions) v)
-              (fun v => (denseFindDomainMap d.algebraicConstraints)[v]?) x)
-            (denseRpLiveGroups (denseRpGroups denseZModOps d.algebraicConstraints)) ∅
-            DenseSolved.empty).fn)
-      else d)
-    rw [hbnd]
-    rfl
-  · show (if pw.isPrime = true then _ else d) = (if pw.isPrime = true then _ else d)
-    rw [if_neg hp, if_neg hp]
+    simp only [denseRootPairUnifyF, denseRootPairUnifyFFast, hp, if_true, denseRpSigmaFast_eq]
+  · simp [denseRootPairUnifyF, denseRootPairUnifyFFast, hp]
 
 /-- The dense `rootPairUnify` pass (see `denseRootPairUnifyF`). -/
 def denseRootPairUnifyPass (pw : PrimeWitness p) : DenseVerifiedPassW p :=
   DenseVerifiedPassW.ofWithHints (backF := fun bs facts d => denseRootPairUnifyFHints pw bs facts d)
+    (run := denseRootPairUnifyWithHints pw)
+    (hrun := by
+      intro bs facts d
+      by_cases hp : pw.isPrime = true
+      · haveI : Fact p.Prime := ⟨pw.correct hp⟩
+        simp only [denseRootPairUnifyWithHints, denseRootPairUnifyF, denseRootPairUnifyFHints,
+          if_pos hp, denseRpSigmaFast_eq]
+        split_ifs <;> rfl
+      · simp [denseRootPairUnifyWithHints, denseRootPairUnifyF, denseRootPairUnifyFHints, hp])
     (denseRootPairUnifyF pw) (fun _ _ _ => [])
     (fun reg bs facts d hcov => denseRootPairUnifyF_covered pw reg bs facts d hcov)
     (fun _ _ _ _ _ => by intro x hx; simp at hx)

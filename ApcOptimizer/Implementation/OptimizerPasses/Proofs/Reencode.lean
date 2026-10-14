@@ -3949,7 +3949,9 @@ theorem denseRncLoop_correct [Fact p.Prime] (ctx : DenseRncCtx p) (bs : BusSeman
       · have hfe : reg2.isInput = reg1.isInput := funext hr_ii
         have hstepcert : DensePassCorrect reg2.isInput (denseRncView st) (denseRncView st1)
             derivs1 bs back1 := by rw [hfe]; exact hs_correct
-        exact hstepcert.andThen hr_correct
+        have hback : (back1.andThen back2).expr = fun i => (back1 i).subst back2 :=
+          funext (RecoveryMap.andThen_expr back1 back2)
+        simpa only [hback] using hstepcert.andThen hr_correct
 
 /-! ### The pass
 

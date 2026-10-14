@@ -3153,16 +3153,17 @@ theorem dbDomainBatchTransform_correct (pw : PrimeWitness p) (reg : VarRegistry)
     simpa only [if_neg hpB] using DensePassCorrect_refl reg.isInput d bs
 
 /-- The rebuilt domain-batch pass (see `dbDomainBatchσ`). -/
-def dbDomainBatchPass (pw : PrimeWitness p) : DenseVerifiedPassW p := fun reg d hcov bs facts =>
-  { reg' := reg
-    out := dbDomainBatchTransform pw bs facts d
-    derivs := []
-    hints := reg.reconstruction d (dbDomainBatchTransformHints pw bs facts d).expr
-    ext := VarRegistry.Extends.refl reg
-    covered := dbDomainBatchTransform_covered pw reg bs facts d hcov
-    dcovered := by intro x hx; simp at hx
-    correct := DensePassCorrect.lift hcov
-      (dbDomainBatchTransform_covered pw reg bs facts d hcov) (by intro x hx; simp at hx)
-      (dbDomainBatchTransform_correct pw reg bs facts d) }
+def dbDomainBatchPass (pw : PrimeWitness p) : DenseVerifiedPassW p :=
+  DenseVerifiedPassW.ofWithHints (dbDomainBatchTransformHints pw) (dbDomainBatchTransform pw)
+    (fun _ _ _ => [])
+    (dbDomainBatchTransform_covered pw)
+    (fun _ _ _ _ _ => by intro x hx; simp at hx)
+    (fun reg bs facts d _ => dbDomainBatchTransform_correct pw reg bs facts d)
+    (run := dbDomainBatchWithHints pw)
+    (hrun := by
+      intros
+      unfold dbDomainBatchWithHints dbDomainBatchTransform dbDomainBatchTransformHints
+      dsimp only
+      split_ifs <;> rfl)
 
 end ApcOptimizer.Dense

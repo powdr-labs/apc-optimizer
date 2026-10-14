@@ -32,23 +32,27 @@ assumptions).
 these blocks in reverse pass order. Dense passes supply symbolic backward maps; the bridge emits
 finite blocks, omitting unchanged variables. `RecoveryMap` boxes these maps to prevent Lean's
 arity expansion from repeating their analysis at every lookup. It has two constructors so the
-compiler cannot erase the box. Fresh-variable passes return the map together with their result.
+compiler cannot erase the box. Identity maps compose without allocating recovery functions and
+emit no blocks. Fresh-variable passes return the map together with their result. `ofWithHints`
+accepts a shared `run` with a proof that its projections match the circuit and recovery map;
+Gauss, domain batch, root-pair unification, and disconnected-component removal use this to share
+analysis. Hint generation uses the indexed root-pair lookup and fused disconnected-drop check.
 The verified evaluator materializes block values instead of recursively recomputing dependencies.
 
 `isSoundReplacementOf` requires at most `maxReconstructionNodes = 5,000,000` nodes.
 `PassResult.limitHints` returns the identity pass when the candidate exceeds the cap. Each
 expression constructor, assignment, and block counts once, including both conditional branches
 and empty blocks. `Scripts/measure-reconstruction.py --output sizes.json` measures exported hints.
-The uncapped pipeline measured across all 303 benchmark inputs gave:
+The 303 benchmark inputs produce the following maxima, all below the cap:
 
 | Benchmark | Cases | Maximum hint nodes |
 | --- | ---: | ---: |
-| OpenVM/keccak | 1 | 313,426 |
-| OpenVM/openvm-eth | 100 | 52,765 |
-| OpenVM/sha256 | 1 | 1,909,633 |
-| OpenVM/wasm-eth | 100 | 197,678 |
-| SP1/keccak | 1 | 86,260 |
-| SP1/rsp | 100 | 17,829 |
+| OpenVM/keccak | 1 | 313,354 |
+| OpenVM/openvm-eth | 100 | 52,700 |
+| OpenVM/sha256 | 1 | 1,909,553 |
+| OpenVM/wasm-eth | 100 | 197,602 |
+| SP1/keccak | 1 | 86,218 |
+| SP1/rsp | 100 | 17,795 |
 
 The cap gives 2.6× headroom over the largest case (OpenVM SHA-256); none of these cases
 requires fallback. These are per-circuit counts, not a bound on optimizer construction time.

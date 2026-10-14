@@ -1571,8 +1571,7 @@ def denseRncLoop (ctx : DenseRncCtx p) :
     let r1 := denseRncStep ctx reg st xs (pre ++ toString idx)
     let pre1 := if r1.2.2.isEmpty then pre else s!"rnc{r1.2.1.live}_{r1.2.1.bisN}_"
     let r2 := denseRncLoop ctx rest (idx + 1) r1.1 r1.2.1 pre1
-    RecoveryResult.withBack (r2.1, r2.2.1, r1.2.2 ++ r2.2.2)
-      (fun i => (r1.back i).subst r2.back)
+    ⟨r2.1, (r2.2.1, r1.2.2 ++ r2.2.2), r1.back.andThen r2.back⟩
 
 /-! ### The setup walk
 
@@ -1634,7 +1633,7 @@ def denseRncRun (b : DegreeBound) (reg : VarRegistry) (d : DenseConstraintSystem
   else
     let r := denseRncLoop (denseRncCtxOf b) targets 0 reg (denseRncSeed reg.byId.size d cvs live)
       s!"rnc{live}_{d.busInteractions.length}_"
-    RecoveryResult.withBack (r.1, denseRncView r.2.1, r.2.2) r.back
+    ⟨r.1, (denseRncView r.2.1, r.2.2), r.back⟩
 
 def denseRncF (pw : PrimeWitness p) (b : DegreeBound) (reg : VarRegistry)
     (bsem : BusSemantics p) (_facts : BusFacts p bsem) (d : DenseConstraintSystem p) :

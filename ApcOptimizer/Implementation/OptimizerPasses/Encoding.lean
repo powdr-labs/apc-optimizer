@@ -643,4 +643,15 @@ def RecoveryMap.expr : RecoveryMap p → VarId → WitnessExpr VarId p
   | .identity => WitnessExpr.var
   | .ofFn f => f
 
+instance : CoeFun (RecoveryMap p) (fun _ => VarId → WitnessExpr VarId p) := ⟨RecoveryMap.expr⟩
+
+def RecoveryMap.andThen : RecoveryMap p → RecoveryMap p → RecoveryMap p
+  | .identity, b => b
+  | a, .identity => a
+  | .ofFn f, .ofFn g => .ofFn (fun i => (f i).subst g)
+
+@[simp] theorem RecoveryMap.andThen_expr (a b : RecoveryMap p) (i : VarId) :
+    (a.andThen b).expr i = (a.expr i).subst b.expr := by
+  cases a <;> cases b <;> simp [andThen, expr, WitnessExpr.subst, WitnessExpr.subst_id]
+
 end ApcOptimizer.Dense

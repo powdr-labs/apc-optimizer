@@ -298,6 +298,8 @@ theorem denseDisconnectedF_correct (bs : BusSemantics p) (facts : BusFacts p bs)
 /-- The dense disconnected-component pass (see `denseDisconnectedF`). -/
 def denseDisconnectedPass : DenseVerifiedPassW p :=
   DenseVerifiedPassW.ofWithHints (fun bs facts d => denseDisconnectedHints bs facts d)
+    (run := denseDisconnectedWithHints)
+    (hrun := by intros; rfl)
     (fun bs facts d => denseDisconnectedF bs facts d) (fun _ _ _ => [])
     (fun reg bs facts d hcov => denseDisconnectedF_covered bs facts d hcov)
     (fun _ _ _ _ _ => by intro x hx; simp at hx)

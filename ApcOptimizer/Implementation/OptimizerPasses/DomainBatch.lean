@@ -1223,4 +1223,12 @@ def dbDomainBatchTransformHints (pw : PrimeWitness p) (bs : BusSemantics p)
     if r.2 then .ofFn (substitutionHints (dbSubstFn r.1)) else .identity
   else .identity
 
+def dbDomainBatchWithHints (pw : PrimeWitness p) (bs : BusSemantics p)
+    (facts : BusFacts p bs) (d : DenseConstraintSystem p) : DenseConstraintSystem p × RecoveryMap p :=
+  if pw.isPrime = true then
+    let r := dbDomainBatchσ bs facts d
+    if r.2 then (d.substF (dbSubstFn r.1), .ofFn (substitutionHints (dbSubstFn r.1)))
+    else (d, .identity)
+  else (d, .identity)
+
 end ApcOptimizer.Dense

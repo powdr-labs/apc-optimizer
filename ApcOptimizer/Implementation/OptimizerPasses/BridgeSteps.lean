@@ -31,8 +31,7 @@ structure DenseNativeStep (p : ℕ) (bs : BusSemantics p) (reg : VarRegistry)
   cov : out.CoveredBy reg'
   dcov : dd.CoveredBy reg'
   /-- Correctness at the output registry's `isInput`. -/
-  back : VarId → WitnessExpr VarId p := WitnessExpr.var
-  correct : DensePassCorrect reg'.isInput d out dd bs back
+  correct : DensePassCorrect reg'.isInput d out dd bs
 
 /-- Reflexivity / identity step: same registry and system, no new derivations. -/
 def DenseNativeStep.refl (bs : BusSemantics p) {reg : VarRegistry} {d : DenseConstraintSystem p}
@@ -49,8 +48,7 @@ def DenseNativeStep.refl (bs : BusSemantics p) {reg : VarRegistry} {d : DenseCon
 /-- Non-extending step: keep the registry, change the system to `out`, no new derivations; the
     caller supplies `hcov`/`hcorrect`. -/
 def DenseNativeStep.ofSame (bs : BusSemantics p) {reg : VarRegistry} {d out : DenseConstraintSystem p}
-    {back : VarId → WitnessExpr VarId p}
-    (hcov : out.CoveredBy reg) (hcorrect : DensePassCorrect reg.isInput d out [] bs back) :
+    (hcov : out.CoveredBy reg) (hcorrect : DensePassCorrect reg.isInput d out [] bs) :
     DenseNativeStep p bs reg d where
   reg' := reg
   out := out
@@ -59,7 +57,6 @@ def DenseNativeStep.ofSame (bs : BusSemantics p) {reg : VarRegistry} {d out : De
   hii := rfl
   cov := hcov
   dcov := by intro x hx; simp at hx
-  back := back
   correct := hcorrect
 
 /-- Sequential composition of two certified steps (`s2` from `s1`'s output), concatenating
@@ -70,13 +67,12 @@ def DenseNativeStep.trans {bs : BusSemantics p} {reg : VarRegistry} {d : DenseCo
   reg' := s2.reg'
   out := s2.out
   dd := s1.dd ++ s2.dd
-  back := fun i => (s1.back i).subst s2.back
   ext := s1.ext.trans s2.ext
   hii := s2.hii.trans s1.hii
   cov := s2.cov
   dcov := DenseDerivations.coveredBy_append (DenseDerivations.CoveredBy.mono s2.ext s1.dcov) s2.dcov
   correct := by
-    have h1 : DensePassCorrect s2.reg'.isInput d s1.out s1.dd bs s1.back := by
+    have h1 : DensePassCorrect s2.reg'.isInput d s1.out s1.dd bs := by
       rw [s2.hii]; exact s1.correct
     exact h1.andThen s2.correct
 
@@ -105,20 +101,19 @@ def DenseNativeStep.drain {σ : Type} (bs : BusSemantics p)
 `toDensePassResult` closes a certified step into a `DensePassResult`; `ofDenseStep` wires it into a
 `DenseVerifiedPassW`. -/
 
-/-- Close a certified step into a `DensePassResult` (`correct` via `DensePassCorrect.lift`). -/
+/-- Close a certified step into a `DensePassResult` (`correct` via `DensePassCorrect.liftIdentity`). -/
 def DenseNativeStep.toDensePassResult {bs : BusSemantics p} {reg : VarRegistry}
     {d : DenseConstraintSystem p} (s : DenseNativeStep p bs reg d) (hcov : d.CoveredBy reg) :
     DensePassResult reg d bs where
   reg' := s.reg'
   out := s.out
   derivs := s.dd
-  hints := s.reg'.reconstruction d s.back
   ext := s.ext
   covered := s.cov
   dcovered := s.dcov
   correct := by
     have hcovd' : d.CoveredBy s.reg' := denseCS_coveredBy_mono s.ext hcov
-    have hlift := DensePassCorrect.lift hcovd' s.cov s.dcov s.correct
+    have hlift := DensePassCorrect.liftIdentity hcovd' s.cov s.dcov s.correct
     rwa [s.ext.decodeCS_eq hcov] at hlift
 
 /-- Build a `DenseVerifiedPassW` from a per-invocation certified-step builder. -/

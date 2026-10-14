@@ -17,17 +17,17 @@ variable {p : ℕ}
 structure RecoveryResult (α : Type) (p : ℕ) where
   fst : VarRegistry
   snd : α × DenseDerivations p
-  back : VarId → WitnessExpr VarId p := WitnessExpr.var
+  back : RecoveryMap p := .identity
 
 def RecoveryResult.ofTuple {α : Type}
     (r : VarRegistry × α × DenseDerivations p) : RecoveryResult α p :=
-  ⟨r.1, r.2, WitnessExpr.var⟩
+  ⟨r.1, r.2, .identity⟩
 
 instance {α : Type} : Coe (VarRegistry × α × DenseDerivations p) (RecoveryResult α p) :=
   ⟨RecoveryResult.ofTuple⟩
 
 def RecoveryResult.withBack {α : Type} (r : VarRegistry × α × DenseDerivations p)
-    (back : VarId → WitnessExpr VarId p) : RecoveryResult α p := ⟨r.1, r.2, back⟩
+    (back : VarId → WitnessExpr VarId p) : RecoveryResult α p := ⟨r.1, r.2, .ofFn back⟩
 
 /-! ## Dense computation methods -/
 
@@ -805,6 +805,21 @@ theorem DensePassCorrect.liftIdentity {reg : VarRegistry} {d out : DenseConstrai
   · rw [reg.decodeCS_satisfies]; exact hs
   · rw [reg.decodeCS_sideEffects, reg.decodeCS_sideEffects]; exact he
 
+def VarRegistry.reconstructionMap (reg : VarRegistry) (d : DenseConstraintSystem p) :
+    RecoveryMap p → Reconstruction Variable p
+  | .identity => []
+  | .ofFn f => reg.reconstruction d f
+
+theorem DensePassCorrect.liftMap {reg : VarRegistry} {d out : DenseConstraintSystem p}
+    {dd : DenseDerivations p} {bs : BusSemantics p} {back : RecoveryMap p}
+    (hcd : d.CoveredBy reg) (hco : out.CoveredBy reg) (hdd : dd.CoveredBy reg)
+    (h : DensePassCorrect reg.isInput d out dd bs back.expr) :
+    PassCorrect (reg.decodeCS d) (reg.decodeCS out) (reg.decodeDerivs dd) bs
+      (reg.reconstructionMap d back) := by
+  cases back with
+  | identity => exact h.liftIdentity hcd hco hdd
+  | ofFn f => exact h.lift hcd hco hdd
+
 /-! ## The dense-pass builder -/
 
 /-- Build a `DenseVerifiedPassW` from a registry-preserving dense transform, its coverage
@@ -823,18 +838,23 @@ def DenseVerifiedPassW.ofWithHints
       (d : DenseConstraintSystem p), d.CoveredBy reg → (denseDerivsF bs facts d).CoveredBy reg)
     (hcorrect : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
       (d : DenseConstraintSystem p), d.CoveredBy reg →
-      DensePassCorrect reg.isInput d (denseF bs facts d) (denseDerivsF bs facts d) bs (backF bs facts d).expr) :
-    DenseVerifiedPassW p :=
+      DensePassCorrect reg.isInput d (denseF bs facts d) (denseDerivsF bs facts d) bs (backF bs facts d).expr)
+    (run : (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
+      DenseConstraintSystem p × RecoveryMap p := fun bs facts d => (denseF bs facts d, backF bs facts d))
+    (hrun : ∀ bs facts d, run bs facts d = (denseF bs facts d, backF bs facts d) := by
+      intros; rfl) : DenseVerifiedPassW p :=
   fun reg d hcovd bs facts =>
+    let r := run bs facts d
     { reg' := reg
-      out := denseF bs facts d
+      out := r.1
       derivs := denseDerivsF bs facts d
-      hints := reg.reconstruction d (backF bs facts d).expr
+      hints := reg.reconstructionMap d r.2
       ext := VarRegistry.Extends.refl reg
-      covered := hcov reg bs facts d hcovd
+      covered := by simpa only [r, hrun] using hcov reg bs facts d hcovd
       dcovered := hdcov reg bs facts d hcovd
-      correct := DensePassCorrect.lift hcovd (hcov reg bs facts d hcovd)
-        (hdcov reg bs facts d hcovd) (hcorrect reg bs facts d hcovd) }
+      correct := by
+        simpa only [r, hrun] using DensePassCorrect.liftMap hcovd (hcov reg bs facts d hcovd)
+          (hdcov reg bs facts d hcovd) (hcorrect reg bs facts d hcovd) }
 
 def DenseVerifiedPassW.of
     (denseF : (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
@@ -902,13 +922,13 @@ def DenseVerifiedPassW.ofExtendingWithHints
     { reg' := t.1
       out := t.2.1
       derivs := t.2.2
-      hints := t.1.reconstruction d t.back
+      hints := t.1.reconstructionMap d t.back
       ext := hext'
       covered := hcov'
       dcovered := hdcov'
       correct := by
         have hcovd' : d.CoveredBy t.1 := denseCS_coveredBy_mono hext' hcovd
-        have hlift := DensePassCorrect.lift hcovd' hcov' hdcov' hcorrect'
+        have hlift := DensePassCorrect.liftMap hcovd' hcov' hdcov' hcorrect'
         rwa [hext'.decodeCS_eq hcovd] at hlift }
 
 def DenseVerifiedPassW.ofExtending

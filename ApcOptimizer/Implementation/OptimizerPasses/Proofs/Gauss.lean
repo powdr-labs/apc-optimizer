@@ -1200,6 +1200,12 @@ theorem denseGaussElimF_correct (reg : VarRegistry) (bs : BusSemantics p)
 /-- The wired dense Gauss-elimination pass (transform `denseGaussElimF`, `Gauss.lean`). -/
 def denseGaussElimFPass : DenseVerifiedPassW p :=
   DenseVerifiedPassW.ofWithHints (backF := fun bs _ d => denseGaussHints bs d)
+    (run := fun bs _ d => denseGaussWithHints bs d)
+    (hrun := by
+      intros
+      unfold denseGaussWithHints denseGaussElimF denseGaussHints
+      dsimp only
+      split_ifs <;> rfl)
     (fun bs _ d => denseGaussElimF bs d)
     (fun _ _ _ => [])
     (fun reg bs _ d hcov => denseGaussElimF_covered reg bs d hcov)
