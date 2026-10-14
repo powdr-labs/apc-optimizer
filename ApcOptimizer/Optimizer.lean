@@ -20,7 +20,7 @@ variable {p : ℕ}
       `OpenVM.defaultDegreeBound`). -/
 
 /-- Optimizer which does not use any bus facts. Works with any VM, but is less effective. Returns
-    the optimized system together with the `Derivations` for its newly-introduced columns. -/
+    the optimized system, forward `Derivations`, and original-witness reconstruction hints. -/
 def simpleOptimizer (bs : BusSemantics p) [DecidablePred bs.accepts] (b : DegreeBound) :
     Optimizer p :=
   optimizerWithBusFacts b (BusFacts.trivial bs)

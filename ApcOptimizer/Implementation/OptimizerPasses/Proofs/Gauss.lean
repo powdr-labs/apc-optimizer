@@ -1186,7 +1186,9 @@ theorem denseGaussElimF_covered (reg : VarRegistry) (bs : BusSemantics p)
 /-- **Correctness of `denseGaussElimF`.** The empty-map branch is the identity; the substitution
     branch is `substF_denseCorrect`, fed the entailment and occurrence closure of the solved map. -/
 theorem denseGaussElimF_correct (reg : VarRegistry) (bs : BusSemantics p)
-    (d : DenseConstraintSystem p) : DensePassCorrect reg.isInput d (denseGaussElimF bs d) [] bs := by
+    (d : DenseConstraintSystem p) : DensePassCorrect reg.isInput d (denseGaussElimF bs d) [] bs
+      (denseGaussHints bs d).expr := by
+  unfold denseGaussHints
   have hmap := denseGaussElimF_map bs d
   rw [denseGaussElimF_eq]
   split_ifs with hempty
@@ -1197,7 +1199,7 @@ theorem denseGaussElimF_correct (reg : VarRegistry) (bs : BusSemantics p)
 
 /-- The wired dense Gauss-elimination pass (transform `denseGaussElimF`, `Gauss.lean`). -/
 def denseGaussElimFPass : DenseVerifiedPassW p :=
-  DenseVerifiedPassW.of
+  DenseVerifiedPassW.ofWithHints (backF := fun bs _ d => denseGaussHints bs d)
     (fun bs _ d => denseGaussElimF bs d)
     (fun _ _ _ => [])
     (fun reg bs _ d hcov => denseGaussElimF_covered reg bs d hcov)

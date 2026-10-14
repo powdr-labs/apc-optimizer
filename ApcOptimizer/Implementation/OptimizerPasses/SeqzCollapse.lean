@@ -8,6 +8,21 @@ Dense `VarId` definitions for the seqz-collapse pass: expression templates, the 
 the scanning driver. This file states no correctness theorem; see `Proofs/SeqzCollapse.lean`. The
 pass mints a fresh `inv` witness, so it is wired with `DenseVerifiedPassW.ofExtending`. -/
 
+def seqzSelect {α : Type} {p : ℕ} (R a0 a1 a2 a3 v0 v1 v2 v3 vn vz : WitnessExpr α p) :
+    WitnessExpr α p :=
+  .ifZero R (.ifZero a3 (.ifZero a2 (.ifZero a1
+    (.ifZero (.add a0 (.const (-1))) vn v0) v1) v2) v3) vz
+
+def seqzWitnessExpr {α : Type} {p : ℕ} (R a0 a1 a2 a3 : WitnessExpr α p) : Nat → WitnessExpr α p
+  | 0 => seqzSelect R a0 a1 a2 a3 (.const 1) (.const 0) (.const 0) (.const 0) (.const 0) (.const 1)
+  | 1 => seqzSelect R a0 a1 a2 a3 (.const 0) (.const 1) (.const 0) (.const 0) (.const 0) (.const 0)
+  | 2 => seqzSelect R a0 a1 a2 a3 (.const 0) (.const 0) (.const 1) (.const 0) (.const 0) (.const 0)
+  | 3 => seqzSelect R a0 a1 a2 a3 (.const 0) (.const 0) (.const 0) (.const 1) (.const 0) (.const 0)
+  | _ => seqzSelect R a0 a1 a2 a3 (.add a0 (.const (-1))) a1 a2 a3 (.const 0) (.const 1)
+
+def seqzWitnessValue {p : ℕ} (R a0 a1 a2 a3 : ZMod p) (i : Nat) : ZMod p :=
+  (seqzWitnessExpr (.const R) (.const a0) (.const a1) (.const a2) (.const a3) i).eval (fun _ : Unit => 0)
+
 namespace ApcOptimizer.Dense
 
 variable {p : ℕ}
@@ -199,12 +214,17 @@ def denseSeqzRolesValid (reg : VarRegistry) (d : DenseConstraintSystem p) (r : D
 
 /-! ## The scanning driver -/
 
+def denseSeqzHints (r : DenseSeqzRoles p) (i : VarId) : WitnessExpr VarId p :=
+  let e := seqzWitnessExpr (.var r.R) (.var r.a0) (.var r.a1) (.var r.a2) (.var r.a3)
+  if i = r.m3 then e 3 else if i = r.m2 then e 2 else if i = r.m1 then e 1
+  else if i = r.m0 then e 0 else if i = r.dv then e 4 else .var i
+
 /-- Scan the bus interactions for the first collapsible gadget, registering the fresh `inv` witness
     only on the accepting branch. -/
 def denseSeqzTryList (reg : VarRegistry) (d : DenseConstraintSystem p) (bs : BusSemantics p)
     (facts : BusFacts p bs) :
     List (BusInteraction (DenseExpr p)) →
-      Option (VarRegistry × DenseConstraintSystem p × DenseDerivations p)
+      Option (RecoveryResult (DenseConstraintSystem p) p)
   | [] => none
   | bi :: rest =>
     match denseSeqzExtractRoles d bi with
@@ -217,8 +237,8 @@ def denseSeqzTryList (reg : VarRegistry) (d : DenseConstraintSystem p) (bs : Bus
           denseBuild bs facts (d.busInteractions.filter (fun bi' => decide (bi' ≠ bus)))
         if denseSeqzRolesValid reg d r spec Bm = true then
           let (reg1, invId) := reg.register (denseSeqzInvVar reg r)
-          some (reg1, denseSeqzCollapsedSystem d r invId spec,
-            [(invId, denseSeqzInvMethod r.R r.a0 r.a1 r.a2 r.a3)])
+          some (RecoveryResult.withBack (reg1, denseSeqzCollapsedSystem d r invId spec,
+            [(invId, denseSeqzInvMethod r.R r.a0 r.a1 r.a2 r.a3)]) (denseSeqzHints r))
         else denseSeqzTryList reg d bs facts rest
       | none => denseSeqzTryList reg d bs facts rest
 
@@ -229,7 +249,7 @@ def denseSeqzTryList (reg : VarRegistry) (d : DenseConstraintSystem p) (bs : Bus
     a compact is-zero gadget (`R·S = 0` and `inv·S + (R − 1) = 0`, `S = a0+a1+a2+a3`), dropping the
     four marker witnesses and `diff_val` and minting one fresh `QuotientOrZero` witness `inv`. -/
 def denseSeqzCollapseF (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
-    (d : DenseConstraintSystem p) : VarRegistry × DenseConstraintSystem p × DenseDerivations p :=
-  (denseSeqzTryList reg d bs facts d.busInteractions).getD (reg, d, [])
+    (d : DenseConstraintSystem p) : RecoveryResult (DenseConstraintSystem p) p :=
+  (denseSeqzTryList reg d bs facts d.busInteractions).getD (RecoveryResult.ofTuple (reg, d, []))
 
 end ApcOptimizer.Dense

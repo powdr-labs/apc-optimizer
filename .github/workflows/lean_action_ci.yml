@@ -17,6 +17,8 @@ jobs:
       - uses: leanprover/lean-action@v1
       - name: Proof integrity (no sorry / new axioms)
         run: ./Scripts/check-proof-integrity.sh
+      - name: Witness reconstruction regression tests
+        run: lake env lean --run Scripts/CheckReconstruction.lean
       # Build the docs (a non-default target). The Verso site splices the audited spec live via
       # `{docstring}` and `anchor` regions, so this fails on any spec/docs drift — a renamed
       # definition, a moved `-- ANCHOR:` marker, or an anchor code block that no longer matches

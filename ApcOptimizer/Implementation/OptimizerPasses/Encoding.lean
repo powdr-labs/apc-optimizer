@@ -1,4 +1,5 @@
 import ApcOptimizer.Implementation.OptimizerPasses.Registry
+import ApcOptimizer.Implementation.Reconstruction
 
 set_option autoImplicit false
 
@@ -617,5 +618,24 @@ theorem VarRegistry.decodeCS_encodeCS (r : VarRegistry) (cs : Circuit p) :
         (r.encodeExprs_covered acs)]
     exact r.decodeExprs_encodeExprs acs
   · exact (r.encodeExprs acs).1.decodeBIs_encodeBIs bis
+
+def DenseExpr.witness : DenseExpr p → WitnessExpr VarId p
+  | .const c => .const c
+  | .var i => .var i
+  | .add a b => .add a.witness b.witness
+  | .mul a b => .mul a.witness b.witness
+
+@[simp] theorem DenseExpr.witness_eval (e : DenseExpr p) (env : VarId → ZMod p) :
+    e.witness.eval env = e.eval env := by
+  induction e <;> simp_all [DenseExpr.witness, WitnessExpr.eval, DenseExpr.eval]
+
+def substitutionHints (df : VarId → Option (DenseExpr p)) (i : VarId) : WitnessExpr VarId p :=
+  match df i with
+  | some e => e.witness
+  | none => .var i
+
+/-- Boxing prevents eta-expansion from recomputing the map at every variable lookup. -/
+structure RecoveryMap (p : ℕ) where
+  expr : VarId → WitnessExpr VarId p
 
 end ApcOptimizer.Dense

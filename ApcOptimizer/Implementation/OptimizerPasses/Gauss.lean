@@ -645,4 +645,9 @@ def denseGaussElimF (bs : BusSemantics p) (d : DenseConstraintSystem p) : DenseC
   let S := gSolveSystem bs d
   if S.order.isEmpty then d else d.substF (gOutFn (gOutOf S))
 
+def denseGaussHints (bs : BusSemantics p) (d : DenseConstraintSystem p) :
+    RecoveryMap p :=
+  if (gSolveSystem bs d).order.isEmpty then ⟨WitnessExpr.var⟩
+  else ⟨substitutionHints (gOutFn (gOutOf (gSolveSystem bs d)))⟩
+
 end ApcOptimizer.Dense

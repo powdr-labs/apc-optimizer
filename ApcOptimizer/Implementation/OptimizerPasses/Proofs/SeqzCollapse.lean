@@ -105,6 +105,18 @@ theorem denseSetFive_free {m3 m2 m1 m0 dv : VarId} {v3 v2 v1 v0 vd : ZMod p}
     denseSetFive m3 m2 m1 m0 dv v3 v2 v1 v0 vd env x = env x := by
   simp only [denseSetFive, if_neg h3, if_neg h2, if_neg h1, if_neg h0, if_neg hd]
 
+theorem denseSeqzHints_eval (r : DenseSeqzRoles p) (env : VarId → ZMod p) :
+    (fun i => (denseSeqzHints r i).eval env) =
+      denseSetFive r.m3 r.m2 r.m1 r.m0 r.dv
+        (seqzWitnessValue (env r.R) (env r.a0) (env r.a1) (env r.a2) (env r.a3) 3)
+        (seqzWitnessValue (env r.R) (env r.a0) (env r.a1) (env r.a2) (env r.a3) 2)
+        (seqzWitnessValue (env r.R) (env r.a0) (env r.a1) (env r.a2) (env r.a3) 1)
+        (seqzWitnessValue (env r.R) (env r.a0) (env r.a1) (env r.a2) (env r.a3) 0)
+        (seqzWitnessValue (env r.R) (env r.a0) (env r.a1) (env r.a2) (env r.a3) 4) env := by
+  funext i
+  simp only [denseSeqzHints, denseSetFive]
+  split_ifs <;> rfl
+
 theorem denseSetFive_at3 {m3 m2 m1 m0 dv : VarId} {v3 v2 v1 v0 vd : ZMod p}
     {env : VarId → ZMod p} :
     denseSetFive m3 m2 m1 m0 dv v3 v2 v1 v0 vd env m3 = v3 := by
@@ -196,7 +208,7 @@ theorem dense_seqzCollapse_correct [Fact p.Prime] (isInput : VarId → Bool)
     (hinv_fresh : invId ∉ d.occ) (hinv_id : isInput invId = false)
     (hpow5 : ∀ v ∈ ([r.R, r.a0, r.a1, r.a2, r.a3] : List VarId), isInput v = true) :
     DensePassCorrect isInput d (denseSeqzCollapsedSystem d r invId spec)
-      [(invId, denseSeqzInvMethod r.R r.a0 r.a1 r.a2 r.a3)] bs := by
+      [(invId, denseSeqzInvMethod r.R r.a0 r.a1 r.a2 r.a3)] bs (denseSeqzHints r) := by
   haveI : NeZero p := ⟨by omega⟩
   have hpowR : isInput r.R = true := hpow5 r.R (by simp)
   have hpowa : ∀ a ∈ ([r.a0, r.a1, r.a2, r.a3] : List VarId), isInput a = true :=
@@ -314,7 +326,8 @@ theorem dense_seqzCollapse_correct [Fact p.Prime] (isInput : VarId → Bool)
   have hReconstruct : ∀ env, out.satisfies bs env → ∃ g,
       d.satisfies bs g ∧
       (∀ bi ∈ d.busInteractions, bi ≠ busE → denseBIEval bi g = denseBIEval bi env) ∧
-      d.sideEffects bs g = d.sideEffects bs env := by
+      d.sideEffects bs g = d.sideEffects bs env ∧
+      (fun i => (denseSeqzHints r i).eval env) = g := by
     intro env hsatOut
     have hb0 := habyteAll env hsatOut.2 r.a0 (by simp)
     have hb1 := habyteAll env hsatOut.2 r.a1 (by simp)
@@ -336,7 +349,7 @@ theorem dense_seqzCollapse_correct [Fact p.Prime] (isInput : VarId → Bool)
       have hz : env r.R + -1 = 0 := by linear_combination h - env invId * hS
       linear_combination hz
     obtain ⟨v0, v1, v2, v3, vd, eB3, eB2, eB1, eB0, eBs, eNM, eP3, eP2, eP1, eP0,
-        eD3, eD2, eD1, eD0, eBus⟩ :=
+        eD3, eD2, eD1, eD0, eBus, hvalues⟩ :=
       SeqzCollapse.seqz_reconstruct h1024 r.K (env r.R) (env r.a0) (env r.a1) (env r.a2) (env r.a3)
         hK hb0 hb1 hb2 hb3 hRbool hRS hSR
     set g := denseSetFive r.m3 r.m2 r.m1 r.m0 r.dv v3 v2 v1 v0 vd env with hgdef
@@ -411,7 +424,10 @@ theorem dense_seqzCollapse_correct [Fact p.Prime] (isInput : VarId → Bool)
       have hbimem : bi ∈ d.busInteractions := List.mem_of_mem_filter hbi
       have hst : bs.isStateful bi.busId = true := by simpa using List.of_mem_filter hbi
       rw [hgframeBus bi hbimem (hstatefulNe bi hst)]
-    exact ⟨g, hgcs, hgframeBus, hseSound⟩
+    refine ⟨g, hgcs, hgframeBus, hseSound, ?_⟩
+    simp only [Prod.mk.injEq] at hvalues
+    rcases hvalues with ⟨rfl, rfl, rfl, rfl, rfl⟩
+    exact denseSeqzHints_eval r env
   have hout_occ : ∀ i ∈ out.occ, i = invId ∨ i ∈ d.occ := by
     intro i hi
     rw [hcMemOcc] at hi
@@ -448,13 +464,14 @@ theorem dense_seqzCollapse_correct [Fact p.Prime] (isInput : VarId → Bool)
   refine ⟨?_, ?_, ?_, ?_⟩
   · -- soundness (`out.implies d`)
     intro env hsatOut
-    obtain ⟨g, hgcs, _, hse⟩ := hReconstruct env hsatOut
-    refine ⟨g, hgcs, ?_⟩
+    obtain ⟨g, hgcs, _, hse, hback⟩ := hReconstruct env hsatOut
+    rw [hback]
+    refine ⟨hgcs, ?_⟩
     rw [hse, ← hside env]
   · -- invariant preservation
     intro hdInv env hsatOut bi hbiOut
     show (denseBIEval bi env).multiplicity ≠ 0 → bs.maintainsInvariants (denseBIEval bi env)
-    obtain ⟨g, hgcs, hgfr, _⟩ := hReconstruct env hsatOut
+    obtain ⟨g, hgcs, hgfr, _, _⟩ := hReconstruct env hsatOut
     have hbicsmem : bi ∈ d.busInteractions := by
       have := hbiOut; rw [houtdef, denseSeqzCollapsedSystem] at this
       exact List.mem_of_mem_filter this
@@ -623,7 +640,7 @@ theorem dense_seqzCollapse_bundle (reg : VarRegistry) (d : DenseConstraintSystem
       [((reg.register (denseSeqzInvVar reg r)).2, denseSeqzInvMethod (p := p) r.R r.a0 r.a1 r.a2 r.a3)] ∧
     DensePassCorrect (reg.register (denseSeqzInvVar reg r)).1.isInput d
       (denseSeqzCollapsedSystem d r (reg.register (denseSeqzInvVar reg r)).2 spec)
-      [((reg.register (denseSeqzInvVar reg r)).2, denseSeqzInvMethod r.R r.a0 r.a1 r.a2 r.a3)] bs := by
+      [((reg.register (denseSeqzInvVar reg r)).2, denseSeqzInvMethod r.R r.a0 r.a1 r.a2 r.a3)] bs (denseSeqzHints r) := by
   have hpv : (denseSeqzInvVar reg r).powdrId? = none := rfl
   simp only [denseSeqzRolesValid, Bool.and_eq_true, decide_eq_true_eq, List.all_eq_true] at hvalid
   obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hprime, h1024⟩, hK⟩, hbound⟩, hbusMemB⟩, hclMemB⟩, hboolMemB⟩, hboolNCB⟩,
@@ -758,10 +775,10 @@ theorem dense_seqzCollapse_bundle (reg : VarRegistry) (d : DenseConstraintSystem
 theorem denseSeqzTryList_correct (reg : VarRegistry) (d : DenseConstraintSystem p)
     (bs : BusSemantics p) (facts : BusFacts p bs) (hcov : d.CoveredBy reg) :
     ∀ (L : List (BusInteraction (DenseExpr p)))
-      (res : VarRegistry × DenseConstraintSystem p × DenseDerivations p),
+      (res : RecoveryResult (DenseConstraintSystem p) p),
       denseSeqzTryList reg d bs facts L = some res →
         reg.Extends res.1 ∧ res.2.1.CoveredBy res.1 ∧ DenseDerivations.CoveredBy res.1 res.2.2 ∧
-          DensePassCorrect res.1.isInput d res.2.1 res.2.2 bs := by
+          DensePassCorrect res.1.isInput d res.2.1 res.2.2 bs res.back := by
   intro L
   induction L with
   | nil => intro res hr; simp [denseSeqzTryList] at hr
@@ -789,11 +806,12 @@ theorem denseSeqzCollapseF_props (reg : VarRegistry) (bs : BusSemantics p) (fact
     ∧ DenseDerivations.CoveredBy (denseSeqzCollapseF reg bs facts d).1
         (denseSeqzCollapseF reg bs facts d).2.2
     ∧ DensePassCorrect (denseSeqzCollapseF reg bs facts d).1.isInput d
-        (denseSeqzCollapseF reg bs facts d).2.1 (denseSeqzCollapseF reg bs facts d).2.2 bs := by
+        (denseSeqzCollapseF reg bs facts d).2.1 (denseSeqzCollapseF reg bs facts d).2.2 bs
+      (denseSeqzCollapseF reg bs facts d).back := by
   unfold denseSeqzCollapseF
   cases hL : denseSeqzTryList reg d bs facts d.busInteractions with
   | none =>
-      simp only [Option.getD_none]
+      simp only [Option.getD_none, RecoveryResult.ofTuple]
       exact ⟨VarRegistry.Extends.refl reg, hcov, (by intro x hx; simp at hx),
         DensePassCorrect.refl reg.isInput d bs⟩
   | some res =>
@@ -803,7 +821,9 @@ theorem denseSeqzCollapseF_props (reg : VarRegistry) (bs : BusSemantics p) (fact
 /-- One scan-and-collapse step (see `denseSeqzCollapseF`), lifted to the audited spec via
     `ofExtending`. -/
 def denseSeqzCollapseStep : DenseVerifiedPassW p :=
-  DenseVerifiedPassW.ofExtending (fun reg bs facts d => denseSeqzCollapseF reg bs facts d)
+  DenseVerifiedPassW.ofExtendingWithHints
+    (fun reg bs facts d => ⟨(denseSeqzCollapseF reg bs facts d).back⟩)
+    (fun reg bs facts d => let r := denseSeqzCollapseF reg bs facts d; (r.1, r.2.1, r.2.2))
     (fun reg bs facts d hcov => (denseSeqzCollapseF_props reg bs facts d hcov).1)
     (fun reg bs facts d hcov => (denseSeqzCollapseF_props reg bs facts d hcov).2.1)
     (fun reg bs facts d hcov => (denseSeqzCollapseF_props reg bs facts d hcov).2.2.1)

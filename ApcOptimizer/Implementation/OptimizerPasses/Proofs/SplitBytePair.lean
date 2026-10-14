@@ -243,7 +243,7 @@ private theorem denseSplitBytePair_correct_aux (isInput : VarId → Bool) (bs : 
       exact Or.inr (List.mem_flatMap.2 ⟨orig, horig, denseSplitOne_vars bs facts orig bi hbimem hib⟩)
   refine DensePassCorrect.ofEnvEq ?_ ?_ hsub ?_
   · intro denv hsat
-    exact ⟨denv, (hsatiff denv).2 hsat, by rw [hside denv]⟩
+    exact ⟨(hsatiff denv).2 hsat, (hside denv).symm⟩
   · intro hgi denv hsat bi hbi
     rw [hbus, List.mem_flatMap] at hbi
     obtain ⟨orig, horig, hbimem⟩ := hbi

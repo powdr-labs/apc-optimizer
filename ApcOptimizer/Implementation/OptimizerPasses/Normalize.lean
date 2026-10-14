@@ -923,8 +923,9 @@ def denseNormalizePass : DenseVerifiedPassW p :=
       refine ⟨?_, ?_, ?_, ?_⟩
       · -- soundness: `(mapExpr normalize).implies d`
         intro denv hsat
-        refine ⟨denv, (DenseConstraintSystem.mapExpr_satisfies hfe d bs denv).mp hsat, ?_⟩
+        refine ⟨(DenseConstraintSystem.mapExpr_satisfies hfe d bs denv).mp hsat, ?_⟩
         rw [DenseConstraintSystem.mapExpr_sideEffects hfe]
+        rfl
       · -- invariants
         exact fun h => DenseConstraintSystem.mapExpr_guaranteesInvariants hfe h
       · -- no new powdr column

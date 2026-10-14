@@ -85,7 +85,7 @@ theorem DenseConstraintSystem.dedup_denseCorrect {isInput : VarId → Bool}
   refine DensePassCorrect.ofEnvEq ?_ ?_ hsub ?_
   · -- soundness (`out.implies d`): same env, side effects equal
     intro denv hsat
-    exact ⟨denv, (hiff denv).1 hsat, by rw [hside]⟩
+    exact ⟨(hiff denv).1 hsat, by simpa only [WitnessExpr.eval] using hside denv⟩
   · -- invariant preservation: kept interactions are a subset of the originals
     intro hgi denv hsat bi hbi
     refine hgi denv ((hiff denv).1 hsat) bi ?_

@@ -513,4 +513,11 @@ def denseRootPairUnifyFFast (pw : PrimeWitness p) (bs : BusSemantics p) (facts :
     if σ.map.isEmpty then d else d.substF σ.fn
   else d
 
+def denseRootPairUnifyFHints (pw : PrimeWitness p) (bs : BusSemantics p) (facts : BusFacts p bs)
+    (d : DenseConstraintSystem p) : RecoveryMap p :=
+  if pw.isPrime = true then
+    let σ := denseRpSigma bs facts d
+    if σ.map.isEmpty then ⟨WitnessExpr.var⟩ else ⟨substitutionHints σ.fn⟩
+  else ⟨WitnessExpr.var⟩
+
 end ApcOptimizer.Dense

@@ -12,15 +12,14 @@ audit, and `ApcOptimizer/Utils/` is tooling.
 ## The spec (`ApcOptimizer/Spec.lean`, audited)
 
 A `Circuit` is a list of algebraic constraints plus a list of bus interactions over
-`Expression`s. The correctness relation is **`refines`**, deliberately asymmetric:
+`Expression`s. Correctness has two asymmetric directions:
 
-- **soundness** — `output.implies input`: every satisfying assignment of the output maps to one of
-  the input with the same stateful side effects. Required for *all* assignments (a malicious prover
-  may use any of them).
-- **completeness** — `input.impliesAdmissible output`: every *admissible* (real-trace) satisfying
-  assignment of the input is reproduced by the output. Only required for admissible assignments,
-  and it *delivers* an admissible witness, which is what makes `refines` transitive (so passes
-  compose).
+- **soundness** — `output.isSoundReplacementOf input bs hints`: the returned reconstruction
+  program computes a satisfying input witness with equal stateful side effects from every satisfying
+  output witness. Only output variables are supplied; other variables start at zero.
+- **completeness** — `output.isCompleteReplacementOf input bs derivations`: forward witness
+  generation reproduces every *admissible* (real-trace) satisfying input assignment as an admissible
+  output assignment with equal side effects.
 
 Side effects are the messages on **stateful** buses, compared up to **net multiplicity** per
 message (`≈`) — so an identical-payload send/receive pair cancels. `admissible` is an abstract
@@ -28,11 +27,16 @@ per-VM predicate (`BusSemantics.admissible`) over the active stateful messages; 
 "this is a real trace" assumption lives (see [Bus knowledge](#bus-knowledge) and the README's
 assumptions).
 
-**Derived variables.** The optimizer returns not just a circuit but a `Derivations` list — a
+**Witness reconstruction.** `WitnessExpr` is a separate arithmetic IR with zero tests.
+`Reconstruction` executes sequential blocks of simultaneous assignments. Pass composition appends
+these blocks in reverse pass order. Dense passes supply symbolic backward maps; the bridge emits
+finite blocks, omitting unchanged variables. `RecoveryMap` boxes these maps to prevent Lean's
+arity expansion from repeating their analysis at every lookup.
+
+**Derived variables.** Alongside the circuit and reconstruction, the optimizer returns a `Derivations` list — a
 `ComputationMethod` (powdr's `Constant`/`QuotientOrZero`/`IfEqZero`, with an `eval`) for each
-variable it introduces. The completeness direction (folded into `refines` / `impliesAdmissible`) is
-strengthened accordingly: the reproduced witness must **`derivesWitness`** — every variable of the
-output that carries a powdr ID is an input column present in the input with an unchanged value, and
+variable it introduces. The completeness direction requires that every variable of the
+output carrying a powdr ID is an input column present in the input with an unchanged value, and
 every no-ID (derived) variable is computed by the method `Derivations` lists for it (`methodFor`,
 its last entry — duplicates are allowed, the later one wins) reading only input columns. This is
 exactly what lets witness generation extend an input trace to an output trace. (The requirement is
@@ -56,7 +60,8 @@ written without discharging its obligations. `Basic.lean` carries the `Variable`
 glue (`PassCorrect` itself and its composition lemmas) that the dense results decode into.
 
 - `andThen` composes passes (correctness by composing the per-pass `PassCorrect` proofs, with
-  derivations concatenating); `denseIterateToFixpoint` runs a pass to a fixpoint, proven to
+  forward derivations concatenating and reconstruction blocks in reverse order);
+  `denseIterateToFixpoint` runs a pass to a fixpoint, proven to
   terminate on the well-founded lexicographic size key (see the pipeline section); the top-level
   `*_maintainsCorrectness` theorems are just projections.
 - `guardDegree` falls back to a pass's input if the output would exceed the degree bound; the

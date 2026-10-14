@@ -1525,30 +1525,30 @@ def denseRncNameTaken (reg : VarRegistry) (st : DenseRncState p) (freshBase : St
 /-- One checked re-encoding step on the array state. Same gate sequence as `denseWorkStep`. -/
 def denseRncStep (ctx : DenseRncCtx p) (reg : VarRegistry) (st : DenseRncState p)
     (xs : List VarId) (freshBase : String) :
-    VarRegistry × DenseRncState p × DenseDerivations p :=
-  if !xs.all (fun x => reg.isInput x) then (reg, st, [])
-  else if xs.any (fun x => st.minted.contains x) then (reg, st, [])
+    RecoveryResult (DenseRncState p) p :=
+  if !xs.all (fun x => reg.isInput x) then RecoveryResult.ofTuple (reg, st, [])
+  else if xs.any (fun x => st.minted.contains x) then RecoveryResult.ofTuple (reg, st, [])
   else
     let g := denseRncNameTaken reg st freshBase
     let st := g.2
-    if g.1 then (reg, st, [])
+    if g.1 then RecoveryResult.ofTuple (reg, st, [])
     else
       let r := denseRncBuild ctx reg st xs freshBase
       let reg1 := r.1
       match r.2.1 with
-      | none => (reg1, r.2.2, [])
+      | none => RecoveryResult.ofTuple (reg1, r.2.2, [])
       | some cd =>
-        if cd.bits.any (fun b => r.2.2.minted.contains b) then (reg1, r.2.2, [])
+        if cd.bits.any (fun b => r.2.2.minted.contains b) then RecoveryResult.ofTuple (reg1, r.2.2, [])
         else
           let st := denseRncEnsureUseBis (denseRncEnsureUse r.2.2)
-          if denseRncDegPre ctx st xs cd then (reg1, st, [])
+          if denseRncDegPre ctx st xs cd then RecoveryResult.ofTuple (reg1, st, [])
           else
             let st := denseRncEnsureSeen st
-            if !xs.all (fun x => denseRncSeen st x) then (reg1, st, [])
-            else if !xs.all (fun x => decide (x ∉ cd.bits)) then (reg1, st, [])
+            if !xs.all (fun x => denseRncSeen st x) then RecoveryResult.ofTuple (reg1, st, [])
+            else if !xs.all (fun x => decide (x ∉ cd.bits)) then RecoveryResult.ofTuple (reg1, st, [])
             else if !cd.bits.all (fun b => decide ((reg1.resolve b).powdrId? = none)) then
-              (reg1, st, [])
-            else if !denseRncCert st xs cd then (reg1, st, [])
+              RecoveryResult.ofTuple (reg1, st, [])
+            else if !denseRncCert st xs cd then RecoveryResult.ofTuple (reg1, st, [])
             else
               let st0 := denseRncEnsureFoldBis (denseRncEnsureFoldCs st)
               let rc := denseRncCsEdits ctx st0 xs cd
@@ -1556,21 +1556,23 @@ def denseRncStep (ctx : DenseRncCtx p) (reg : VarRegistry) (st : DenseRncState p
               let ok := rc.2 && rb.2 && cd.bits.all (fun b =>
                 decide ((denseBoolConstraint b : DenseExpr p).degree ≤ ctx.dmaxC))
               if (if st0.dWithin then ok else ok && denseRncWithinNow ctx st0) then
-                (reg1, denseRncWrite ctx st0 cd.bits rc.1 rb.1,
+                RecoveryResult.withBack (reg1, denseRncWrite ctx st0 cd.bits rc.1 rb.1,
                  cd.bits.map (fun b => (b, denseRncBitCMGo ctx cd xs b 0)))
-              else (reg1, st0, [])
+                  (substitutionHints (denseGroupSubst xs cd.hm.get))
+              else RecoveryResult.ofTuple (reg1, st0, [])
 
 /-- The fresh-name prefix depends only on the item counts, which change only on an accept, so it is
     threaded rather than rebuilt per target (`Nat.toString` twice per target otherwise). -/
 def denseRncLoop (ctx : DenseRncCtx p) :
     List (List VarId) → Nat → VarRegistry → DenseRncState p → String →
-      VarRegistry × DenseRncState p × DenseDerivations p
-  | [], _, reg, st, _ => (reg, st, [])
+      RecoveryResult (DenseRncState p) p
+  | [], _, reg, st, _ => RecoveryResult.ofTuple (reg, st, [])
   | xs :: rest, idx, reg, st, pre =>
-    let (reg1, st1, derivs1) := denseRncStep ctx reg st xs (pre ++ toString idx)
-    let pre1 := if derivs1.isEmpty then pre else s!"rnc{st1.live}_{st1.bisN}_"
-    let (reg2, st2, derivs2) := denseRncLoop ctx rest (idx + 1) reg1 st1 pre1
-    (reg2, st2, derivs1 ++ derivs2)
+    let r1 := denseRncStep ctx reg st xs (pre ++ toString idx)
+    let pre1 := if r1.2.2.isEmpty then pre else s!"rnc{r1.2.1.live}_{r1.2.1.bisN}_"
+    let r2 := denseRncLoop ctx rest (idx + 1) r1.1 r1.2.1 pre1
+    RecoveryResult.withBack (r2.1, r2.2.1, r1.2.2 ++ r2.2.2)
+      (fun i => (r1.back i).subst r2.back)
 
 /-! ### The setup walk
 
@@ -1627,21 +1629,21 @@ def denseRncSeed (nVar : Nat) (d : DenseConstraintSystem p)
     (reencode is fact-free). -/
 def denseRncRun (b : DegreeBound) (reg : VarRegistry) (d : DenseConstraintSystem p)
     (cvs : Array (Array VarId)) (live : Nat) (targets : List (List VarId)) :
-    VarRegistry × DenseConstraintSystem p × DenseDerivations p :=
-  if targets.isEmpty then (reg, d, [])
+    RecoveryResult (DenseConstraintSystem p) p :=
+  if targets.isEmpty then RecoveryResult.ofTuple (reg, d, [])
   else
     let r := denseRncLoop (denseRncCtxOf b) targets 0 reg (denseRncSeed reg.byId.size d cvs live)
       s!"rnc{live}_{d.busInteractions.length}_"
-    (r.1, denseRncView r.2.1, r.2.2)
+    RecoveryResult.withBack (r.1, denseRncView r.2.1, r.2.2) r.back
 
 def denseRncF (pw : PrimeWitness p) (b : DegreeBound) (reg : VarRegistry)
     (bsem : BusSemantics p) (_facts : BusFacts p bsem) (d : DenseConstraintSystem p) :
-    VarRegistry × DenseConstraintSystem p × DenseDerivations p :=
+    RecoveryResult (DenseConstraintSystem p) p :=
   if pw.isPrime = true then
     let scan := denseRncScan d.algebraicConstraints.toArray
     denseRncRun b reg d scan.1 scan.2
       (denseRncTargets reg (denseRncSvSet reg.byId.size scan.1) scan.1)
-  else (reg, d, [])
+  else RecoveryResult.ofTuple (reg, d, [])
 
 
 end ApcOptimizer.Dense

@@ -287,12 +287,21 @@ def denseHcAccept (reg : VarRegistry) (d : DenseConstraintSystem p) (idx : Nat) 
         d.algebraicConstraints.set idx (.add (.mul denom (.var invId)) rest) },
     [(invId, DenseComputationMethod.quotientOrZero (.mul (.const (-1)) rest) denom)])
 
+def densePlainReassignHints (D : List VarId) (invId i : VarId) : WitnessExpr VarId p :=
+  if i ∈ D then .var invId else .var i
+
+def denseWeightedReassignHints (pairs : List (DenseExpr p × VarId)) (invId i : VarId) :
+    WitnessExpr VarId p :=
+  match pairs.find? (fun cd => cd.2 == i) with
+  | some cd => .mul cd.1.witness (.var invId)
+  | none => .var i
+
 /-- One collapse attempt on the candidate target `E` at index `idx` with witnesses `D`: peel once,
     then offer the peel to the plain-sum recognizer (`is-zero`/`seqz`) and, failing that, to the
     sum-of-squares one (`is-equal`). The fresh witness is registered only on the accepting branch. -/
 def denseHcTry (bs : BusSemantics p) (facts : BusFacts p bs) (reg : VarRegistry)
     (d : DenseConstraintSystem p) (st : Array Nat) (idx : Nat) (E : DenseExpr p) (D : List VarId) :
-    Option (VarRegistry × DenseConstraintSystem p × DenseDerivations p) :=
+    Option (RecoveryResult (DenseConstraintSystem p) p) :=
   if 2 ≤ D.length then
     let coeffs := (densePeel D E).1
     let rest := (densePeel D E).2
@@ -302,13 +311,16 @@ def denseHcTry (bs : BusSemantics p) (facts : BusFacts p bs) (reg : VarRegistry)
       if denseCoeffsByteOK reg Bm D coeffs && decide (coeffs.length * 256 ≤ p) then
         let invVar : Variable := ⟨"hcinv#" ++ (reg.resolve (D.headD default)).name, none⟩
         if denseHcFresh reg st invVar then
-          some (denseHcAccept reg d idx invVar (denseSumExpr coeffs) rest)
+          some (RecoveryResult.withBack
+            (denseHcAccept reg d idx invVar (denseSumExpr coeffs) rest)
+            (densePlainReassignHints D (reg.register invVar).2))
         else none
       else if denseSqCoeffsOK reg Bm D coeffs && decide (coeffs.length * 65536 ≤ p) then
         let invVar : Variable := ⟨"hcsq#" ++ (reg.resolve (D.headD default)).name, none⟩
         if denseHcFresh reg st invVar then
-          some (denseHcAccept reg d idx invVar
+          some (RecoveryResult.withBack (denseHcAccept reg d idx invVar
             (denseSumExpr (coeffs.map (fun c => DenseExpr.mul c c))) rest)
+            (denseWeightedReassignHints (coeffs.zip D) (reg.register invVar).2))
         else none
       else none
     else none
@@ -318,7 +330,7 @@ def denseHcTry (bs : BusSemantics p) (facts : BusFacts p bs) (reg : VarRegistry)
 /-- The first candidate target that collapses. -/
 def denseHcScanTry (bs : BusSemantics p) (facts : BusFacts p bs) (reg : VarRegistry)
     (d : DenseConstraintSystem p) (st : Array Nat) :
-    List (Nat × DenseExpr p) → Option (VarRegistry × DenseConstraintSystem p × DenseDerivations p)
+    List (Nat × DenseExpr p) → Option (RecoveryResult (DenseConstraintSystem p) p)
   | [] => none
   | (idx, E) :: rest =>
     match denseHcTry bs facts reg d st idx E (denseHcWits st idx E) with
@@ -336,14 +348,14 @@ def denseHcScanTry (bs : BusSemantics p) (facts : BusFacts p bs) (reg : VarRegis
     candidate group there is no bounds map and no per-constraint work at all. -/
 def denseHintCollapseF (pw : PrimeWitness p) (reg : VarRegistry) (bsem : BusSemantics p)
     (facts : BusFacts p bsem) (d : DenseConstraintSystem p) :
-    VarRegistry × DenseConstraintSystem p × DenseDerivations p :=
+    RecoveryResult (DenseConstraintSystem p) p :=
   if pw.isPrime = true then
     let st := denseHcScan reg.byId.size d
     match denseHcGroups st with
-    | [] => (reg, d, [])
+    | [] => RecoveryResult.ofTuple (reg, d, [])
     | is =>
       (denseHcScanTry bsem facts reg d st
-        (denseHcPick 0 is d.algebraicConstraints)).getD (reg, d, [])
-  else (reg, d, [])
+        (denseHcPick 0 is d.algebraicConstraints)).getD (RecoveryResult.ofTuple (reg, d, []))
+  else RecoveryResult.ofTuple (reg, d, [])
 
 end ApcOptimizer.Dense

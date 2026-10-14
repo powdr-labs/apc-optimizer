@@ -31,7 +31,8 @@ structure DenseNativeStep (p : ℕ) (bs : BusSemantics p) (reg : VarRegistry)
   cov : out.CoveredBy reg'
   dcov : dd.CoveredBy reg'
   /-- Correctness at the output registry's `isInput`. -/
-  correct : DensePassCorrect reg'.isInput d out dd bs
+  back : VarId → WitnessExpr VarId p := WitnessExpr.var
+  correct : DensePassCorrect reg'.isInput d out dd bs back
 
 /-- Reflexivity / identity step: same registry and system, no new derivations. -/
 def DenseNativeStep.refl (bs : BusSemantics p) {reg : VarRegistry} {d : DenseConstraintSystem p}
@@ -48,7 +49,8 @@ def DenseNativeStep.refl (bs : BusSemantics p) {reg : VarRegistry} {d : DenseCon
 /-- Non-extending step: keep the registry, change the system to `out`, no new derivations; the
     caller supplies `hcov`/`hcorrect`. -/
 def DenseNativeStep.ofSame (bs : BusSemantics p) {reg : VarRegistry} {d out : DenseConstraintSystem p}
-    (hcov : out.CoveredBy reg) (hcorrect : DensePassCorrect reg.isInput d out [] bs) :
+    {back : VarId → WitnessExpr VarId p}
+    (hcov : out.CoveredBy reg) (hcorrect : DensePassCorrect reg.isInput d out [] bs back) :
     DenseNativeStep p bs reg d where
   reg' := reg
   out := out
@@ -57,6 +59,7 @@ def DenseNativeStep.ofSame (bs : BusSemantics p) {reg : VarRegistry} {d out : De
   hii := rfl
   cov := hcov
   dcov := by intro x hx; simp at hx
+  back := back
   correct := hcorrect
 
 /-- Sequential composition of two certified steps (`s2` from `s1`'s output), concatenating
@@ -67,12 +70,13 @@ def DenseNativeStep.trans {bs : BusSemantics p} {reg : VarRegistry} {d : DenseCo
   reg' := s2.reg'
   out := s2.out
   dd := s1.dd ++ s2.dd
+  back := fun i => (s1.back i).subst s2.back
   ext := s1.ext.trans s2.ext
   hii := s2.hii.trans s1.hii
   cov := s2.cov
   dcov := DenseDerivations.coveredBy_append (DenseDerivations.CoveredBy.mono s2.ext s1.dcov) s2.dcov
   correct := by
-    have h1 : DensePassCorrect s2.reg'.isInput d s1.out s1.dd bs := by
+    have h1 : DensePassCorrect s2.reg'.isInput d s1.out s1.dd bs s1.back := by
       rw [s2.hii]; exact s1.correct
     exact h1.andThen s2.correct
 
@@ -108,6 +112,7 @@ def DenseNativeStep.toDensePassResult {bs : BusSemantics p} {reg : VarRegistry}
   reg' := s.reg'
   out := s.out
   derivs := s.dd
+  hints := s.reg'.reconstruction d s.back
   ext := s.ext
   covered := s.cov
   dcovered := s.dcov

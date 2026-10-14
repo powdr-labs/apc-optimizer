@@ -43,7 +43,8 @@ structure DensePassResult (reg : VarRegistry) (d : DenseConstraintSystem p) (bs 
   ext : reg.Extends reg'
   covered : out.CoveredBy reg'
   dcovered : derivs.CoveredBy reg'
-  correct : PassCorrect (reg.decodeCS d) (reg'.decodeCS out) (reg'.decodeDerivs derivs) bs
+  hints : Reconstruction Variable p := []
+  correct : PassCorrect (reg.decodeCS d) (reg'.decodeCS out) (reg'.decodeDerivs derivs) bs hints
 
 /-- A proof-carrying dense pass that may consult proven `BusFacts`. Takes the input coverage as an
     (erased) hypothesis so the framework can thread it through composition. -/
@@ -66,6 +67,7 @@ def DenseVerifiedPassW.andThen (f g : DenseVerifiedPassW p) : DenseVerifiedPassW
     { reg' := r2.reg'
       out := r2.out
       derivs := r1.derivs ++ r2.derivs
+      hints := r2.hints ++ r1.hints
       ext := r1.ext.trans r2.ext
       covered := r2.covered
       dcovered := DenseDerivations.coveredBy_append (DenseDerivations.CoveredBy.mono r2.ext r1.dcovered) r2.dcovered
@@ -343,6 +345,7 @@ def denseIterateToFixpointFrom (f : DenseVerifiedPassW p) (reg : VarRegistry)
     { reg' := r2.reg'
       out := r2.out
       derivs := r.derivs ++ r2.derivs
+      hints := r2.hints ++ r.hints
       ext := r.ext.trans r2.ext
       covered := r2.covered
       dcovered := DenseDerivations.coveredBy_append (DenseDerivations.CoveredBy.mono r2.ext r.dcovered) r2.dcovered

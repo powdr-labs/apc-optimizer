@@ -467,6 +467,8 @@ theorem dense_collapse_correct [Fact p.Prime] (isInput : VarId → Bool)
     (d : DenseConstraintSystem p) (bs : BusSemantics p)
     (E denom rest : DenseExpr p) (D : List VarId) (invId : VarId)
     (reasg : (VarId → ZMod p) → ZMod p → (VarId → ZMod p))
+    (back : VarId → WitnessExpr VarId p)
+    (hback : ∀ env, (fun i => (back i).eval env) = reasg env (env invId))
     (hE : E ∈ d.algebraicConstraints)
     (hagree : ∀ (denv : VarId → ZMod p) (w : ZMod p) (v : VarId), v ∉ D → reasg denv w v = denv v)
     (hEeq : ∀ (denv : VarId → ZMod p) (w : ZMod p),
@@ -484,7 +486,7 @@ theorem dense_collapse_correct [Fact p.Prime] (isInput : VarId → Bool)
           d.algebraicConstraints.map (fun c => if c = E then
             (DenseExpr.add (DenseExpr.mul denom (DenseExpr.var invId)) rest) else c) }
       [(invId, DenseComputationMethod.quotientOrZero (DenseExpr.mul (DenseExpr.const (-1)) rest) denom)]
-      bs := by
+      bs back := by
   set E' : DenseExpr p := DenseExpr.add (DenseExpr.mul denom (DenseExpr.var invId)) rest with hE'
   set method : DenseComputationMethod p :=
     DenseComputationMethod.quotientOrZero (DenseExpr.mul (DenseExpr.const (-1)) rest) denom with hmeth
@@ -536,9 +538,10 @@ theorem dense_collapse_correct [Fact p.Prime] (isInput : VarId → Bool)
         rwa [hfc] at hc0
     · rw [hbe denv bi (hob ▸ hbi)]
       exact hsat.2 bi (hob ▸ hbi)
-  have hsound : out.implies d bs := by
+  have hsound : out.implies d bs back := by
     intro denv hsat
-    refine ⟨reasg denv (denv invId), hcssat denv hsat, ?_⟩
+    simp only [hback]
+    refine ⟨hcssat denv hsat, ?_⟩
     have hse : out.sideEffects bs denv = d.sideEffects bs (reasg denv (denv invId)) := by
       unfold DenseConstraintSystem.sideEffects
       refine funext (fun message => congrArg (multiplicitySum message) ?_)
@@ -693,7 +696,9 @@ theorem hcOutOcc {d : DenseConstraintSystem p} {E E' : DenseExpr p} {i : VarId}
 theorem dense_collapse_bundle [Fact p.Prime] (reg : VarRegistry) (invVar : Variable)
     (hpv : invVar.powdrId? = none) (d : DenseConstraintSystem p) (bs : BusSemantics p)
     (E denom rest : DenseExpr p) (D : List VarId)
-    (reasg : (VarId → ZMod p) → ZMod p → (VarId → ZMod p)) (hcov : d.CoveredBy reg)
+    (reasg : (VarId → ZMod p) → ZMod p → (VarId → ZMod p))
+    (back : VarId → VarId → WitnessExpr VarId p)
+    (hback : ∀ invId env, (fun i => (back invId i).eval env) = reasg env (env invId)) (hcov : d.CoveredBy reg)
     (hE : E ∈ d.algebraicConstraints)
     (hagree : ∀ (denv : VarId → ZMod p) (w : ZMod p) (v : VarId), v ∉ D → reasg denv w v = denv v)
     (hEeq : ∀ (denv : VarId → ZMod p) (w : ZMod p),
@@ -720,7 +725,8 @@ theorem dense_collapse_bundle [Fact p.Prime] (reg : VarRegistry) (invVar : Varia
           (DenseExpr.add (DenseExpr.mul denom (DenseExpr.var (reg.register invVar).2)) rest)
           else c)})
       [((reg.register invVar).2,
-        DenseComputationMethod.quotientOrZero (DenseExpr.mul (DenseExpr.const (-1)) rest) denom)] bs := by
+        DenseComputationMethod.quotientOrZero (DenseExpr.mul (DenseExpr.const (-1)) rest) denom)] bs
+        (back (reg.register invVar).2) := by
   have hext : reg.Extends (reg.register invVar).1 := VarRegistry.register_extends reg invVar
   have hii : ∀ i, (reg.register invVar).1.isInput i = reg.isInput i := hcRegisterIsInputEq reg invVar hpv
   have hinv_fresh : (reg.register invVar).2 ∉ d.occ := denseIsFresh_notMem hcov hfresh
@@ -732,7 +738,8 @@ theorem dense_collapse_bundle [Fact p.Prime] (reg : VarRegistry) (invVar : Varia
   have hrest_pow1 : ∀ x ∈ rest.vars, (reg.register invVar).1.isInput x = true :=
     fun x hx => by rw [hii x]; exact hrest_pow x hx
   have hcorrect := dense_collapse_correct (reg.register invVar).1.isInput d bs E denom rest D
-    (reg.register invVar).2 reasg hE hagree hEeq hbyte hinv_fresh hinv_id hDonce hDbus
+    (reg.register invVar).2 reasg (back (reg.register invVar).2) (hback _)
+    hE hagree hEeq hbyte hinv_fresh hinv_id hDonce hDbus
     hrest_sub hden_sub hden_pow1 hrest_pow1
   have hEvalid : ∀ i ∈ (DenseExpr.add (DenseExpr.mul denom (DenseExpr.var (reg.register invVar).2))
         rest).vars, (reg.register invVar).1.Valid i := by
@@ -1284,7 +1291,9 @@ private theorem hcFresh_isFresh {reg : VarRegistry} {d : DenseConstraintSystem p
 theorem denseHcAccept_correct [Fact p.Prime] (reg : VarRegistry) (invVar : Variable)
     (hpv : invVar.powdrId? = none) (d : DenseConstraintSystem p) (bs : BusSemantics p)
     (E denom rest : DenseExpr p) (D : List VarId) (idx : Nat)
-    (reasg : (VarId → ZMod p) → ZMod p → (VarId → ZMod p)) (hcov : d.CoveredBy reg)
+    (reasg : (VarId → ZMod p) → ZMod p → (VarId → ZMod p))
+    (back : VarId → VarId → WitnessExpr VarId p)
+    (hback : ∀ invId env, (fun i => (back invId i).eval env) = reasg env (env invId)) (hcov : d.CoveredBy reg)
     (hidx : d.algebraicConstraints[idx]? = some E)
     (huniq : ∀ j, j ≠ idx → d.algebraicConstraints[j]? ≠ some E)
     (hagree : ∀ (denv : VarId → ZMod p) (w : ZMod p) (v : VarId), v ∉ D → reasg denv w v = denv v)
@@ -1305,14 +1314,14 @@ theorem denseHcAccept_correct [Fact p.Prime] (reg : VarRegistry) (invVar : Varia
         (denseHcAccept reg d idx invVar denom rest).2.2 ∧
       DensePassCorrect (denseHcAccept reg d idx invVar denom rest).1.isInput d
         (denseHcAccept reg d idx invVar denom rest).2.1
-        (denseHcAccept reg d idx invVar denom rest).2.2 bs := by
+        (denseHcAccept reg d idx invVar denom rest).2.2 bs (back (reg.register invVar).2) := by
   have hset : d.algebraicConstraints.set idx
       (DenseExpr.add (DenseExpr.mul denom (DenseExpr.var (reg.register invVar).2)) rest)
       = d.algebraicConstraints.map (fun c => if c = E then
           DenseExpr.add (DenseExpr.mul denom (DenseExpr.var (reg.register invVar).2)) rest
           else c) :=
     hcSet_eq_map _ idx E _ hidx huniq
-  have hb := dense_collapse_bundle reg invVar hpv d bs E denom rest D reasg hcov
+  have hb := dense_collapse_bundle reg invVar hpv d bs E denom rest D reasg back hback hcov
     (List.mem_of_getElem? hidx) hagree hEeq hbyte hfresh hDonce hDbus hrest_sub hden_sub
     hden_pow hrest_pow
   simpa only [denseHcAccept, hset] using hb
@@ -1324,11 +1333,11 @@ set_option maxHeartbeats 1000000 in
 theorem denseHcTry_correct [Fact p.Prime] {bs : BusSemantics p} (facts : BusFacts p bs)
     (reg : VarRegistry) (d : DenseConstraintSystem p) (idx : Nat) (E : DenseExpr p)
     (hcov : d.CoveredBy reg) (hidx : d.algebraicConstraints[idx]? = some E)
-    (r : VarRegistry × DenseConstraintSystem p × DenseDerivations p)
+    (r : RecoveryResult (DenseConstraintSystem p) p)
     (hr : denseHcTry bs facts reg d (denseHcScan reg.byId.size d) idx E
       (denseHcWits (denseHcScan reg.byId.size d) idx E) = some r) :
     reg.Extends r.1 ∧ r.2.1.CoveredBy r.1 ∧ DenseDerivations.CoveredBy r.1 r.2.2 ∧
-      DensePassCorrect r.1.isInput d r.2.1 r.2.2 bs := by
+      DensePassCorrect r.1.isInput d r.2.1 r.2.2 bs r.back := by
   have hp0 : 0 < p := (Fact.out : p.Prime).pos
   set st := denseHcScan reg.byId.size d with hst
   set D := denseHcWits st idx E with hDdef
@@ -1421,7 +1430,8 @@ theorem denseHcTry_correct [Fact p.Prime] {bs : BusSemantics p} (facts : BusFact
       exact hE0
     exact denseHcAccept_correct reg ⟨"hcinv#" ++ (reg.resolve (D.headD default)).name, none⟩ rfl
       d bs E (denseSumExpr (densePeel D E).1) (densePeel D E).2 D idx
-      (fun denv w => denseReassign D w denv) hcov hidx huniq
+      (fun denv w => denseReassign D w denv) (densePlainReassignHints D)
+      (by intro invId env; funext i; simp only [densePlainReassignHints, denseReassign]; split_ifs <;> rfl) hcov hidx huniq
       (fun denv w v hv => by show (if v ∈ D then w else denv v) = denv v; rw [if_neg hv])
       (fun denv w => densePeel_reassign_eval D E hcfree hrfree denv w)
       hbyte (hcFresh_isFresh hfreshP) hDonce hDbus hrest_sub2 hden_sub2 hden_pow
@@ -1500,7 +1510,13 @@ theorem denseHcTry_correct [Fact p.Prime] {bs : BusSemantics p} (facts : BusFact
     exact denseHcAccept_correct reg ⟨"hcsq#" ++ (reg.resolve (D.headD default)).name, none⟩ rfl
       d bs E (denseSumExpr ((densePeel D E).1.map (fun c => DenseExpr.mul c c)))
       (densePeel D E).2 D idx
-      (fun denv w => denseAssocReassign ((densePeel D E).1.zip D) denv w) hcov hidx huniq
+      (fun denv w => denseAssocReassign ((densePeel D E).1.zip D) denv w)
+      (denseWeightedReassignHints ((densePeel D E).1.zip D))
+      (by
+        intro invId env; funext i
+        unfold denseWeightedReassignHints denseAssocReassign
+        cases hfind : ((densePeel D E).1.zip D).find? (fun cd => cd.2 == i) <;>
+          simp [hfind, WitnessExpr.eval]) hcov hidx huniq
       (fun denv w v hv => denseAssocReassign_agree _ denv w v (by rw [hmap2]; exact hv))
       (fun denv w => densePeel_sqReassign_eval D E hnd hcfree hrfree denv w)
       hbyte (hcFresh_isFresh hfreshS) hDonce hDbus hrest_sub2 hden_sub2 hden_pow
@@ -1514,7 +1530,7 @@ theorem denseHcScanTry_correct [Fact p.Prime] {bs : BusSemantics p} (facts : Bus
       (∀ ie ∈ cands, d.algebraicConstraints[ie.1]? = some ie.2) →
       ∀ r, denseHcScanTry bs facts reg d (denseHcScan reg.byId.size d) cands = some r →
         reg.Extends r.1 ∧ r.2.1.CoveredBy r.1 ∧ DenseDerivations.CoveredBy r.1 r.2.2 ∧
-          DensePassCorrect r.1.isInput d r.2.1 r.2.2 bs := by
+          DensePassCorrect r.1.isInput d r.2.1 r.2.2 bs r.back := by
   intro cands
   induction cands with
   | nil => intro _ r hr; simp [denseHcScanTry] at hr
@@ -1536,7 +1552,8 @@ theorem denseHintCollapseF_props (pw : PrimeWitness p) (reg : VarRegistry) (bs :
     ∧ DenseDerivations.CoveredBy (denseHintCollapseF pw reg bs facts d).1
         (denseHintCollapseF pw reg bs facts d).2.2
     ∧ DensePassCorrect (denseHintCollapseF pw reg bs facts d).1.isInput d
-        (denseHintCollapseF pw reg bs facts d).2.1 (denseHintCollapseF pw reg bs facts d).2.2 bs := by
+        (denseHintCollapseF pw reg bs facts d).2.1 (denseHintCollapseF pw reg bs facts d).2.2 bs
+      (denseHintCollapseF pw reg bs facts d).back := by
   have hrefl : reg.Extends reg ∧ d.CoveredBy reg ∧
       DenseDerivations.CoveredBy (p := p) reg [] ∧
       DensePassCorrect reg.isInput d d ([] : DenseDerivations p) bs :=
@@ -1564,7 +1581,9 @@ theorem denseHintCollapseF_props (pw : PrimeWitness p) (reg : VarRegistry) (bs :
 
 /-- The registry-extending hint-collapse pass. -/
 def denseHintCollapsePass (pw : PrimeWitness p) : DenseVerifiedPassW p :=
-  DenseVerifiedPassW.ofExtending (denseHintCollapseF pw)
+  DenseVerifiedPassW.ofExtendingWithHints
+    (fun reg bs facts d => ⟨(denseHintCollapseF pw reg bs facts d).back⟩)
+    (fun reg bs facts d => let r := denseHintCollapseF pw reg bs facts d; (r.1, r.2.1, r.2.2))
     (fun reg bs facts d hcov => (denseHintCollapseF_props pw reg bs facts d hcov).1)
     (fun reg bs facts d hcov => (denseHintCollapseF_props pw reg bs facts d hcov).2.1)
     (fun reg bs facts d hcov => (denseHintCollapseF_props pw reg bs facts d hcov).2.2.1)

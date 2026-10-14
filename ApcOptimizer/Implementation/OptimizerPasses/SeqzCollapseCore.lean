@@ -1,4 +1,4 @@
-import ApcOptimizer.Implementation.OptimizerPasses.HintCollapse
+import ApcOptimizer.Implementation.OptimizerPasses.SeqzCollapse
 import Mathlib.Tactic.LinearCombination
 
 set_option autoImplicit false
@@ -240,7 +240,11 @@ theorem seqz_reconstruct [Fact p.Prime] (hp : 1024 ≤ p)
       m2 * (dv + a2 * (2 * R - 1)) = 0 ∧
       m1 * (dv + a1 * (2 * R - 1)) = 0 ∧
       m0 * (dv + (a0 - 1) * (2 * R - 1)) = 0 ∧
-      ((m3 + m2 + m1 + m0) ≠ 0 → (-1 + dv).val < 256) := by
+      ((m3 + m2 + m1 + m0) ≠ 0 → (-1 + dv).val < 256) ∧
+      (m0, m1, m2, m3, dv) =
+        (seqzWitnessValue R a0 a1 a2 a3 0, seqzWitnessValue R a0 a1 a2 a3 1,
+         seqzWitnessValue R a0 a1 a2 a3 2, seqzWitnessValue R a0 a1 a2 a3 3,
+         seqzWitnessValue R a0 a1 a2 a3 4) := by
   haveI hnz : NeZero p := ⟨by omega⟩
   have hv1 : (1 : ZMod p).val = 1 := val_one_eq hp
   rcases hRbool with hR | hR
@@ -256,26 +260,32 @@ theorem seqz_reconstruct [Fact p.Prime] (hp : 1024 ≤ p)
           have ha0ne : a0 ≠ 0 := fun h => hSne (by rw [h]; ring)
           by_cases h0 : a0 = 1
           · subst h0
-            refine ⟨0, 0, 0, 0, 0, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last⟩
+            refine ⟨0, 0, 0, 0, 0, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last, ?values⟩
+            case values => simp_all [seqzWitnessValue, seqzWitnessExpr, seqzSelect, WitnessExpr.eval]
             case last => intro h; exact absurd (by ring) h
             all_goals ring
           · have ha0v2 : 2 ≤ a0.val := by
               have hne0 : a0.val ≠ 0 := by rw [ne_eq, ZMod.val_eq_zero]; exact ha0ne
               have hne1 : a0.val ≠ 1 := fun h => h0 (ZMod.val_injective p (by rw [h, hv1]))
               omega
-            refine ⟨1, 0, 0, 0, a0 - 1, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last⟩
+            refine ⟨1, 0, 0, 0, a0 - 1, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last, ?values⟩
+            case values => simp_all [seqzWitnessValue, seqzWitnessExpr, seqzSelect, WitnessExpr.eval,
+              add_neg_eq_zero, sub_eq_add_neg]
             case last =>
               intro _
               convert byte_sub_two_val hp ha0v2 hb0 using 2
               ring
             all_goals ring
-        · refine ⟨0, 1, 0, 0, a1, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last⟩
+        · refine ⟨0, 1, 0, 0, a1, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last, ?values⟩
+          case values => simp_all [seqzWitnessValue, seqzWitnessExpr, seqzSelect, WitnessExpr.eval]
           case last => intro _; convert byte_sub_one_val hp h1 hb1 using 2
           all_goals ring
-      · refine ⟨0, 0, 1, 0, a2, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last⟩
+      · refine ⟨0, 0, 1, 0, a2, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last, ?values⟩
+        case values => simp_all [seqzWitnessValue, seqzWitnessExpr, seqzSelect, WitnessExpr.eval]
         case last => intro _; convert byte_sub_one_val hp h2 hb2 using 2
         all_goals ring
-    · refine ⟨0, 0, 0, 1, a3, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last⟩
+    · refine ⟨0, 0, 0, 1, a3, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last, ?values⟩
+      case values => simp_all [seqzWitnessValue, seqzWitnessExpr, seqzSelect, WitnessExpr.eval]
       case last => intro _; convert byte_sub_one_val hp h3 hb3 using 2
       all_goals ring
   · -- `R = 1`: the value is zero; mark limb 0.
@@ -290,7 +300,8 @@ theorem seqz_reconstruct [Fact p.Prime] (hp : 1024 ≤ p)
     have ha2 : a2 = 0 := hall a2 (by simp)
     have ha3 : a3 = 0 := hall a3 (by simp)
     subst ha0; subst ha1; subst ha2; subst ha3
-    refine ⟨1, 0, 0, 0, 1, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last⟩
+    refine ⟨1, 0, 0, 0, 1, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?last, ?values⟩
+    case values => simp_all [seqzWitnessValue, seqzWitnessExpr, seqzSelect, WitnessExpr.eval]
     case last => intro _; simp
     all_goals ring
 

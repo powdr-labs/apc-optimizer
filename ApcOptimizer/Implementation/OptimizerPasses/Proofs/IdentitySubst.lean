@@ -192,12 +192,13 @@ theorem denseIdentityMap_forced {bs : BusSemantics p} (facts : BusFacts p bs)
 
 theorem denseIdentitySubstF_correct (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) :
-    DensePassCorrect reg.isInput d (denseIdentitySubstF bs facts d) [] bs := by
+    DensePassCorrect reg.isInput d (denseIdentitySubstF bs facts d) [] bs (denseIdentitySubstFHints bs facts d).expr := by
+  unfold denseIdentitySubstFHints
   unfold denseIdentitySubstF
-  split
+  cases denseIdentityPairs facts d
   · exact DensePassCorrect.refl reg.isInput d bs
-  · split
-    · rename_i h1ne
+  · split_ifs with h1ne
+    ·
       refine DenseConstraintSystem.substF_denseCorrect d
         (denseIdentityFm (denseIdentityMap facts d) (denseIdentityMap facts d).size) bs reg.isInput
         ?_ ?_
@@ -243,7 +244,8 @@ theorem denseIdentitySubstF_covered (reg : VarRegistry) (bs : BusSemantics p) (f
     `result ↦ operand` map, connected to the audited spec via `DensePassCorrect.lift` (through
     `of`). -/
 def denseIdentitySubstStep : DenseVerifiedPassW p :=
-  DenseVerifiedPassW.of (fun bs facts d => denseIdentitySubstF bs facts d) (fun _ _ _ => [])
+  DenseVerifiedPassW.ofWithHints (backF := fun bs facts d => denseIdentitySubstFHints bs facts d)
+    (fun bs facts d => denseIdentitySubstF bs facts d) (fun _ _ _ => [])
     (fun reg bs facts d hcov => denseIdentitySubstF_covered reg bs facts d hcov)
     (fun _ _ _ _ _ => by intro x hx; simp at hx)
     (fun reg bs facts d _ => denseIdentitySubstF_correct reg bs facts d)

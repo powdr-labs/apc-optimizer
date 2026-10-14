@@ -10,7 +10,7 @@ apc-optimizer is designed to have a small auditing surface. The audited files li
 [`ApcOptimizer/`](./ApcOptimizer); everything under [`ApcOptimizer/Implementation/`](./ApcOptimizer/Implementation) needs **no** audit — its correctness is guaranteed by
 the theorems below. To audit
 apc-optimizer, it should be sufficient to review:
-1. [`ApcOptimizer/Spec.lean`](./ApcOptimizer/Spec.lean): Defining the notion of circuit equivalence and optimizer correctness.
+1. [`ApcOptimizer/Spec.lean`](./ApcOptimizer/Spec.lean): Defining circuit equivalence, executable witness reconstruction, and optimizer correctness.
 2. [`ApcOptimizer/OpenVmSemantics.lean`](./ApcOptimizer/OpenVmSemantics.lean) and [`ApcOptimizer/Sp1Semantics.lean`](./ApcOptimizer/Sp1Semantics.lean): The OpenVM- and SP1-specific semantics, needed for the corresponding VM-specific optimizations. You only need to audit the semantics of the VM you use; to support a further VM, provide its semantics (an audited file like these) in order to use apc-optimizer.
 3. [`ApcOptimizer/MemoryBus.lean`](./ApcOptimizer/MemoryBus.lean): The memory-discipline utility the semantics above build on (its `direction` selects OpenVM's send-then-receive convention or SP1's reverse); likely useful for other VMs as well.
 4. The correctness theorems in [`ApcOptimizer/Optimizer.lean`](./ApcOptimizer/Optimizer.lean): `optimizerWithBusFacts_maintainsCorrectness` — the master statement that the optimizer maintains correctness for *any* proven bus facts — together with its instances, `simpleOptimizer_maintainsCorrectness` (the fact-free optimizer), `openVmOptimizer_maintainsCorrectness` (the `openVmOptimizer` the CLI actually runs), and `sp1Optimizer_maintainsCorrectness` (the SP1 optimizer). Audit the statements and check that the proofs are correct by running `lake build`.
@@ -48,6 +48,13 @@ lake exe apc-optimizer opt-export <unopt>.json.gz <out>.json
 ```
 
 The benchmark sets live under [`Benchmarks/`](./Benchmarks/), grouped by VM ([`Benchmarks/OpenVM/`](./Benchmarks/OpenVM/), [`Benchmarks/SP1/`](./Benchmarks/SP1/); see their READMEs); the main one, used for optimization, is the top-100 `openvm-eth` set in [`Benchmarks/OpenVM/openvm-eth/`](./Benchmarks/OpenVM/openvm-eth/).
+
+The optimizer returns `(circuit, derivations, reconstruction)`. Derivations compute new columns
+from an original trace; reconstruction recovers an original witness from any satisfying optimized
+witness. `opt-export` includes a `reconstruction` object: `inputs` maps internal variable identities
+to exported column references, and `blocks` lists simultaneous assignments executed in order.
+Initialize all other variables to zero. Expressions support `const`, `var`, `add`, `mul`, and
+`if_zero`; arithmetic is over the circuit's field. Soundness checks this computed witness directly.
 
 ## Benchmark
 

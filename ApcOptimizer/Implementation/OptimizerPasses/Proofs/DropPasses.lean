@@ -50,7 +50,7 @@ theorem DensePassCorrect.denseFilterConstraintsEntailed (d : DenseConstraintSyst
     fun _ => rfl
   refine DensePassCorrect.ofEnvEq ?_ ?_ (d.filterConstraints_occ_subset keep) ?_
   · intro denv hsat
-    exact ⟨denv, (hiff denv).1 hsat, by rw [hside denv]⟩
+    exact ⟨(hiff denv).1 hsat, hside denv⟩
   · intro hinv denv hsat bi hbi
     exact hinv denv ((hiff denv).1 hsat) bi hbi
   · intro denv hadmd hsat
@@ -180,7 +180,7 @@ theorem DensePassCorrect.denseFilterBusZeroMult (d : DenseConstraintSystem p) (b
       (fun bi hbi hkf => h bi hbi hkf denv)
   refine DensePassCorrect.ofEnvEq ?_ ?_ (d.filterBus_occ_subset keep) ?_
   · intro denv hsat
-    exact ⟨denv, (hiff denv).1 hsat, (hside denv).symm⟩
+    exact ⟨(hiff denv).1 hsat, (hside denv).symm⟩
   · intro hinv denv hsat bi hbi
     have hbimem : bi ∈ d.busInteractions :=
       List.mem_of_mem_filter (show bi ∈ d.busInteractions.filter keep from hbi)

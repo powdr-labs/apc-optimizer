@@ -289,8 +289,7 @@ theorem DenseConstraintSystem.boxRewrite_denseCorrect [Fact p.Prime]
   refine DensePassCorrect.ofEnvEq ?_ ?_ ?_ ?_
   · -- soundness
     intro denv hsat
-    refine ⟨denv, (hiff denv).1 hsat, ?_⟩
-    rw [hside denv (hdomOut denv hsat)]
+    exact ⟨(hiff denv).1 hsat, hside denv (hdomOut denv hsat)⟩
   · -- invariant preservation
     intro hgi denv hsat bi hbi
     obtain ⟨bi0, hbi0, rfl⟩ := List.mem_map.1 hbi
