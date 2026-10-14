@@ -46,7 +46,7 @@ theorem DensePassCorrect.denseAddConstraints {isInput : VarId → Bool} (d : Den
   refine ⟨?_, ?_, ?_, ?_⟩
   · -- soundness
     intro denv hsat
-    exact ⟨denv, hfwd denv hsat, rfl⟩
+    exact ⟨hfwd denv hsat, rfl⟩
   · -- invariant preservation
     intro hgi denv hsat bi hbi
     exact hgi denv (hfwd denv hsat) bi hbi
@@ -155,7 +155,7 @@ theorem DensePassCorrect.denseFilterBusEntailed (d : DenseConstraintSystem p) (b
     rw [hadmfilter denv d.busInteractions hstateless]
   refine DensePassCorrect.ofEnvEq ?_ ?_ (d.filterBus_occ_subset keep) ?_
   · intro denv hsat
-    exact ⟨denv, (hiff denv).1 hsat, by rw [hside denv]⟩
+    exact ⟨(hiff denv).1 hsat, by simpa only [WitnessExpr.eval] using hside denv⟩
   · intro hinv denv hsat bi hbi
     have hbimem : bi ∈ d.busInteractions :=
       List.mem_of_mem_filter (show bi ∈ d.busInteractions.filter keep from hbi)

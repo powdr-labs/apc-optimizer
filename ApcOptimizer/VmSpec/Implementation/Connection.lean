@@ -148,9 +148,10 @@ theorem Host.forcesOn_true (host : Host p) : host.forcesOn (fun _ _ => True) :=
   fun _ _ _ _ _ _ _ => trivial
 
 theorem replacesOn_of_isSoundReplacementOf {optimized original : Circuit p} {bs : BusSemantics p}
-    (h : optimized.isSoundReplacementOf original bs) :
+    {hints : Reconstruction Variable p}
+    (h : optimized.isSoundReplacementOf original bs hints) :
     optimized.replacesOn original bs (fun _ => True) :=
-  fun asg _ hsat => h.1 asg hsat
+  fun asg _ hsat => ⟨hints.recover optimized.vars asg, h.1 asg hsat⟩
 
 --------- One substitution ---------
 
@@ -334,10 +335,10 @@ theorem vmSoundReplacement_of_forall₂ [Fact p.Prime]
     {G G' : Guest p}
     (hHost : host.realizes bs rm r0 memAddress)
     (hLegal : host.legalGuests (G ++ G'))
-    (hSound : List.Forall₂ (fun c c' => c'.isSoundReplacementOf c bs) G G') :
+    (hSound : List.Forall₂ (fun c c' => ∃ hints, c'.isSoundReplacementOf c bs hints) G G') :
     VmSoundReplacement host G G' :=
   vmSoundReplacement_of_forall₂On hHost host.forcesOn_true hLegal
-    (List.Forall₂.imp (fun _ _ h => replacesOn_of_isSoundReplacementOf h) hSound)
+    (List.Forall₂.imp (fun _ _ ⟨_, h⟩ => replacesOn_of_isSoundReplacementOf h) hSound)
 
 --------- The completeness half ---------
 

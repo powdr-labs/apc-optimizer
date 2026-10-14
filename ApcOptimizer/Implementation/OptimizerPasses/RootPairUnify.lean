@@ -495,22 +495,36 @@ def denseAnyVarBoundIdx (bs : BusSemantics p) (facts : BusFacts p bs)
   | some B => some B
   | none => (witsOf x).findSome? (fun bi => denseScaledSlotBoundD bs facts dom bi x)
 
-/-- `denseRootPairUnifyF` with the per-variable interaction index and the tabulated domain map. -/
+def denseRpSigmaFast (bs : BusSemantics p) (facts : BusFacts p bs)
+    (d : DenseConstraintSystem p) : DenseSolved p :=
+  let witsIdx := Thunk.mk fun _ => denseVarBucket denseBIVars d.busInteractions
+  let domMap := Thunk.mk fun _ => denseFindDomainMap d.algebraicConstraints
+  let bndIdx := fun x => denseAnyVarBoundIdx bs facts
+    (fun v => denseVarBucketLookup witsIdx.get v) (fun v => (domMap.get)[v]?) x
+  denseRpScan bndIdx (denseRpLiveGroups (denseRpGroups denseZModOps d.algebraicConstraints))
+    ∅ DenseSolved.empty
+
+/-- Indexed lookups shared by the circuit transform and hint generation. -/
 def denseRootPairUnifyFFast (pw : PrimeWitness p) (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) : DenseConstraintSystem p :=
   if pw.isPrime = true then
-    -- Thunked: bound queries only happen on key-matched candidate pairs, so systems without
-    -- two-root twins never pay for the index builds.
-    let witsIdx : Thunk (Std.HashMap VarId (List (BusInteraction (DenseExpr p)))) :=
-      Thunk.mk fun _ => denseVarBucket denseBIVars d.busInteractions
-    let domMap : Thunk (Std.HashMap VarId (List (ZMod p))) :=
-      Thunk.mk fun _ => denseFindDomainMap d.algebraicConstraints
-    let bndIdx : VarId → Option Nat := fun x =>
-      denseAnyVarBoundIdx bs facts (fun v => denseVarBucketLookup witsIdx.get v)
-        (fun v => (domMap.get)[v]?) x
-    let gs := denseRpLiveGroups (denseRpGroups denseZModOps d.algebraicConstraints)
-    let σ := denseRpScan bndIdx gs ∅ DenseSolved.empty
+    let σ := denseRpSigmaFast bs facts d
     if σ.map.isEmpty then d else d.substF σ.fn
   else d
+
+def denseRootPairUnifyFHints (pw : PrimeWitness p) (bs : BusSemantics p) (facts : BusFacts p bs)
+    (d : DenseConstraintSystem p) : RecoveryMap p :=
+  if pw.isPrime = true then
+    let σ := denseRpSigma bs facts d
+    if σ.map.isEmpty then .identity else .ofFn (substitutionHints σ.fn)
+  else .identity
+
+def denseRootPairUnifyWithHints (pw : PrimeWitness p) (bs : BusSemantics p)
+    (facts : BusFacts p bs) (d : DenseConstraintSystem p) : DenseConstraintSystem p × RecoveryMap p :=
+  if pw.isPrime = true then
+    let σ := denseRpSigmaFast bs facts d
+    if σ.map.isEmpty then (d, .identity)
+    else (d.substF σ.fn, .ofFn (substitutionHints σ.fn))
+  else (d, .identity)
 
 end ApcOptimizer.Dense

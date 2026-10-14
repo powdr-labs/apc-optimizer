@@ -95,6 +95,49 @@ def ComputationMethod.vars : ComputationMethod p → List Variable
 abbrev Derivations (p : ℕ) := List (Variable × ComputationMethod p)
 -- ANCHOR_END: derivations
 
+--------- Witness reconstruction ---------
+
+/-- Arithmetic used to recover an original witness from an optimized witness. -/
+inductive WitnessExpr (α : Type) (p : ℕ) where
+  | const (value : ZMod p)
+  | var (name : α)
+  | add (lhs rhs : WitnessExpr α p)
+  | mul (lhs rhs : WitnessExpr α p)
+  | ifZero (test yes no : WitnessExpr α p)
+
+def WitnessExpr.eval {α : Type} : WitnessExpr α p → (α → ZMod p) → ZMod p
+  | .const c, _ => c
+  | .var x, env => env x
+  | .add a b, env => a.eval env + b.eval env
+  | .mul a b, env => a.eval env * b.eval env
+  | .ifZero c a b, env => if c.eval env = 0 then a.eval env else b.eval env
+
+def WitnessExpr.nodes {α : Type} : WitnessExpr α p → Nat
+  | .const _ | .var _ => 1
+  | .add a b | .mul a b => 1 + a.nodes + b.nodes
+  | .ifZero c a b => 1 + c.nodes + a.nodes + b.nodes
+
+/-- Sequential blocks of simultaneous assignments; omitted variables retain their value. -/
+abbrev Reconstruction (α : Type) (p : ℕ) := List (List (α × WitnessExpr α p))
+
+/-- Count every expression constructor, assignment, and block, including empty blocks. -/
+def Reconstruction.nodes {α : Type} (hints : Reconstruction α p) : Nat :=
+  (hints.map (fun block => 1 + (block.map (fun (_, e) => 1 + e.nodes)).sum)).sum
+
+def maxReconstructionNodes : Nat := 5000000
+
+def Reconstruction.eval {α : Type} [DecidableEq α] (hints : Reconstruction α p)
+    (env : α → ZMod p) : α → ZMod p :=
+  hints.foldl (fun env block x =>
+    match block.lookup x with
+    | some e => e.eval env
+    | none => env x) env
+
+/-- Only the optimized circuit's variables are supplied by the prover. -/
+def Reconstruction.recover (hints : Reconstruction Variable p) (kept : List Variable)
+    (env : Variable → ZMod p) : Variable → ZMod p :=
+  hints.eval (fun v => if v ∈ kept then env v else 0)
+
 --------- Bus Interactions ---------
 
 /-- A bus interaction. Typically, α is
@@ -280,19 +323,17 @@ def Circuit.guaranteesInvariants (circuit : Circuit p)
 -- ANCHOR_END: guaranteesInvariants
 
 -- ANCHOR: isSoundReplacementOf
-/-- Whether an optimized circuit is a sound replacement for an original
-    circuit. Informally, for any satisfying assignment of the optimized
-    circuit, there exists a corresponding satisfying assignment of the original
-    circuit *with equal side effects*. Also, the optimized circuit must
-    maintain all invariants guaranteed by the original circuit. -/
+/-- Reconstruction recovers a satisfying original witness with equal side effects. -/
 def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
-    (busSemantics : BusSemantics p) : Prop :=
+    (busSemantics : BusSemantics p) (hints : Reconstruction Variable p) : Prop :=
   (∀ assignment, optimizedCircuit.satisfies busSemantics assignment →
-    ∃ assignment', originalCircuit.satisfies busSemantics assignment' ∧
+    let assignment' := hints.recover optimizedCircuit.vars assignment
+    originalCircuit.satisfies busSemantics assignment' ∧
       optimizedCircuit.sideEffects busSemantics assignment =
         originalCircuit.sideEffects busSemantics assignment') ∧
   (originalCircuit.guaranteesInvariants busSemantics →
-    optimizedCircuit.guaranteesInvariants busSemantics)
+    optimizedCircuit.guaranteesInvariants busSemantics) ∧
+  hints.nodes ≤ maxReconstructionNodes
 -- ANCHOR_END: isSoundReplacementOf
 
 -- ANCHOR: isCompleteReplacementOf
@@ -329,7 +370,7 @@ def Circuit.isCompleteReplacementOf
 --------- Optimizer ------------
 
 -- ANCHOR: optimizer
-abbrev Optimizer (p : ℕ) := Circuit p → Circuit p × Derivations p
+abbrev Optimizer (p : ℕ) := Circuit p → Circuit p × Derivations p × Reconstruction Variable p
 -- ANCHOR_END: optimizer
 
 --------- Degree bound ---------
@@ -360,8 +401,8 @@ def optimizerRespectsDegreeBound (b : DegreeBound)
 def Optimizer.isCorrect (optimizer : Optimizer p)
     (busSemantics : BusSemantics p) (b : DegreeBound) : Prop :=
   (∀ originalCircuit : Circuit p,
-    let (optimizedCircuit, derivations) := optimizer originalCircuit
-    (optimizedCircuit.isSoundReplacementOf originalCircuit busSemantics) ∧
+    let (optimizedCircuit, derivations, reconstruction) := optimizer originalCircuit
+    (optimizedCircuit.isSoundReplacementOf originalCircuit busSemantics reconstruction) ∧
     (optimizedCircuit.isCompleteReplacementOf originalCircuit busSemantics
       derivations))
   ∧ optimizerRespectsDegreeBound b optimizer

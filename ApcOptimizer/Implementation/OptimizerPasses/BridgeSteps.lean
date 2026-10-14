@@ -101,7 +101,7 @@ def DenseNativeStep.drain {σ : Type} (bs : BusSemantics p)
 `toDensePassResult` closes a certified step into a `DensePassResult`; `ofDenseStep` wires it into a
 `DenseVerifiedPassW`. -/
 
-/-- Close a certified step into a `DensePassResult` (`correct` via `DensePassCorrect.lift`). -/
+/-- Close a certified step into a `DensePassResult` (`correct` via `DensePassCorrect.liftIdentity`). -/
 def DenseNativeStep.toDensePassResult {bs : BusSemantics p} {reg : VarRegistry}
     {d : DenseConstraintSystem p} (s : DenseNativeStep p bs reg d) (hcov : d.CoveredBy reg) :
     DensePassResult reg d bs where
@@ -113,7 +113,7 @@ def DenseNativeStep.toDensePassResult {bs : BusSemantics p} {reg : VarRegistry}
   dcovered := s.dcov
   correct := by
     have hcovd' : d.CoveredBy s.reg' := denseCS_coveredBy_mono s.ext hcov
-    have hlift := DensePassCorrect.lift hcovd' s.cov s.dcov s.correct
+    have hlift := DensePassCorrect.liftIdentity hcovd' s.cov s.dcov s.correct
     rwa [s.ext.decodeCS_eq hcov] at hlift
 
 /-- Build a `DenseVerifiedPassW` from a per-invocation certified-step builder. -/

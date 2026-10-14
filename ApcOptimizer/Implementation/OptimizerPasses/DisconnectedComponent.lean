@@ -475,6 +475,20 @@ theorem dcFilterIdx_eq {α : Type} (f : α → Bool) (L : List α) :
   have h := dcFilterIdx_prefix f L #[]
   simpa using h
 
+def denseDropCheckFast (bs : BusSemantics p) (facts : BusFacts p bs)
+    (d : DenseConstraintSystem p) (remV : VarId → Bool) : Bool :=
+  match dcCheckCs remV #[] false d.algebraicConstraints with
+  | none => false
+  | some (_, dropC) =>
+    match dcCheckBis bs facts remV #[] false d.busInteractions with
+    | none => false
+    | some (_, dropB) => dropC || dropB
+@[csimp] theorem denseDropCheck_eq_fast : @denseDropCheck = @denseDropCheckFast := by
+  funext p bs facts d remV
+  simp only [denseDropCheckFast, dcCheckCs_spec, dcCheckBis_spec]
+  split_ifs <;> apply Bool.eq_iff_iff.mpr <;>
+    simp_all only [denseDropCheck, Bool.and_eq_true, Bool.or_eq_true, Bool.false_or] <;> tauto
+
 @[csimp] theorem denseDropGuarded_eq_fast : @denseDropGuarded = @denseDropGuardedFast := by
   funext q bs facts d remV
   rw [denseDropGuardedFast, dcCheckCs_spec, dcCheckBis_spec, denseDropGuarded, denseDropCheck]
@@ -511,5 +525,23 @@ def denseDropWithTable (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseC
 def denseDisconnectedF (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
     DenseConstraintSystem p :=
   denseDropWithTable bs facts d (denseRemovableVars bs facts d)
+
+def denseDropHints (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p)
+    (remV : VarId → Bool) : RecoveryMap p :=
+  if denseDropCheck bs facts d remV then
+    .ofFn (fun i => if remV i then .const 0 else .var i)
+  else .identity
+
+def denseDisconnectedHints (bs : BusSemantics p) (facts : BusFacts p bs)
+    (d : DenseConstraintSystem p) : RecoveryMap p :=
+  let rem := denseRemovableVars bs facts d
+  if rem.isEmpty then .identity
+  else denseDropHints bs facts d (fun x => rem.getD x.index false)
+
+def denseDisconnectedWithHints (bs : BusSemantics p) (facts : BusFacts p bs)
+    (d : DenseConstraintSystem p) : DenseConstraintSystem p × RecoveryMap p :=
+  let rem := denseRemovableVars bs facts d
+  (denseDropWithTable bs facts d rem,
+    if rem.isEmpty then .identity else denseDropHints bs facts d (fun x => rem.getD x.index false))
 
 end ApcOptimizer.Dense

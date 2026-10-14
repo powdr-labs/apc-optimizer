@@ -393,8 +393,8 @@ theorem denseMergeStateless2_correct (isInput : VarId → Bool) (d : DenseConstr
       · exact Or.inr ⟨bi, hmem bi (Or.inr (Or.inl h)), hibi⟩
       · exact Or.inr ⟨bi, hmem bi (Or.inr (Or.inr h)), hibi⟩
   refine DensePassCorrect.ofEnvEq
-    (fun denv hsat => ⟨denv, (hsatiff denv).mpr hsat,
-      by rw [← hside denv]⟩)
+    (fun denv hsat => ⟨(hsatiff denv).mpr hsat,
+      (hside denv).symm⟩)
     (fun hgi denv hsat bi hbi => ?_)
     hsub
     (fun denv hadmE hsat => ⟨(hsatiff denv).mp hsat, (hadm denv).mp hadmE,
@@ -818,7 +818,7 @@ theorem denseBulkStateless_correct (isInput : VarId → Bool) (d : DenseConstrai
     · obtain ⟨y, hy, hvy⟩ := hvars bi hbi i hibi
       exact Or.inr ⟨y, hy, hvy⟩
   refine DensePassCorrect.ofEnvEq
-    (fun denv hsat => ⟨denv, (hsatiff denv).mpr hsat, by rw [← hside denv]⟩)
+    (fun denv hsat => ⟨(hsatiff denv).mpr hsat, (hside denv).symm⟩)
     (fun hgi denv hsat bi hbi => ?_)
     hsub
     (fun denv hadmE hsat => ⟨(hsatiff denv).mp hsat, (hadm denv).mp hadmE, by rw [hside denv]⟩)

@@ -583,4 +583,12 @@ def denseDigitFoldF (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseCons
     | none => d
   else d
 
+def denseDigitFoldHints (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
+    RecoveryMap p :=
+  if 256 < p then
+    match denseDigitFoldFind bs facts d.busInteractions with
+    | some (i, dd) => .ofFn (substitutionHints (fun j => if j = i then some (.const (dd : ZMod p)) else none))
+    | none => .identity
+  else .identity
+
 end ApcOptimizer.Dense

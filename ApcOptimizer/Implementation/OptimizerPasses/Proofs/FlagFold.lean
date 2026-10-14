@@ -278,7 +278,7 @@ theorem DenseConstraintSystem.boxTautoReplace_denseCorrect [Fact p.Prime]
   refine DensePassCorrect.ofEnvEq ?_ ?_ ?_ ?_
   ·
     intro denv hsat
-    exact ⟨denv, (hiff denv).1 hsat, rfl⟩
+    exact ⟨(hiff denv).1 hsat, rfl⟩
   ·
     intro hgi denv hsat bi hbi
     exact hgi denv ((hiff denv).1 hsat) bi hbi
@@ -635,12 +635,13 @@ theorem denseFlagFoldF_covered (pw : PrimeWitness p) (b : DegreeBound) (reg : Va
 theorem denseFlagFoldF_correct (pw : PrimeWitness p) (b : DegreeBound) (reg : VarRegistry)
     (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p)
     (hcov : d.CoveredBy reg) :
-    DensePassCorrect reg.isInput d (denseFlagFoldF pw b bs facts d) [] bs := by
+    DensePassCorrect reg.isInput d (denseFlagFoldF pw b bs facts d) [] bs
+      (denseFxSubstFHints pw bs facts d).expr := by
   unfold denseFlagFoldF
   split_ifs with hp
   · haveI : Fact p.Prime := ⟨pw.correct hp⟩
     set d1 := denseFxSubstF pw bs facts d with hd1
-    have hA : DensePassCorrect reg.isInput d d1 [] bs :=
+    have hA : DensePassCorrect reg.isInput d d1 [] bs (denseFxSubstFHints pw bs facts d).expr :=
       denseFxSubstF_correct pw reg bs facts d hcov
     set d2 := (if ffAnyOverBound b d1
       then d1.boxRewriteWith (ffTabGet (ffTabOf (ffBucketsOf d1.algebraicConstraints))) b
@@ -660,16 +661,16 @@ theorem denseFlagFoldF_correct (pw : PrimeWitness p) (b : DegreeBound) (reg : Va
         (ffBucketOf (ffBucketsOf d2.algebraicConstraints))
         (fun v c hc => ffBucketsOf_mem d2.algebraicConstraints v c hc)
         _ (fun v dm hv => ffTab_domOf d2.algebraicConstraints v dm hv)
-    exact (hA.trans hB).trans
+    simpa using (hA.trans hB).trans
       (hC.trans (ffPdDropWith_correct bs reg.isInput _ _))
-  · exact DensePassCorrect.refl reg.isInput d bs
+  · simpa [denseFxSubstFHints, hp] using DensePassCorrect.refl reg.isInput d bs
 
 /-- The dense `flagFold` pass: substitute entailed nonlinear interpolations, rewrite over-bound
     survivors multilinearly, drop box tautologies and pointwise stateless-check duplicates.
     Unguarded here — box-rewrite intermediates legitimately exceed the bound — so the whole chain
     runs under ONE `guardDegree b` at its `cleanupPasses` entry. -/
 def denseFlagFoldPass' (pw : PrimeWitness p) (b : DegreeBound) : DenseVerifiedPassW p :=
-  DenseVerifiedPassW.of (denseFlagFoldF pw b) (fun _ _ _ => [])
+  DenseVerifiedPassW.ofWithHints (denseFxSubstFHints pw) (denseFlagFoldF pw b) (fun _ _ _ => [])
     (fun reg bs facts d hcov => denseFlagFoldF_covered pw b reg bs facts d hcov)
     (fun _ _ _ _ _ => by intro x hx; simp at hx)
     (fun reg bs facts d hcov => denseFlagFoldF_correct pw b reg bs facts d hcov)

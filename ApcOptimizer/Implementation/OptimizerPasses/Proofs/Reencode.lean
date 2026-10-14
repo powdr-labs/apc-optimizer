@@ -660,6 +660,7 @@ theorem DenseConstraintSystem.reencode_correct_D (d out : DenseConstraintSystem 
     (bs : BusSemantics p) (isInput : VarId → Bool)
     (grw : DenseExpr p → DenseExpr p) (keep : DenseExpr p → Bool)
     (newCs : List (DenseExpr p)) (dd : DenseDerivations p)
+    (back : VarId → WitnessExpr VarId p)
     (hout : out =
       { algebraicConstraints := ((d.algebraicConstraints.filter keep).map grw) ++ newCs,
         busInteractions := d.busInteractions.map (fun bi =>
@@ -676,9 +677,10 @@ theorem DenseConstraintSystem.reencode_correct_D (d out : DenseConstraintSystem 
       (∀ c ∈ d.algebraicConstraints, (grw c).eval denv' = c.eval denv) ∧
       (∀ bi ∈ d.busInteractions,
         denseBIEval { bi with multiplicity := grw bi.multiplicity, payload := bi.payload.map grw } denv' = denseBIEval bi denv) ∧
-      (∀ c ∈ d.algebraicConstraints, keep c = false → c.eval denv = 0))
+      (∀ c ∈ d.algebraicConstraints, keep c = false → c.eval denv = 0) ∧
+      (fun i => (back i).eval denv') = denv)
     (hVars : ∀ i ∈ out.occ, isInput i = true → i ∈ d.occ) :
-    DensePassCorrect isInput d out dd bs := by
+    DensePassCorrect isInput d out dd bs back := by
   subst hout
   -- side-effect equality under bus-interaction agreement
   have hside : ∀ (denv denv' : VarId → ZMod p),
@@ -747,12 +749,13 @@ theorem DenseConstraintSystem.reencode_correct_D (d out : DenseConstraintSystem 
   refine ⟨?_, ?_, hVars, ?_⟩
   · -- Soundness: `out.implies d`.
     intro denv' hsat'
-    obtain ⟨denv, hA, hB, hdrop⟩ := hbwd denv' hsat'
-    refine ⟨denv, hsatd denv denv' hA hB hdrop hsat', ?_⟩
+    obtain ⟨denv, hA, hB, hdrop, hback⟩ := hbwd denv' hsat'
+    rw [hback]
+    refine ⟨hsatd denv denv' hA hB hdrop hsat', ?_⟩
     rw [hside denv denv' hB]
   · -- Invariant preservation.
     intro hinv denv' hsat' bi' hbi'
-    obtain ⟨denv, hA, hB, hdrop⟩ := hbwd denv' hsat'
+    obtain ⟨denv, hA, hB, hdrop, _⟩ := hbwd denv' hsat'
     have hd := hsatd denv denv' hA hB hdrop hsat'
     obtain ⟨bi0, hbi0, rfl⟩ := List.mem_map.1 hbi'
     show (denseBIEval { bi0 with multiplicity := grw bi0.multiplicity, payload := bi0.payload.map grw } denv').multiplicity ≠ 0 →
@@ -804,7 +807,8 @@ theorem denseCheckReencode_sound [Fact p.Prime] (d : DenseConstraintSystem p) (b
     (hxsB : ∀ x ∈ xs, x ∉ bits) (hbnInput : ∀ b ∈ bits, isInput b = false)
     (hchk : denseCheckReencode d xs bits hm = true) :
     DensePassCorrect isInput d (denseReencodeOut d xs bits hm)
-      (bits.map (fun b => (b, denseBitCM (denseAssignments (denseBitBox bits)) xs hm b))) bs := by
+      (bits.map (fun b => (b, denseBitCM (denseAssignments (denseBitBox bits)) xs hm b))) bs
+      (substitutionHints (denseGroupSubst xs hm)) := by
   unfold denseCheckReencode at hchk
   split at hchk
   · exact absurd hchk (by simp)
@@ -982,7 +986,8 @@ theorem denseCheckReencode_sound [Fact p.Prime] (d : DenseConstraintSystem p) (b
               (denseAssignments (denseBitBox bits)) bi.multiplicity,
             payload := bi.payload.map (denseGroupRewrite xs bits (denseGroupSubst xs hm)
               (denseAssignments (denseBitBox bits))) } denv' = denseBIEval bi denv) ∧
-      (∀ c ∈ d.algebraicConstraints, (fun c => !denseCoveredBy xs c) c = false → c.eval denv = 0) := by
+      (∀ c ∈ d.algebraicConstraints, (fun c => !denseCoveredBy xs c) c = false → c.eval denv = 0) ∧
+      (fun i => (substitutionHints (denseGroupSubst xs hm) i).eval denv') = denv := by
     intro denv' hsat'
     have hbool : ∀ b ∈ bits, denv' b = 0 ∨ denv' b = 1 := by
       intro b hb
@@ -1020,7 +1025,7 @@ theorem denseCheckReencode_sound [Fact p.Prime] (d : DenseConstraintSystem p) (b
         denv' b = denseEnvOfFast ((denseBitBox (p := p) bits).map (fun yd => (yd.1, denv' yd.1))) b :=
       fun b hb => (hβenv b hb).symm
     refine ⟨denseEnvExt (xs.map (fun x =>
-        (x, ((DenseExpr.var x).substF (denseGroupSubst xs hm)).eval denv'))) denv', ?_, ?_, ?_⟩
+        (x, ((DenseExpr.var x).substF (denseGroupSubst xs hm)).eval denv'))) denv', ?_, ?_, ?_, ?_⟩
     · intro c hc
       exact denseGroupRewrite_agree xs bits (denseGroupSubst xs hm)
         (denseAssignments (denseBitBox bits)) hσnone denv' _
@@ -1051,6 +1056,8 @@ theorem denseCheckReencode_sound [Fact p.Prime] (d : DenseConstraintSystem p) (b
         exact hβenv v (hpolyVars y (hcvars y hy) v hv)
       rw [← hexpr c, ← hagree]
       exact h6
+    · rw [substitutionHints_eval]
+      exact funext hpoint
   -- no new powdr-ID column: every output variable is a `d`-column or a (non-input) bit
   have hVars : ∀ i ∈ (denseReencodeOut d xs bits hm).occ, isInput i = true → i ∈ d.occ := by
     intro i hi hii
@@ -1062,7 +1069,7 @@ theorem denseCheckReencode_sound [Fact p.Prime] (d : DenseConstraintSystem p) (b
     (fun c => !denseCoveredBy xs c)
     (bits.map denseBoolConstraint)
     (bits.map (fun b => (b, denseBitCM (denseAssignments (denseBitBox bits)) xs hm b)))
-    rfl hfwd_D hbwd hVars
+    (substitutionHints (denseGroupSubst xs hm)) rfl hfwd_D hbwd hVars
 
 
 /-! ## Step / loop correctness, pass assembly
@@ -3687,18 +3694,19 @@ derivations are `denseBitCM`'s. The reject branches only ever build indexes. -/
 
 /-- The step's post-condition: the pass-level obligations plus the threaded invariants. -/
 def DenseRncPost (bs : BusSemantics p) (reg : VarRegistry) (st : DenseRncState p)
-    (r : VarRegistry × DenseRncState p × DenseDerivations p) : Prop :=
+    (r : RecoveryResult (DenseRncState p) p) : Prop :=
   reg.Extends r.1 ∧ (∀ i, r.1.isInput i = reg.isInput i)
   ∧ (denseRncView r.2.1).CoveredBy r.1
   ∧ DenseDerivations.CoveredBy r.1 r.2.2
-  ∧ DensePassCorrect r.1.isInput (denseRncView st) (denseRncView r.2.1) r.2.2 bs
+  ∧ DensePassCorrect r.1.isInput (denseRncView st) (denseRncView r.2.1) r.2.2 bs r.back
   ∧ DenseRncOk r.2.1 ∧ DenseRncVarsOk r.2.1 ∧ DenseRncNVarOk r.2.1
 
 theorem denseRncPost_reject {bs : BusSemantics p} {reg reg' : VarRegistry}
     {st st' : DenseRncState p} (hext : reg.Extends reg')
     (hii : ∀ i, reg'.isInput i = reg.isInput i) (hview : denseRncView st' = denseRncView st)
     (hcov : (denseRncView st).CoveredBy reg) (hok : DenseRncOk st') (hvo : DenseRncVarsOk st')
-    (hnv : DenseRncNVarOk st') : DenseRncPost bs reg st (reg', st', []) := by
+    (hnv : DenseRncNVarOk st') : DenseRncPost bs reg st (RecoveryResult.ofTuple (reg', st', [])) := by
+  dsimp only [DenseRncPost, RecoveryResult.ofTuple]
   refine ⟨hext, hii, ?_, (by intro x hx; cases hx), ?_, hok, hvo, hnv⟩
   · rw [hview]; exact csCoveredBy_mono hext hcov
   · rw [hview]; exact DensePassCorrect.refl reg'.isInput (denseRncView st) bs
@@ -3872,6 +3880,7 @@ theorem denseRncStep_correct [Fact p.Prime] (ctx : DenseRncCtx p) (reg : VarRegi
       refine List.map_congr_left (fun b _ => ?_)
       rw [denseRncBitCM_eq hopz himgs cd.pattsA.get.size 0 (by omega)]
       rw [List.drop_zero, hpattsA, List.toList_toArray, hpatts]
+    dsimp only [RecoveryResult.withBack]
     refine ⟨hbext, hbii, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · rw [hview]
       exact denseFilterConstraints_coveredBy
@@ -3922,13 +3931,13 @@ theorem denseRncLoop_correct [Fact p.Prime] (ctx : DenseRncCtx p) (bs : BusSeman
   | cons xs rest ih =>
       intro idx reg st pre hcov hok hvo hnv
       simp only [denseRncLoop]
-      rcases hstep : denseRncStep ctx reg st xs (pre ++ toString idx) with ⟨reg1, st1, derivs1⟩
+      rcases hstep : denseRncStep ctx reg st xs (pre ++ toString idx) with ⟨reg1, ⟨st1, derivs1⟩, back1⟩
       have hsp := denseRncStep_correct ctx reg st xs (pre ++ toString idx) bs hzero hopz hcov hok
         hvo hnv
       simp only [DenseRncPost, hstep] at hsp
       obtain ⟨hs_ext, hs_ii, hs_cov, hs_dcov, hs_correct, hs_ok, hs_vo, hs_nv⟩ := hsp
       rcases hrec : denseRncLoop ctx rest (idx + 1) reg1 st1
-          (if derivs1.isEmpty then pre else s!"rnc{st1.live}_{st1.bisN}_") with ⟨reg2, st2, derivs2⟩
+          (if derivs1.isEmpty then pre else s!"rnc{st1.live}_{st1.bisN}_") with ⟨reg2, ⟨st2, derivs2⟩, back2⟩
       have hih := ih (idx + 1) reg1 st1
         (if derivs1.isEmpty then pre else s!"rnc{st1.live}_{st1.bisN}_") hs_cov hs_ok hs_vo hs_nv
       simp only [DenseRncPost, hrec] at hih
@@ -3939,8 +3948,10 @@ theorem denseRncLoop_correct [Fact p.Prime] (ctx : DenseRncCtx p) (bs : BusSeman
           (DenseDerivations.CoveredBy.mono hr_ext hs_dcov) hr_dcov
       · have hfe : reg2.isInput = reg1.isInput := funext hr_ii
         have hstepcert : DensePassCorrect reg2.isInput (denseRncView st) (denseRncView st1)
-            derivs1 bs := by rw [hfe]; exact hs_correct
-        exact hstepcert.andThen hr_correct
+            derivs1 bs back1 := by rw [hfe]; exact hs_correct
+        have hback : (back1.andThen back2).expr = fun i => (back1 i).subst back2 :=
+          funext (RecoveryMap.andThen_expr back1 back2)
+        simpa only [hback] using hstepcert.andThen hr_correct
 
 /-! ### The pass
 
@@ -3972,7 +3983,9 @@ theorem denseRncRun_props [Fact p.Prime] (b : DegreeBound) (reg : VarRegistry)
       (denseRncRun b reg d (denseRncScan d.algebraicConstraints.toArray).1
         (denseRncScan d.algebraicConstraints.toArray).2 targets).2.1
       (denseRncRun b reg d (denseRncScan d.algebraicConstraints.toArray).1
-        (denseRncScan d.algebraicConstraints.toArray).2 targets).2.2 bs := by
+        (denseRncScan d.algebraicConstraints.toArray).2 targets).2.2 bs
+      (denseRncRun b reg d (denseRncScan d.algebraicConstraints.toArray).1
+        (denseRncScan d.algebraicConstraints.toArray).2 targets).back := by
   unfold denseRncRun
   split
   · exact ⟨VarRegistry.Extends.refl reg, hcov, (by intro x hx; cases hx),
@@ -4048,7 +4061,8 @@ theorem denseRncF_props (pw : PrimeWitness p) (b : DegreeBound) (reg : VarRegist
     ∧ DenseDerivations.CoveredBy (denseRncF pw b reg bs facts d).1
         (denseRncF pw b reg bs facts d).2.2
     ∧ DensePassCorrect (denseRncF pw b reg bs facts d).1.isInput d
-        (denseRncF pw b reg bs facts d).2.1 (denseRncF pw b reg bs facts d).2.2 bs := by
+        (denseRncF pw b reg bs facts d).2.1 (denseRncF pw b reg bs facts d).2.2 bs
+      (denseRncF pw b reg bs facts d).back := by
   unfold denseRncF
   split
   · next hpr =>
@@ -4060,7 +4074,8 @@ theorem denseRncF_props (pw : PrimeWitness p) (b : DegreeBound) (reg : VarRegist
 
 /-- The registered witness re-encoding pass (see `denseRncF` in `Reencode.lean`). -/
 def denseReencodePass (pw : PrimeWitness p) (b : DegreeBound) : DenseVerifiedPassW p :=
-  DenseVerifiedPassW.ofExtending (denseRncF pw b)
+  DenseVerifiedPassW.ofExtendingWithHints
+    (denseRncF pw b)
     (fun reg bs facts d hcov => (denseRncF_props pw b reg bs facts d hcov).1)
     (fun reg bs facts d hcov => (denseRncF_props pw b reg bs facts d hcov).2.1)
     (fun reg bs facts d hcov => (denseRncF_props pw b reg bs facts d hcov).2.2.1)

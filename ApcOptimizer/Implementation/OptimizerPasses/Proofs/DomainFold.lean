@@ -927,7 +927,7 @@ theorem dfStep_general (bs : BusSemantics p) (isInput : VarId → Bool)
   refine DensePassCorrect.ofEnvEq ?_ ?_ hsub ?_
   · intro denv hsatout
     have hA := hAout denv hsatout.1
-    exact ⟨denv, (hsatIff denv hA).1 hsatout, hside denv hA⟩
+    exact ⟨(hsatIff denv hA).1 hsatout, hside denv hA⟩
   · intro hgi denv hsatout bi' hbi'
     have hA := hAout denv hsatout.1
     have hsatd := (hsatIff denv hA).1 hsatout

@@ -14,6 +14,21 @@ namespace ApcOptimizer.Dense
 
 variable {p : ℕ}
 
+structure RecoveryResult (α : Type) (p : ℕ) where
+  fst : VarRegistry
+  snd : α × DenseDerivations p
+  back : RecoveryMap p := .identity
+
+def RecoveryResult.ofTuple {α : Type}
+    (r : VarRegistry × α × DenseDerivations p) : RecoveryResult α p :=
+  ⟨r.1, r.2, .identity⟩
+
+instance {α : Type} : Coe (VarRegistry × α × DenseDerivations p) (RecoveryResult α p) :=
+  ⟨RecoveryResult.ofTuple⟩
+
+def RecoveryResult.withBack {α : Type} (r : VarRegistry × α × DenseDerivations p)
+    (back : VarId → WitnessExpr VarId p) : RecoveryResult α p := ⟨r.1, r.2, .ofFn back⟩
+
 /-! ## Dense computation methods -/
 
 def DenseComputationMethod.eval : DenseComputationMethod p → (VarId → ZMod p) → ZMod p
@@ -74,11 +89,11 @@ def DenseConstraintSystem.guaranteesInvariants (d : DenseConstraintSystem p) (bs
     message.multiplicity ≠ 0 → bs.maintainsInvariants message
 
 /-- Every satisfying assignment has a matching one for `other` with equivalent side effects. -/
-def DenseConstraintSystem.implies (self other : DenseConstraintSystem p) (bs : BusSemantics p) :
-    Prop :=
+def DenseConstraintSystem.implies (self other : DenseConstraintSystem p) (bs : BusSemantics p)
+    (back : VarId → WitnessExpr VarId p := WitnessExpr.var) : Prop :=
   ∀ denv, self.satisfies bs denv →
-    ∃ denv', other.satisfies bs denv' ∧
-      self.sideEffects bs denv = other.sideEffects bs denv'
+    other.satisfies bs (fun i => (back i).eval denv) ∧
+      self.sideEffects bs denv = other.sideEffects bs (fun i => (back i).eval denv)
 
 /-! ## `occ` membership helpers -/
 
@@ -381,8 +396,9 @@ def DenseOutReconstructs (isInput : VarId → Bool) (inputVarIds : List VarId)
 /-- The per-pass correctness obligation over dense environments: the dense analogue of
     `PassCorrect`. Fully `Variable`-free and decode-free; all evidence is `Prop` (erases). -/
 def DensePassCorrect (isInput : VarId → Bool) (d out : DenseConstraintSystem p)
-    (dd : DenseDerivations p) (bs : BusSemantics p) : Prop :=
-  out.implies d bs ∧
+    (dd : DenseDerivations p) (bs : BusSemantics p)
+    (back : VarId → WitnessExpr VarId p := WitnessExpr.var) : Prop :=
+  out.implies d bs back ∧
   (d.guaranteesInvariants bs → out.guaranteesInvariants bs) ∧
   (∀ i ∈ out.occ, isInput i = true → i ∈ d.occ) ∧
   (∀ denv, d.admissible bs denv → d.satisfies bs denv →
@@ -483,7 +499,7 @@ theorem DenseDerivations.methodFor_append (a b : DenseDerivations p) (v : VarId)
 /-- Reflexivity: the identity transform (same system, no new derivations) is correct. -/
 theorem DensePassCorrect.refl (isInput : VarId → Bool) (d : DenseConstraintSystem p)
     (bs : BusSemantics p) : DensePassCorrect isInput d d [] bs := by
-  refine ⟨fun denv hsat => ⟨denv, hsat, rfl⟩, _root_.id, fun i hi _ => hi, ?_⟩
+  refine ⟨fun _ hsat => ⟨hsat, rfl⟩, _root_.id, fun i hi _ => hi, ?_⟩
   intro denv hadm hsat
   refine ⟨denv, hsat, hadm, rfl, fun _ _ => rfl, ?_⟩
   intro inputVarIds _ i hi _
@@ -494,16 +510,18 @@ theorem DensePassCorrect.refl (isInput : VarId → Bool) (d : DenseConstraintSys
     system. -/
 theorem DensePassCorrect.andThen {isInput : VarId → Bool} {d mid out : DenseConstraintSystem p}
     {dd1 dd2 : DenseDerivations p} {bs : BusSemantics p}
-    (hf : DensePassCorrect isInput d mid dd1 bs) (hg : DensePassCorrect isInput mid out dd2 bs) :
-    DensePassCorrect isInput d out (dd1 ++ dd2) bs := by
+    {bf bg : VarId → WitnessExpr VarId p}
+    (hf : DensePassCorrect isInput d mid dd1 bs bf)
+    (hg : DensePassCorrect isInput mid out dd2 bs bg) :
+    DensePassCorrect isInput d out (dd1 ++ dd2) bs (fun i => (bf i).subst bg) := by
   obtain ⟨hs12, hi12, hv12, hc12⟩ := hf
   obtain ⟨hs23, hi23, hv23, hc23⟩ := hg
   refine ⟨?_, ?_, ?_, ?_⟩
   · -- Soundness: `out.implies d`.
     intro denv hsat3
-    obtain ⟨e1, hsat2, hse23⟩ := hs23 denv hsat3
-    obtain ⟨e0, hsat1, hse12⟩ := hs12 e1 hsat2
-    exact ⟨e0, hsat1, (hse23.trans hse12)⟩
+    obtain ⟨hsat2, hse23⟩ := hs23 denv hsat3
+    obtain ⟨hsat1, hse12⟩ := hs12 _ hsat2
+    simpa using And.intro hsat1 (hse23.trans hse12)
   · -- Invariant preservation.
     intro h; exact hi23 (hi12 h)
   · -- No new powdr-ID column.
@@ -569,13 +587,14 @@ theorem DensePassCorrect.andThen {isInput : VarId → Bool} {d mid out : DenseCo
     introduces no variable. -/
 theorem DensePassCorrect.ofEnvEq {isInput : VarId → Bool} {d out : DenseConstraintSystem p}
     {bs : BusSemantics p}
-    (hsound : out.implies d bs)
+    {back : VarId → WitnessExpr VarId p}
+    (hsound : out.implies d bs back)
     (hinv : d.guaranteesInvariants bs → out.guaranteesInvariants bs)
     (hsub : ∀ i ∈ out.occ, i ∈ d.occ)
     (hcomp : ∀ denv, d.admissible bs denv → d.satisfies bs denv →
       out.satisfies bs denv ∧ out.admissible bs denv ∧
         d.sideEffects bs denv = out.sideEffects bs denv) :
-    DensePassCorrect isInput d out [] bs := by
+    DensePassCorrect isInput d out [] bs back := by
   refine ⟨hsound, hinv, fun i hi _ => hsub i hi, ?_⟩
   intro denv hadm hsat
   obtain ⟨ho1, ho2, ho3⟩ := hcomp denv hadm hsat
@@ -587,29 +606,11 @@ theorem DensePassCorrect.ofEnvEq {isInput : VarId → Bool} {d out : DenseConstr
 /-- `DensePassCorrect` composes (derivations empty on both sides); `PassCorrect.andThen`
     specialised to no derivations. -/
 theorem DensePassCorrect.trans {isInput : VarId → Bool} {d1 d2 d3 : DenseConstraintSystem p}
-    {bs : BusSemantics p} (h12 : DensePassCorrect isInput d1 d2 [] bs)
-    (h23 : DensePassCorrect isInput d2 d3 [] bs) : DensePassCorrect isInput d1 d3 [] bs := by
-  obtain ⟨hs12, hi12, hv12, hc12⟩ := h12
-  obtain ⟨hs23, hi23, hv23, hc23⟩ := h23
-  refine ⟨?_, ?_, ?_, ?_⟩
-  · intro denv hsat3
-    obtain ⟨e1, hsat2, hse23⟩ := hs23 denv hsat3
-    obtain ⟨e0, hsat1, hse12⟩ := hs12 e1 hsat2
-    exact ⟨e0, hsat1, (hse23.trans hse12)⟩
-  · intro h; exact hi23 (hi12 h)
-  · intro i hi3 hii; exact hv12 i (hv23 i hi3 hii) hii
-  · intro denv hadm1 hsat1
-    obtain ⟨e1, hsat2, hadm2, hse12, hii12, hrec12⟩ := hc12 denv hadm1 hsat1
-    obtain ⟨e2, hsat3, hadm3, hse23, hii23, hrec23⟩ := hc23 e1 hadm2 hsat2
-    refine ⟨e2, hsat3, hadm3, (hse12.trans hse23), ?_, ?_⟩
-    · intro i hii; rw [hii23 i hii, hii12 i hii]
-    · intro inputVarIds hcov1 i hi3 hisF
-      have H23 := hrec23 d2.occ (fun j hj _ => hj) i hi3 hisF
-      have b23 : i ∈ d2.occ ∧ e2 i = e1 i := H23
-      have H12 := hrec12 inputVarIds hcov1 i b23.1 hisF
-      have b12 : i ∈ d1.occ ∧ e1 i = denv i := H12
-      show i ∈ d1.occ ∧ e2 i = denv i
-      exact ⟨b12.1, by rw [b23.2, b12.2]⟩
+    {bs : BusSemantics p} {bf bg : VarId → WitnessExpr VarId p}
+    (h12 : DensePassCorrect isInput d1 d2 [] bs bf)
+    (h23 : DensePassCorrect isInput d2 d3 [] bs bg) :
+    DensePassCorrect isInput d1 d3 [] bs (fun i => (bf i).subst bg) := by
+  simpa using h12.andThen h23
 
 /-! ### Sanity check: the composition lemmas type-check
 
@@ -638,6 +639,26 @@ private example (isInput : VarId → Bool) (d mid out : DenseConstraintSystem p)
     DensePassCorrect isInput d out (dd1 ++ dd2) bs :=
   h1.andThen h2
 
+def VarRegistry.reconstruction (reg : VarRegistry) (_d : DenseConstraintSystem p)
+    (back : VarId → WitnessExpr VarId p) : Reconstruction Variable p :=
+  Reconstruction.ofMap reg.byId.toList (fun v =>
+    match reg.idOf? v with
+    | some i => (back i).subst (fun j => .var (reg.resolve j))
+    | none => .var v)
+
+theorem VarRegistry.reconstruction_eval (reg : VarRegistry) (d : DenseConstraintSystem p)
+    (hcov : d.CoveredBy reg) (back : VarId → WitnessExpr VarId p)
+    (env : Variable → ZMod p) (i : VarId) (hi : i ∈ d.occ) :
+    (reg.reconstruction d back).eval env (reg.resolve i) =
+      (back i).eval (fun j => env (reg.resolve j)) := by
+  have hvalid := DenseConstraintSystem.occ_valid hcov i hi
+  have hv : reg.resolve i ∈ reg.byId.toList := by
+    rw [VarRegistry.resolve_eq hvalid]
+    simp
+  rw [VarRegistry.reconstruction, Reconstruction.ofMap_eval _ _ _ hv,
+    reg.idOf_resolve hvalid]
+  exact WitnessExpr.eval_subst _ _ _
+
 /-! ## The lift theorem -/
 
 /-- **Lift.** Under the registry coverage invariants, a `DensePassCorrect` (with `isInput`
@@ -646,21 +667,23 @@ private example (isInput : VarId → Bool) (d mid out : DenseConstraintSystem p)
 theorem DensePassCorrect.lift {reg : VarRegistry} {d out : DenseConstraintSystem p}
     {dd : DenseDerivations p} {bs : BusSemantics p}
     (hcd : d.CoveredBy reg) (hco : out.CoveredBy reg) (hdd : dd.CoveredBy reg)
-    (h : DensePassCorrect reg.isInput d out dd bs) :
-    PassCorrect (reg.decodeCS d) (reg.decodeCS out) (reg.decodeDerivs dd) bs := by
+    {back : VarId → WitnessExpr VarId p}
+    (h : DensePassCorrect reg.isInput d out dd bs back) :
+    PassCorrect (reg.decodeCS d) (reg.decodeCS out) (reg.decodeDerivs dd) bs
+      (reg.reconstruction d back) := by
   obtain ⟨hSound, hInv, hVars, hComp⟩ := h
   refine ⟨?_, ?_, ?_, ?_⟩
   · -- Soundness: `(decode out).implies (decode d)`.
     intro E hsatE
     rw [reg.decodeCS_satisfies] at hsatE
-    obtain ⟨denv', hsatd', hse⟩ := hSound _ hsatE
-    refine ⟨reg.extendEnv denv' E, ?_, ?_⟩
+    obtain ⟨hsatd', hse⟩ := hSound _ hsatE
+    refine ⟨?_, ?_⟩
     · rw [reg.decodeCS_satisfies]
-      refine (DenseConstraintSystem.satisfies_congr (fun i hi => ?_)).mpr hsatd'
-      exact reg.extendEnv_resolve denv' E (DenseConstraintSystem.occ_valid hcd i hi)
+      exact (DenseConstraintSystem.satisfies_congr
+        (fun i hi => reg.reconstruction_eval d hcd back E i hi)).mpr hsatd'
     · rw [reg.decodeCS_sideEffects, reg.decodeCS_sideEffects,
-        DenseConstraintSystem.sideEffects_congr (d := d) (fun i hi =>
-          reg.extendEnv_resolve denv' E (DenseConstraintSystem.occ_valid hcd i hi))]
+        DenseConstraintSystem.sideEffects_congr (d := d)
+          (fun i hi => reg.reconstruction_eval d hcd back E i hi)]
       exact hse
   · -- Invariant preservation.
     intro hgiIn
@@ -769,11 +792,70 @@ theorem DensePassCorrect.lift {reg : VarRegistry} {d out : DenseConstraintSystem
             rw [specCM_eval_congr cm env' E (fun x hx => hpw4 x (hcmpow x hx)), hcmeval, henv',
               reg.extendEnv_resolve denv' E hvi, hpres]
 
+theorem DensePassCorrect.liftIdentity {reg : VarRegistry} {d out : DenseConstraintSystem p}
+    {dd : DenseDerivations p} {bs : BusSemantics p}
+    (hcd : d.CoveredBy reg) (hco : out.CoveredBy reg) (hdd : dd.CoveredBy reg)
+    (h : DensePassCorrect reg.isInput d out dd bs) :
+    PassCorrect (reg.decodeCS d) (reg.decodeCS out) (reg.decodeDerivs dd) bs [] := by
+  refine ⟨?_, (h.lift hcd hco hdd).2⟩
+  intro env hsat
+  rw [reg.decodeCS_satisfies] at hsat
+  obtain ⟨hs, he⟩ := h.1 _ hsat
+  constructor
+  · rw [reg.decodeCS_satisfies]; exact hs
+  · rw [reg.decodeCS_sideEffects, reg.decodeCS_sideEffects]; exact he
+
+def VarRegistry.reconstructionMap (reg : VarRegistry) (d : DenseConstraintSystem p) :
+    RecoveryMap p → Reconstruction Variable p
+  | .identity => []
+  | .ofFn f => reg.reconstruction d f
+
+theorem DensePassCorrect.liftMap {reg : VarRegistry} {d out : DenseConstraintSystem p}
+    {dd : DenseDerivations p} {bs : BusSemantics p} {back : RecoveryMap p}
+    (hcd : d.CoveredBy reg) (hco : out.CoveredBy reg) (hdd : dd.CoveredBy reg)
+    (h : DensePassCorrect reg.isInput d out dd bs back.expr) :
+    PassCorrect (reg.decodeCS d) (reg.decodeCS out) (reg.decodeDerivs dd) bs
+      (reg.reconstructionMap d back) := by
+  cases back with
+  | identity => exact h.liftIdentity hcd hco hdd
+  | ofFn f => exact h.lift hcd hco hdd
+
 /-! ## The dense-pass builder -/
 
 /-- Build a `DenseVerifiedPassW` from a registry-preserving dense transform, its coverage
     preservation, and a `DensePassCorrect` proof (discharged via `DensePassCorrect.lift`).
     Fresh-variable passes use `ofExtending`. -/
+def DenseVerifiedPassW.ofWithHints
+    (backF : (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
+      RecoveryMap p)
+    (denseF : (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
+      DenseConstraintSystem p)
+    (denseDerivsF : (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
+      DenseDerivations p)
+    (hcov : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
+      (d : DenseConstraintSystem p), d.CoveredBy reg → (denseF bs facts d).CoveredBy reg)
+    (hdcov : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
+      (d : DenseConstraintSystem p), d.CoveredBy reg → (denseDerivsF bs facts d).CoveredBy reg)
+    (hcorrect : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
+      (d : DenseConstraintSystem p), d.CoveredBy reg →
+      DensePassCorrect reg.isInput d (denseF bs facts d) (denseDerivsF bs facts d) bs (backF bs facts d).expr)
+    (run : (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
+      DenseConstraintSystem p × RecoveryMap p := fun bs facts d => (denseF bs facts d, backF bs facts d))
+    (hrun : ∀ bs facts d, run bs facts d = (denseF bs facts d, backF bs facts d) := by
+      intros; rfl) : DenseVerifiedPassW p :=
+  fun reg d hcovd bs facts =>
+    let r := run bs facts d
+    { reg' := reg
+      out := r.1
+      derivs := denseDerivsF bs facts d
+      hints := reg.reconstructionMap d r.2
+      ext := VarRegistry.Extends.refl reg
+      covered := by simpa only [r, hrun] using hcov reg bs facts d hcovd
+      dcovered := hdcov reg bs facts d hcovd
+      correct := by
+        simpa only [r, hrun] using DensePassCorrect.liftMap hcovd (hcov reg bs facts d hcovd)
+          (hdcov reg bs facts d hcovd) (hcorrect reg bs facts d hcovd) }
+
 def DenseVerifiedPassW.of
     (denseF : (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
       DenseConstraintSystem p)
@@ -794,7 +876,7 @@ def DenseVerifiedPassW.of
       ext := VarRegistry.Extends.refl reg
       covered := hcov reg bs facts d hcovd
       dcovered := hdcov reg bs facts d hcovd
-      correct := DensePassCorrect.lift hcovd (hcov reg bs facts d hcovd)
+      correct := DensePassCorrect.liftIdentity hcovd (hcov reg bs facts d hcovd)
         (hdcov reg bs facts d hcovd) (hcorrect reg bs facts d hcovd) }
 
 /-! ## The registry-extending dense-pass builder
@@ -814,6 +896,41 @@ theorem denseCS_coveredBy_mono {r r' : VarRegistry} (h : r.Extends r')
     fresh-variable passes). The `transform` returns the extended registry, output, and derivations;
     the obligations are extension (`hext`), coverage there (`hcov`/`hdcov`), and a
     `DensePassCorrect` proof at the extended registry's `isInput` (`hcorrect`). -/
+def DenseVerifiedPassW.ofExtendingWithHints
+    (transform : VarRegistry → (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
+      RecoveryResult (DenseConstraintSystem p) p)
+    (hext : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
+      (d : DenseConstraintSystem p), d.CoveredBy reg → reg.Extends (transform reg bs facts d).1)
+    (hcov : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
+      (d : DenseConstraintSystem p), d.CoveredBy reg →
+      (transform reg bs facts d).2.1.CoveredBy (transform reg bs facts d).1)
+    (hdcov : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
+      (d : DenseConstraintSystem p), d.CoveredBy reg →
+      (transform reg bs facts d).2.2.CoveredBy (transform reg bs facts d).1)
+    (hcorrect : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
+      (d : DenseConstraintSystem p), d.CoveredBy reg →
+      DensePassCorrect (transform reg bs facts d).1.isInput d
+        (transform reg bs facts d).2.1 (transform reg bs facts d).2.2 bs (transform reg bs facts d).back) :
+    DenseVerifiedPassW p :=
+  fun reg d hcovd bs facts =>
+    let t := transform reg bs facts d
+    have hext' : reg.Extends t.1 := hext reg bs facts d hcovd
+    have hcov' : t.2.1.CoveredBy t.1 := hcov reg bs facts d hcovd
+    have hdcov' : t.2.2.CoveredBy t.1 := hdcov reg bs facts d hcovd
+    have hcorrect' : DensePassCorrect t.1.isInput d t.2.1 t.2.2 bs
+      (transform reg bs facts d).back := hcorrect reg bs facts d hcovd
+    { reg' := t.1
+      out := t.2.1
+      derivs := t.2.2
+      hints := t.1.reconstructionMap d t.back
+      ext := hext'
+      covered := hcov'
+      dcovered := hdcov'
+      correct := by
+        have hcovd' : d.CoveredBy t.1 := denseCS_coveredBy_mono hext' hcovd
+        have hlift := DensePassCorrect.liftMap hcovd' hcov' hdcov' hcorrect'
+        rwa [hext'.decodeCS_eq hcovd] at hlift }
+
 def DenseVerifiedPassW.ofExtending
     (transform : VarRegistry → (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
       VarRegistry × DenseConstraintSystem p × DenseDerivations p)
@@ -830,22 +947,8 @@ def DenseVerifiedPassW.ofExtending
       DensePassCorrect (transform reg bs facts d).1.isInput d
         (transform reg bs facts d).2.1 (transform reg bs facts d).2.2 bs) :
     DenseVerifiedPassW p :=
-  fun reg d hcovd bs facts =>
-    let t := transform reg bs facts d
-    have hext' : reg.Extends t.1 := hext reg bs facts d hcovd
-    have hcov' : t.2.1.CoveredBy t.1 := hcov reg bs facts d hcovd
-    have hdcov' : t.2.2.CoveredBy t.1 := hdcov reg bs facts d hcovd
-    have hcorrect' : DensePassCorrect t.1.isInput d t.2.1 t.2.2 bs := hcorrect reg bs facts d hcovd
-    { reg' := t.1
-      out := t.2.1
-      derivs := t.2.2
-      ext := hext'
-      covered := hcov'
-      dcovered := hdcov'
-      correct := by
-        have hcovd' : d.CoveredBy t.1 := denseCS_coveredBy_mono hext' hcovd
-        have hlift := DensePassCorrect.lift hcovd' hcov' hdcov' hcorrect'
-        rwa [hext'.decodeCS_eq hcovd] at hlift }
+  DenseVerifiedPassW.ofExtendingWithHints
+    (fun reg bs facts d => RecoveryResult.ofTuple (transform reg bs facts d)) hext hcov hdcov hcorrect
 
 /-! ### Sanity check: a trivial registry-minting stub composes through the builder -/
 

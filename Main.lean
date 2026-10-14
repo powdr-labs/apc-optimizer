@@ -171,7 +171,7 @@ def cmdCompareImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
   printEffectiveness (label := "powdr") (before := statsOf csBefore) (after := statsOf csAfter)
 
 /-- `opt-export [vm] <in> <out.json>`: run the optimizer and write the optimized machine back out as
-    `{"machine", "bus_map"}` JSON — the same shape the parser reads, so the export can be fed to
+    `{"machine", "bus_map", "reconstruction"}` JSON, which the parser also accepts for
     `compare`/`report` like a `.powdr_opt` file. The `bus_map` is spliced through verbatim from the
     input; the machine comes from the serializer (`serializeSystem`, including `derived_columns` for
     optimizer-introduced witness columns). -/
@@ -185,7 +185,7 @@ def cmdOptExportImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
       IO.eprintln s!"Error: cannot extract bus_map from {inFile}: {err}"
       IO.Process.exit 1
     | .ok j => pure j
-  let (optimized, ds) ← IO.lazyPure (fun _ => be.optimize busMap cs)
+  let (optimized, ds, hints) ← IO.lazyPure (fun _ => be.optimize busMap cs)
   let machineStr ← IO.lazyPure (fun _ => ApcOptimizer.Serialize.serializeSystem optimized ds)
   let machineJson ← do
     match Lean.Json.parse machineStr with
@@ -194,7 +194,8 @@ def cmdOptExportImpl {p : ℕ} {τ : Type} (be : VmBackend p τ)
       IO.Process.exit 1
     | .ok j => pure j
   IO.FS.writeFile outFile
-    (Lean.Json.mkObj [("machine", machineJson), ("bus_map", busMapJson)]).compress
+    (Lean.Json.mkObj [("machine", machineJson), ("bus_map", busMapJson),
+      ("reconstruction", ApcOptimizer.Serialize.serializeReconstruction optimized ds hints)]).compress
 
 /-- Escape a string for embedding inside a JSON string literal. -/
 def jsonEscape (s : String) : String :=

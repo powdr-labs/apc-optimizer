@@ -35,8 +35,8 @@ theorem openVm_vmSoundReplacement {G G' : Guest p}
     (hLegal : ∀ c ∈ G ++ G',
       c.legalGuest (openVmGuestRules defaultBusMap openVmMemBusId) openVmMemAddress
         P.maxWindow openVmTimestampBound P.maxInteractions)
-    (hSound : List.Forall₂ (fun c c' => c'.isSoundReplacementOf c
-      (openVmBusSemanticsOF p defaultBusMap none)) G G') :
+    (hSound : List.Forall₂ (fun c c' => ∃ hints, c'.isSoundReplacementOf c
+      (openVmBusSemanticsOF p defaultBusMap none) hints) G G') :
     VmSoundReplacement (openVmHost P) G G' :=
   vmSoundReplacement_of_forall₂
     (openVmHost_realizes P none
@@ -62,8 +62,8 @@ theorem openVm_vmEquivalent {G G' : Guest p}
     (hLegal : ∀ c ∈ G ++ G',
       c.legalGuest (openVmGuestRules defaultBusMap openVmMemBusId) openVmMemAddress
         P.maxWindow openVmTimestampBound P.maxInteractions)
-    (hSound : List.Forall₂ (fun c c' => c'.isSoundReplacementOf c
-      (openVmBusSemanticsOF p defaultBusMap none)) G G')
+    (hSound : List.Forall₂ (fun c c' => ∃ hints, c'.isSoundReplacementOf c
+      (openVmBusSemanticsOF p defaultBusMap none) hints) G G')
     (hComplete : List.Forall₂ (fun c c' => (∀ v ∈ Circuit.vars c, v.powdrId?.isSome) ∧
       ∃ ds : Derivations p, Circuit.isCompleteReplacementOf c' c
         (openVmBusSemanticsOF p defaultBusMap none) ds) G G') :

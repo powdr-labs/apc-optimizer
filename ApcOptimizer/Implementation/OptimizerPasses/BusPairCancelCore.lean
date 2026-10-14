@@ -328,7 +328,7 @@ theorem denseDropPair_correct (isInput : VarId → Bool)
       · exact DenseConstraintSystem.mem_occ_of_bi (hmem_core bi hbi') hibi
       · exact DenseConstraintSystem.mem_occ_of_bi hRmem ((hchecks bi hbi').2.2.2 i hibi)
   exact DensePassCorrect.ofEnvEq
-    (fun denv hsat => ⟨denv, hsat_out_cs denv hsat, (hSE denv hsat.1).symm⟩)
+    (fun denv hsat => ⟨hsat_out_cs denv hsat, (hSE denv hsat.1).symm⟩)
     (fun hinv denv hsat bi hbi => by
       rcases List.mem_append.1 (by rw [houtb] at hbi; exact hbi) with hbi' | hbi'
       · exact hinv denv (hsat_out_cs denv hsat) bi (hmem_core bi hbi')

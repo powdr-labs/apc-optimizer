@@ -1,4 +1,4 @@
-import ApcOptimizer.Spec
+import ApcOptimizer.Implementation.Reconstruction
 import ApcOptimizer.Implementation.Variable
 
 set_option autoImplicit false
@@ -55,14 +55,13 @@ theorem Circuit.sideEffects_eq (cs : Circuit p) (bs : BusSemantics p) (env : Var
     cs.sideEffects bs env message = multiplicitySum message (cs.contributions bs env) :=
   multiplicitySum_map_filter bs env message cs.busInteractions
 
-/-- Soundness half of a replacement: every satisfying assignment of `self` maps to one of `other`
-    with the same stateful side effects. The spec's `isSoundReplacementOf` is this plus invariant
-    preservation. -/
-def Circuit.implies (self other : Circuit p) (busSemantics : BusSemantics p) :
-    Prop :=
+/-- Reconstruction preserves satisfaction and stateful side effects. Input restriction and
+    invariant preservation are added when lifting to `isSoundReplacementOf`. -/
+def Circuit.implies (self other : Circuit p) (busSemantics : BusSemantics p)
+    (hints : Reconstruction Variable p) : Prop :=
   ∀ env, self.satisfies busSemantics env →
-    ∃ env', other.satisfies busSemantics env' ∧
-      self.sideEffects busSemantics env = other.sideEffects busSemantics env'
+    other.satisfies busSemantics (hints.eval env) ∧
+      self.sideEffects busSemantics env = other.sideEffects busSemantics (hints.eval env)
 
 /-- Every no-powdr-ID variable of `cs` is computed by `ds`'s method for it, reading only powdr-ID
     variables from `inputVars`. Threaded through passes; the pipeline top uses it to match the
@@ -76,15 +75,17 @@ def Circuit.reconstructs (inputVars : List Variable) (cs : Circuit p)
       cm.eval e = e v
 
 theorem Circuit.implies_refl (cs : Circuit p) (busSemantics : BusSemantics p) :
-    cs.implies cs busSemantics :=
-  fun env hsat => ⟨env, hsat, rfl⟩
+    cs.implies cs busSemantics [] :=
+  fun _ hsat => ⟨hsat, rfl⟩
 
 theorem Circuit.implies_trans {a b c : Circuit p} {busSemantics : BusSemantics p}
-    (h1 : a.implies b busSemantics) (h2 : b.implies c busSemantics) : a.implies c busSemantics :=
-  fun env hsat =>
-    let ⟨env', hb, hab⟩ := h1 env hsat
-    let ⟨env'', hc, hbc⟩ := h2 env' hb
-    ⟨env'', hc, (hab.trans hbc)⟩
+    {h1 h2 : Reconstruction Variable p}
+    (ha : a.implies b busSemantics h1) (hb : b.implies c busSemantics h2) :
+    a.implies c busSemantics (h1 ++ h2) := by
+  intro env hsat
+  obtain ⟨hsb, hse1⟩ := ha env hsat
+  obtain ⟨hsc, hse2⟩ := hb _ hsb
+  simpa using And.intro hsc (hse1.trans hse2)
 
 /-! ## Precomputed primality witness
 
@@ -111,9 +112,10 @@ pass cannot be written without discharging its obligations. Passes compose with 
     `cs` extends to one of `out` with equal side effects, preserving input-column values and
     reconstructing `out`'s derived variables. `dsLocal` are the derivations this step introduces,
     concatenated onto any incoming `dsIn` so passes compose. -/
-def PassCorrect (cs out : Circuit p) (dsLocal : Derivations p) (bs : BusSemantics p) :
+def PassCorrect (cs out : Circuit p) (dsLocal : Derivations p) (bs : BusSemantics p)
+    (hints : Reconstruction Variable p) :
     Prop :=
-  out.implies cs bs ∧
+  out.implies cs bs hints ∧
   (cs.guaranteesInvariants bs → out.guaranteesInvariants bs) ∧
   (∀ v ∈ out.vars, v.powdrId?.isSome → v ∈ cs.vars) ∧
   (∀ env, cs.admissible bs env → cs.satisfies bs env →
@@ -125,7 +127,7 @@ def PassCorrect (cs out : Circuit p) (dsLocal : Derivations p) (bs : BusSemantic
           out.reconstructs inputVars (dsIn ++ dsLocal) env'))
 
 theorem PassCorrect.refl (cs : Circuit p) (bs : BusSemantics p) :
-    PassCorrect cs cs [] bs :=
+    PassCorrect cs cs [] bs [] :=
   ⟨cs.implies_refl bs, _root_.id, fun _ hv _ => hv,
    fun env hadm hsat =>
      ⟨env, hsat, hadm, rfl,
@@ -134,8 +136,9 @@ theorem PassCorrect.refl (cs : Circuit p) (bs : BusSemantics p) :
 /-- Sequential composition: derivations concatenate, soundness/invariants compose, reconstruction
     chains. -/
 theorem PassCorrect.andThen {cs mid out : Circuit p} {bs : BusSemantics p}
-    {df dg : Derivations p} (hf : PassCorrect cs mid df bs) (hg : PassCorrect mid out dg bs) :
-    PassCorrect cs out (df ++ dg) bs := by
+    {df dg : Derivations p} {rf rg : Reconstruction Variable p}
+    (hf : PassCorrect cs mid df bs rf) (hg : PassCorrect mid out dg bs rg) :
+    PassCorrect cs out (df ++ dg) bs (rg ++ rf) := by
   obtain ⟨hf1, hf2, hf3, hf4⟩ := hf
   obtain ⟨hg1, hg2, hg3, hg4⟩ := hg
   refine ⟨Circuit.implies_trans hg1 hf1, fun h => hg2 (hf2 h),
@@ -150,17 +153,12 @@ theorem PassCorrect.andThen {cs mid out : Circuit p} {bs : BusSemantics p}
   have := hr2 inputVars hmidIn (dsIn ++ df) (hr1 inputVars hpowIn dsIn hrec)
   rwa [List.append_assoc] at this
 
-/-- A `PassCorrect` gives the audited `isSoundReplacementOf`. The completeness half is discharged
-    at the pipeline top (`Implementation/Optimizer.lean`). -/
-theorem PassCorrect.toSound {cs out : Circuit p} {ds : Derivations p}
-    {bs : BusSemantics p} (h : PassCorrect cs out ds bs) : out.isSoundReplacementOf cs bs :=
-  ⟨h.1, h.2.1⟩
-
 /-- The result of a verified pass: transformed system, introduced derivations, correctness proof. -/
 structure PassResult {p : ℕ} (cs : Circuit p) (bs : BusSemantics p) where
   out : Circuit p
   derivs : Derivations p
-  correct : PassCorrect cs out derivs bs
+  hints : Reconstruction Variable p
+  correct : PassCorrect cs out derivs bs hints
 
 /-! ## Variable-set membership -/
 

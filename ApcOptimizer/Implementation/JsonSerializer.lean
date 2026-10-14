@@ -13,7 +13,7 @@ Output schema:
 - `SymbolicMachine`: `{"constraints":[expr...], "bus_interactions":[{"id","mult","args"}...],
   "derived_columns":[[is_new, "name@id", method]...]}` (`derived_columns` must be present; `method`
   is an externally-tagged `ComputationMethod`). `serializeResult` wraps it as
-  `{"machine": …, "next_free_id": N}`.
+  `{"machine": …, "next_free_id": N, "reconstruction": …}`.
 - an expression: constant → JSON integer; variable → `"name@id"`; `a + b` → `[a, "+", b]`;
   `a * b` → `[a, "*", b]`. Negative constants are emitted as their representative in `[0, p)`.
 
@@ -82,6 +82,34 @@ def serializeDerivations (m : Std.HashMap Variable Nat) (ds : Derivations p) : J
   Json.arr (ds.map (fun (v, cm) =>
     Json.arr #[Json.bool true, Json.str (refString m v), serializeComputationMethod m cm])).toArray
 
+def reconstructionVariable (v : Variable) : Json :=
+  Json.mkObj [("name", Json.str v.name),
+    ("powdr_id", v.powdrId?.map (fun n => Json.num (JsonNumber.fromNat n)) |>.getD Json.null)]
+
+def serializeWitnessExpr : WitnessExpr Variable p → Json
+  | .const c => Json.mkObj [("const", constJson c)]
+  | .var v => Json.mkObj [("var", reconstructionVariable v)]
+  | .add a b => Json.mkObj [("add", Json.arr #[serializeWitnessExpr a, serializeWitnessExpr b])]
+  | .mul a b => Json.mkObj [("mul", Json.arr #[serializeWitnessExpr a, serializeWitnessExpr b])]
+  | .ifZero c a b => Json.mkObj [("if_zero", Json.arr #[
+      serializeWitnessExpr c, serializeWitnessExpr a, serializeWitnessExpr b])]
+
+/-- Input references use the machine's fresh IDs; block variables retain their internal identity. -/
+def serializeReconstructionWithNames (names : Std.HashMap Variable Nat) (cs : Circuit p)
+    (hints : Reconstruction Variable p) : Json :=
+  Json.mkObj [
+    ("inputs", Json.arr ((distinctVars cs).map (fun v =>
+      Json.arr #[reconstructionVariable v, Json.str (refString names v)])).toArray),
+    ("blocks", Json.arr (hints.map (fun block => Json.arr (block.map (fun (v, e) =>
+      Json.arr #[reconstructionVariable v, serializeWitnessExpr e])).toArray)).toArray)]
+
+def serializeReconstruction (cs : Circuit p) (ds : Derivations p)
+    (hints : Reconstruction Variable p) : Json :=
+  let base := (distinctVars cs ds).foldl (fun m x => match x.powdrId? with
+    | some i => Nat.max m (i + 1)
+    | none => m) 0
+  serializeReconstructionWithNames (freshRenaming cs ds base).1 cs hints
+
 /-- Serialize a bus interaction to a `{id, mult, args}` object. -/
 def serializeBus (m : Std.HashMap Variable Nat) (bi : BusInteraction (Expression p)) : Json :=
   Json.mkObj [
@@ -108,14 +136,14 @@ def serializeSystem (cs : Circuit p) (ds : Derivations p := []) : String :=
     | none => m) 0
   (serializeMachine (freshRenaming cs ds base).1 cs ds).compress
 
-/-- Serialize the machine plus the advanced `next_free_id` as `{"machine": …, "next_free_id": N}`
-    (the FFI reply; `base` is powdr's incoming cursor). -/
-def serializeResult (cs : Circuit p) (ds : Derivations p := []) (base : Nat := 0) :
-    String :=
+/-- Serialize the machine, reconstruction, and advanced allocation cursor for the FFI. -/
+def serializeResult (cs : Circuit p) (ds : Derivations p := []) (base : Nat := 0)
+    (hints : Reconstruction Variable p := []) : String :=
   let (m, nextFreeId) := freshRenaming cs ds base
   (Json.mkObj [
     ("machine", serializeMachine m cs ds),
-    ("next_free_id", Json.num (JsonNumber.fromNat nextFreeId))
+    ("next_free_id", Json.num (JsonNumber.fromNat nextFreeId)),
+    ("reconstruction", serializeReconstructionWithNames m cs hints)
   ]).compress
 
 end ApcOptimizer.Serialize

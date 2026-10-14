@@ -537,7 +537,7 @@ def denseBusPairCancelPass (pw : PrimeWitness p) (aggressive : Bool) : DenseVeri
       ext := VarRegistry.Extends.refl reg
       covered := bundle.covered reg hcov
       dcovered := by intro x hx; simp at hx
-      correct := DensePassCorrect.lift hcov (bundle.covered reg hcov) (by intro x hx; simp at hx)
+      correct := DensePassCorrect.liftIdentity hcov (bundle.covered reg hcov) (by intro x hx; simp at hx)
         (bundle.correct reg.isInput reg hcov) }
   else
     { reg' := reg
@@ -546,7 +546,7 @@ def denseBusPairCancelPass (pw : PrimeWitness p) (aggressive : Bool) : DenseVeri
       ext := VarRegistry.Extends.refl reg
       covered := hcov
       dcovered := by intro x hx; simp at hx
-      correct := DensePassCorrect.lift hcov hcov (by intro x hx; simp at hx)
+      correct := DensePassCorrect.liftIdentity hcov hcov (by intro x hx; simp at hx)
         (DensePassCorrect.refl reg.isInput d bs) }
 
 end ApcOptimizer.Dense

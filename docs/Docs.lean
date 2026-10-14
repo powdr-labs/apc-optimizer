@@ -190,22 +190,24 @@ def Circuit.guaranteesInvariants (circuit : Circuit p)
       message.multiplicity ≠ 0 → busSemantics.maintainsInvariants message
 ```
 
-Finally, we formalize what it means for an optimized circuit to be a sound replacement for an original circuit:
+Soundness requires an executable reconstruction program, rather than only the existence of an original witness. Its expressions use constants, variables, addition, multiplication, and zero tests. Assignment blocks execute in sequence, with each block reading the values before that block. Only variables present in the optimized circuit are supplied; all others start at zero.
+
+Programs are limited to 5,000,000 nodes, counting every expression constructor, assignment, and block. If the candidate exceeds the limit, the optimizer returns the original circuit with empty hints. Reconstruction materializes intermediate values to avoid repeated evaluation.
+
+The returned program must recover a satisfying original witness with the same stateful bus effects:
 
 ```anchor isSoundReplacementOf
-/-- Whether an optimized circuit is a sound replacement for an original
-    circuit. Informally, for any satisfying assignment of the optimized
-    circuit, there exists a corresponding satisfying assignment of the original
-    circuit *with equal side effects*. Also, the optimized circuit must
-    maintain all invariants guaranteed by the original circuit. -/
+/-- Reconstruction recovers a satisfying original witness with equal side effects. -/
 def Circuit.isSoundReplacementOf (optimizedCircuit originalCircuit : Circuit p)
-    (busSemantics : BusSemantics p) : Prop :=
+    (busSemantics : BusSemantics p) (hints : Reconstruction Variable p) : Prop :=
   (∀ assignment, optimizedCircuit.satisfies busSemantics assignment →
-    ∃ assignment', originalCircuit.satisfies busSemantics assignment' ∧
+    let assignment' := hints.recover optimizedCircuit.vars assignment
+    originalCircuit.satisfies busSemantics assignment' ∧
       optimizedCircuit.sideEffects busSemantics assignment =
         originalCircuit.sideEffects busSemantics assignment') ∧
   (originalCircuit.guaranteesInvariants busSemantics →
-    optimizedCircuit.guaranteesInvariants busSemantics)
+    optimizedCircuit.guaranteesInvariants busSemantics) ∧
+  hints.nodes ≤ maxReconstructionNodes
 ```
 
 # Completeness
@@ -357,10 +359,10 @@ def optimizerRespectsDegreeBound (b : DegreeBound)
 
 # Optimizer
 
-Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit to a new circuit and a list of derivations.
+Putting the pieces together, we define what it means for an optimizer to be _correct_. An {deftech}_optimizer_ is a function that maps a circuit to a new circuit, forward derivations, and witness reconstruction hints.
 
 ```anchor optimizer
-abbrev Optimizer (p : ℕ) := Circuit p → Circuit p × Derivations p
+abbrev Optimizer (p : ℕ) := Circuit p → Circuit p × Derivations p × Reconstruction Variable p
 ```
 
 An optimizer is correct if, for every input circuit, replacing it with the optimized circuit is both sound and complete, and the optimizer respects the degree bound.
@@ -372,8 +374,8 @@ An optimizer is correct if, for every input circuit, replacing it with the optim
 def Optimizer.isCorrect (optimizer : Optimizer p)
     (busSemantics : BusSemantics p) (b : DegreeBound) : Prop :=
   (∀ originalCircuit : Circuit p,
-    let (optimizedCircuit, derivations) := optimizer originalCircuit
-    (optimizedCircuit.isSoundReplacementOf originalCircuit busSemantics) ∧
+    let (optimizedCircuit, derivations, reconstruction) := optimizer originalCircuit
+    (optimizedCircuit.isSoundReplacementOf originalCircuit busSemantics reconstruction) ∧
     (optimizedCircuit.isCompleteReplacementOf originalCircuit busSemantics
       derivations))
   ∧ optimizerRespectsDegreeBound b optimizer

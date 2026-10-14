@@ -10,7 +10,7 @@ it, powdr's `autoprecompiles-lean-ffi` crate) calls. It takes the target VM (`vm
 `1 = SP1`), the degree bound (`degreeIdentities`, `degreeBusInteractions`), and a powdr
 `{"machine", "bus_map", "next_free_id"}` JSON export, parses it over the VM's field, runs the
 matching verified optimizer with the given degree bound, and serializes the result as
-`{"machine": <SymbolicMachine>, "next_free_id": N}`. `next_free_id` is powdr's `ColumnAllocator`
+`{"machine": <SymbolicMachine>, "next_free_id": N, "reconstruction": ...}`. `next_free_id` is powdr's `ColumnAllocator`
 cursor — **required** (a missing one yields `{"error": ...}`), advanced past the fresh ids assigned
 to new columns so powdr reseeds its allocator directly.
 
@@ -46,8 +46,8 @@ private def runOpenVm (b : DegreeBound) (input : String) : String :=
   | .error err => errorJson err
   | .ok (_, _, none) => errorJson "missing required field `next_free_id`"
   | .ok (cs, busMap, some base) =>
-    let (optimized, ds) := openVmOptimizer busMap.toBusMap b cs
-    ApcOptimizer.Serialize.serializeResult optimized ds base
+    let (optimized, ds, hints) := openVmOptimizer busMap.toBusMap b cs
+    ApcOptimizer.Serialize.serializeResult optimized ds base hints
 
 /-- Parse a powdr SP1 export, run `sp1Optimizer` with degree bound `b`, and serialize. -/
 private def runSp1 (b : DegreeBound) (input : String) : String :=
@@ -55,8 +55,8 @@ private def runSp1 (b : DegreeBound) (input : String) : String :=
   | .error err => errorJson err
   | .ok (_, _, none) => errorJson "missing required field `next_free_id`"
   | .ok (cs, busMap, some base) =>
-    let (optimized, ds) := sp1Optimizer busMap.toBusMap b cs
-    ApcOptimizer.Serialize.serializeResult optimized ds base
+    let (optimized, ds, hints) := sp1Optimizer busMap.toBusMap b cs
+    ApcOptimizer.Serialize.serializeResult optimized ds base hints
 
 /-- Parse a powdr export, run the verified optimizer for the requested VM with the given degree
     bound, and serialize the optimized machine plus the advanced `next_free_id`. Returns

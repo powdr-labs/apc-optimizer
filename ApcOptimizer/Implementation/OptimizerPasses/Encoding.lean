@@ -1,4 +1,5 @@
 import ApcOptimizer.Implementation.OptimizerPasses.Registry
+import ApcOptimizer.Implementation.Reconstruction
 
 set_option autoImplicit false
 
@@ -617,5 +618,40 @@ theorem VarRegistry.decodeCS_encodeCS (r : VarRegistry) (cs : Circuit p) :
         (r.encodeExprs_covered acs)]
     exact r.decodeExprs_encodeExprs acs
   · exact (r.encodeExprs acs).1.decodeBIs_encodeBIs bis
+
+def DenseExpr.witness : DenseExpr p → WitnessExpr VarId p
+  | .const c => .const c
+  | .var i => .var i
+  | .add a b => .add a.witness b.witness
+  | .mul a b => .mul a.witness b.witness
+
+@[simp] theorem DenseExpr.witness_eval (e : DenseExpr p) (env : VarId → ZMod p) :
+    e.witness.eval env = e.eval env := by
+  induction e <;> simp_all [DenseExpr.witness, WitnessExpr.eval, DenseExpr.eval]
+
+def substitutionHints (df : VarId → Option (DenseExpr p)) (i : VarId) : WitnessExpr VarId p :=
+  match df i with
+  | some e => e.witness
+  | none => .var i
+
+/-- Two constructors keep maps boxed, preventing analysis from moving into each lookup. -/
+inductive RecoveryMap (p : ℕ) where
+  | identity
+  | ofFn (f : VarId → WitnessExpr VarId p)
+
+def RecoveryMap.expr : RecoveryMap p → VarId → WitnessExpr VarId p
+  | .identity => WitnessExpr.var
+  | .ofFn f => f
+
+instance : CoeFun (RecoveryMap p) (fun _ => VarId → WitnessExpr VarId p) := ⟨RecoveryMap.expr⟩
+
+def RecoveryMap.andThen : RecoveryMap p → RecoveryMap p → RecoveryMap p
+  | .identity, b => b
+  | a, .identity => a
+  | .ofFn f, .ofFn g => .ofFn (fun i => (f i).subst g)
+
+@[simp] theorem RecoveryMap.andThen_expr (a b : RecoveryMap p) (i : VarId) :
+    (a.andThen b).expr i = (a.expr i).subst b.expr := by
+  cases a <;> cases b <;> simp [andThen, expr, WitnessExpr.subst, WitnessExpr.subst_id]
 
 end ApcOptimizer.Dense

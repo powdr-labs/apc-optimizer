@@ -741,16 +741,18 @@ theorem denseDigitFoldF_covered (reg : VarRegistry) (bs : BusSemantics p) (facts
     the no-fire and small-`p` branches are the identity. -/
 theorem denseDigitFoldF_correct (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) :
-    DensePassCorrect reg.isInput d (denseDigitFoldF bs facts d) [] bs := by
-  unfold denseDigitFoldF
+    DensePassCorrect reg.isInput d (denseDigitFoldF bs facts d) [] bs
+      (denseDigitFoldHints bs facts d).expr := by
+  unfold denseDigitFoldF denseDigitFoldHints
   by_cases hp : 256 < p
-  · rw [if_pos hp]
+  · simp only [if_pos hp]
     haveI : NeZero p := ⟨by omega⟩
     cases hff : denseDigitFoldFind bs facts d.busInteractions with
     | none => exact DensePassCorrect.refl reg.isInput d bs
     | some idd =>
         obtain ⟨i, dd⟩ := idd
         show DensePassCorrect reg.isInput d (d.subst i (DenseExpr.const (dd : ZMod p))) [] bs
+          (substitutionHints (fun j => if j = i then some (.const (dd : ZMod p)) else none))
         rw [denseSubst_eq_substF d i (DenseExpr.const (dd : ZMod p))]
         refine DenseConstraintSystem.substF_denseCorrect d
           (fun j => if j = i then some (DenseExpr.const (dd : ZMod p)) else none) bs reg.isInput
@@ -770,11 +772,11 @@ theorem denseDigitFoldF_correct (reg : VarRegistry) (bs : BusSemantics p) (facts
             simp only [Option.some.injEq] at hjt
             rw [← hjt] at hz; simp [DenseExpr.vars] at hz
           · rw [if_neg hji] at hjt; exact absurd hjt (by simp)
-  · rw [if_neg hp]; exact DensePassCorrect.refl reg.isInput d bs
+  · simp only [if_neg hp]; exact DensePassCorrect.refl reg.isInput d bs
 
 /-- The dense bounded-payload digit fold pass; correctness via `denseDigitFoldF_correct`. -/
 def denseDigitFoldPass : DenseVerifiedPassW p :=
-  DenseVerifiedPassW.of
+  DenseVerifiedPassW.ofWithHints denseDigitFoldHints
     denseDigitFoldF
     (fun _ _ _ => [])
     (fun reg bs facts d hcov => denseDigitFoldF_covered reg bs facts d hcov)

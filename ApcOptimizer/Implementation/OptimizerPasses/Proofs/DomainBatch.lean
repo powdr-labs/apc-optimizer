@@ -3132,14 +3132,17 @@ theorem dbDomainBatchTransform_covered (pw : PrimeWitness p) (reg : VarRegistry)
 
 theorem dbDomainBatchTransform_correct (pw : PrimeWitness p) (reg : VarRegistry)
     (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
-    DensePassCorrect reg.isInput d (dbDomainBatchTransform pw bs facts d) [] bs := by
+    DensePassCorrect reg.isInput d (dbDomainBatchTransform pw bs facts d) [] bs
+      (dbDomainBatchTransformHints pw bs facts d).expr := by
+  unfold dbDomainBatchTransformHints
   by_cases hpB : pw.isPrime = true
   · haveI : Fact p.Prime := ⟨pw.correct hpB⟩
     haveI : NeZero p := ⟨(pw.correct hpB).ne_zero⟩
     rw [show dbDomainBatchTransform pw bs facts d
         = (if (dbDomainBatchσ bs facts d).2 then d.substF (dbSubstFn (dbDomainBatchσ bs facts d).1)
             else d) from by simp only [dbDomainBatchTransform, if_pos hpB]]
-    split
+    simp only [if_pos hpB]
+    split_ifs
     · refine DenseConstraintSystem.substF_denseCorrect d (dbSubstFn (dbDomainBatchσ bs facts d).1)
         bs reg.isInput (fun denv hsat j t hjt => ?_) (fun j t hjt z hz => ?_)
       · exact (dbDomainBatchσ_entailed bs facts d j t hjt).2 denv hsat
@@ -3147,18 +3150,20 @@ theorem dbDomainBatchTransform_correct (pw : PrimeWitness p) (reg : VarRegistry)
     · exact DensePassCorrect_refl reg.isInput d bs
   · rw [show dbDomainBatchTransform pw bs facts d = d
         from by simp only [dbDomainBatchTransform, if_neg hpB]]
-    exact DensePassCorrect_refl reg.isInput d bs
+    simpa only [if_neg hpB] using DensePassCorrect_refl reg.isInput d bs
 
 /-- The rebuilt domain-batch pass (see `dbDomainBatchσ`). -/
-def dbDomainBatchPass (pw : PrimeWitness p) : DenseVerifiedPassW p := fun reg d hcov bs facts =>
-  { reg' := reg
-    out := dbDomainBatchTransform pw bs facts d
-    derivs := []
-    ext := VarRegistry.Extends.refl reg
-    covered := dbDomainBatchTransform_covered pw reg bs facts d hcov
-    dcovered := by intro x hx; simp at hx
-    correct := DensePassCorrect.lift hcov
-      (dbDomainBatchTransform_covered pw reg bs facts d hcov) (by intro x hx; simp at hx)
-      (dbDomainBatchTransform_correct pw reg bs facts d) }
+def dbDomainBatchPass (pw : PrimeWitness p) : DenseVerifiedPassW p :=
+  DenseVerifiedPassW.ofWithHints (dbDomainBatchTransformHints pw) (dbDomainBatchTransform pw)
+    (fun _ _ _ => [])
+    (dbDomainBatchTransform_covered pw)
+    (fun _ _ _ _ _ => by intro x hx; simp at hx)
+    (fun reg bs facts d _ => dbDomainBatchTransform_correct pw reg bs facts d)
+    (run := dbDomainBatchWithHints pw)
+    (hrun := by
+      intros
+      unfold dbDomainBatchWithHints dbDomainBatchTransform dbDomainBatchTransformHints
+      dsimp only
+      split_ifs <;> rfl)
 
 end ApcOptimizer.Dense

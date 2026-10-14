@@ -451,8 +451,10 @@ theorem denseFxSubstF_covered (pw : PrimeWitness p) (reg : VarRegistry) (bs : Bu
 
 theorem denseFxSubstF_correct (pw : PrimeWitness p) (reg : VarRegistry) (bs : BusSemantics p)
     (facts : BusFacts p bs) (d : DenseConstraintSystem p) (_hcov : d.CoveredBy reg) :
-    DensePassCorrect reg.isInput d (denseFxSubstF pw bs facts d) [] bs := by
+    DensePassCorrect reg.isInput d (denseFxSubstF pw bs facts d) [] bs (denseFxSubstFHints pw bs facts d).expr := by
+  unfold denseFxSubstFHints
   rw [denseFxSubstF_eq]
+  dsimp only
   split_ifs with hp hempty
   · exact DensePassCorrect.refl reg.isInput d bs
   · haveI : Fact p.Prime := ⟨pw.correct hp⟩
@@ -464,7 +466,8 @@ theorem denseFxSubstF_correct (pw : PrimeWitness p) (reg : VarRegistry) (bs : Bu
 
 /-- The wired dense `fxSubst` pass (`denseFxSubstF`, `FxSubst.lean`); part A of `flagFold`. -/
 def denseFxSubstPass (pw : PrimeWitness p) : DenseVerifiedPassW p :=
-  DenseVerifiedPassW.of (denseFxSubstF pw) (fun _ _ _ => [])
+  DenseVerifiedPassW.ofWithHints (backF := fun bs facts d => denseFxSubstFHints pw bs facts d)
+    (denseFxSubstF pw) (fun _ _ _ => [])
     (fun reg bs facts d hcov => denseFxSubstF_covered pw reg bs facts d hcov)
     (fun _ _ _ _ _ => by intro x hx; simp at hx)
     (fun reg bs facts d hcov => denseFxSubstF_correct pw reg bs facts d hcov)

@@ -21,6 +21,12 @@ variable {p : ℕ}
 def denseEnvF (df : VarId → Option (DenseExpr p)) (denv : VarId → ZMod p) : VarId → ZMod p :=
   fun j => match df j with | some t => t.eval denv | none => denv j
 
+@[simp] theorem substitutionHints_eval (df : VarId → Option (DenseExpr p))
+    (env : VarId → ZMod p) :
+    (fun i => (substitutionHints df i).eval env) = denseEnvF df env := by
+  funext i
+  cases h : df i <;> simp [substitutionHints, denseEnvF, h, WitnessExpr.eval]
+
 theorem DenseExpr.eval_substF (e : DenseExpr p) (df : VarId → Option (DenseExpr p))
     (denv : VarId → ZMod p) : (e.substF df).eval denv = e.eval (denseEnvF df denv) := by
   induction e with
@@ -125,12 +131,12 @@ theorem DenseConstraintSystem.substF_denseCorrect (d : DenseConstraintSystem p)
     (df : VarId → Option (DenseExpr p)) (bs : BusSemantics p) (isInput : VarId → Bool)
     (H : ∀ denv, d.satisfies bs denv → ∀ j t, df j = some t → denv j = t.eval denv)
     (hfv : ∀ (j : VarId) (t : DenseExpr p), df j = some t → ∀ z ∈ t.vars, z ∈ d.occ) :
-    DensePassCorrect isInput d (d.substF df) [] bs := by
+    DensePassCorrect isInput d (d.substF df) [] bs (substitutionHints df) := by
   refine ⟨?_, ?_, ?_, ?_⟩
   · -- soundness: `(d.substF df).implies d`
     intro denv hsat
-    refine ⟨denseEnvF df denv, (d.satisfies_substF df bs denv).1 hsat, ?_⟩
-    rw [d.sideEffects_substF df bs denv]
+    simp only [substitutionHints_eval]
+    exact ⟨(d.satisfies_substF df bs denv).1 hsat, d.sideEffects_substF df bs denv⟩
   · -- invariant preservation
     intro hinv denv hsat bi hbi
     have hsatd : d.satisfies bs (denseEnvF df denv) := (d.satisfies_substF df bs denv).1 hsat
@@ -510,7 +516,7 @@ def EntailedMap (d : DenseConstraintSystem p) (bs : BusSemantics p)
 theorem DensePassCorrect_refl (isInput : VarId → Bool) (d : DenseConstraintSystem p)
     (bs : BusSemantics p) : DensePassCorrect isInput d d [] bs := by
   refine ⟨?_, ?_, ?_, ?_⟩
-  · intro denv hsat; exact ⟨denv, hsat, rfl⟩
+  · intro denv hsat; exact ⟨hsat, rfl⟩
   · intro hinv; exact hinv
   · intro i hi _; exact hi
   · intro denv hadm hsat

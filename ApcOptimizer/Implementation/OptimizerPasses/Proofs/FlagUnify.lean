@@ -544,8 +544,10 @@ theorem denseFlagUnifyF_covered (pw : PrimeWitness p) (reg : VarRegistry) (bs : 
 
 theorem denseFlagUnifyF_correct (pw : PrimeWitness p) (reg : VarRegistry) (bs : BusSemantics p)
     (facts : BusFacts p bs) (d : DenseConstraintSystem p) (_hcov : d.CoveredBy reg) :
-    DensePassCorrect reg.isInput d (denseFlagUnifyF pw bs facts d) [] bs := by
+    DensePassCorrect reg.isInput d (denseFlagUnifyF pw bs facts d) [] bs (denseFlagUnifyFHints pw bs facts d).expr := by
+  unfold denseFlagUnifyFHints
   rw [denseFlagUnifyF_eq]
+  dsimp only
   split_ifs with hp hempty
   · exact DensePassCorrect.refl reg.isInput d bs
   · haveI : Fact p.Prime := ⟨pw.correct hp⟩
@@ -557,7 +559,8 @@ theorem denseFlagUnifyF_correct (pw : PrimeWitness p) (reg : VarRegistry) (bs : 
 
 /-- The dense `flagUnify` pass (transform `denseFlagUnifyF`). -/
 def denseFlagUnifyPass (pw : PrimeWitness p) : DenseVerifiedPassW p :=
-  DenseVerifiedPassW.of (denseFlagUnifyF pw) (fun _ _ _ => [])
+  DenseVerifiedPassW.ofWithHints (backF := fun bs facts d => denseFlagUnifyFHints pw bs facts d)
+    (denseFlagUnifyF pw) (fun _ _ _ => [])
     (fun reg bs facts d hcov => denseFlagUnifyF_covered pw reg bs facts d hcov)
     (fun _ _ _ _ _ => by intro x hx; simp at hx)
     (fun reg bs facts d hcov => denseFlagUnifyF_correct pw reg bs facts d hcov)
