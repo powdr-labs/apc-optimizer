@@ -61,6 +61,14 @@ def main : IO Unit := do
   check (simultaneous.eval env x == 5) "block assignments must be simultaneous"
   let sequential := simultaneous ++ [[(z, .add (.var x) (.var y))]]
   check (sequential.eval env z == 12) "blocks must execute in order"
+  let repeated : Reconstruction Variable 17 :=
+    List.replicate 80 [(x, .add (.var x) (.var x))]
+  check (repeated.eval env x == (2 : F) ^ 80 * env x)
+    "earlier assignments must be materialized, not recomputed exponentially"
+  check (repeated.recover [x] env x == (2 : F) ^ 80 * env x)
+    "witness recovery must also use materialized values"
+  let duplicate : Reconstruction Variable 17 := [[(x, .const 1), (x, .const 2)]]
+  check (duplicate.eval env x == 1) "the first assignment in a block must win"
   check (Reconstruction.recover ([[ (x, .var z) ]] : Reconstruction Variable 17) [y] env x == 0)
     "reconstruction read an unprovided witness value"
   let fresh : Variable := ⟨"fresh", none⟩

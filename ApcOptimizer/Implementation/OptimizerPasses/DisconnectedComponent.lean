@@ -515,13 +515,13 @@ def denseDisconnectedF (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseC
 def denseDropHints (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p)
     (remV : VarId → Bool) : RecoveryMap p :=
   if denseDropCheck bs facts d remV then
-    ⟨fun i => if remV i then .const 0 else .var i⟩
-  else ⟨WitnessExpr.var⟩
+    .ofFn (fun i => if remV i then .const 0 else .var i)
+  else .identity
 
 def denseDisconnectedHints (bs : BusSemantics p) (facts : BusFacts p bs)
     (d : DenseConstraintSystem p) : RecoveryMap p :=
   let rem := denseRemovableVars bs facts d
-  if rem.isEmpty then ⟨WitnessExpr.var⟩
+  if rem.isEmpty then .identity
   else denseDropHints bs facts d (fun x => rem.getD x.index false)
 
 end ApcOptimizer.Dense

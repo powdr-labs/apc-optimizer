@@ -208,7 +208,7 @@ def denseFlagUnifyFHints (pw : PrimeWitness p) (bs : BusSemantics p) (facts : Bu
   if pw.isPrime = true then
     let σ := denseFuLoop bs facts (denseVarBucket DenseExpr.vars d.algebraicConstraints)
       d.busInteractions ∅ DenseSolved.empty
-    if σ.map.isEmpty then ⟨WitnessExpr.var⟩ else ⟨substitutionHints σ.fn⟩
-  else ⟨WitnessExpr.var⟩
+    if σ.map.isEmpty then .identity else .ofFn (substitutionHints σ.fn)
+  else .identity
 
 end ApcOptimizer.Dense

@@ -1220,7 +1220,7 @@ def dbDomainBatchTransformHints (pw : PrimeWitness p) (bs : BusSemantics p)
     (facts : BusFacts p bs) (d : DenseConstraintSystem p) : RecoveryMap p :=
   if pw.isPrime = true then
     let r := dbDomainBatchσ bs facts d
-    if r.2 then ⟨substitutionHints (dbSubstFn r.1)⟩ else ⟨WitnessExpr.var⟩
-  else ⟨WitnessExpr.var⟩
+    if r.2 then .ofFn (substitutionHints (dbSubstFn r.1)) else .identity
+  else .identity
 
 end ApcOptimizer.Dense

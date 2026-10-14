@@ -176,7 +176,7 @@ def denseFxSubstFHints (pw : PrimeWitness p) (bs : BusSemantics p) (facts : BusF
     let σ := denseFxLoop bs facts
         (Thunk.mk (fun _ => denseVarBucket DenseExpr.vars d.algebraicConstraints))
         d.busInteractions ∅ DenseSolved.empty
-    if σ.map.isEmpty then ⟨WitnessExpr.var⟩ else ⟨substitutionHints σ.fn⟩
-  else ⟨WitnessExpr.var⟩
+    if σ.map.isEmpty then .identity else .ofFn (substitutionHints σ.fn)
+  else .identity
 
 end ApcOptimizer.Dense

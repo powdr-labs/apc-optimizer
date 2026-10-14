@@ -4073,8 +4073,7 @@ theorem denseRncF_props (pw : PrimeWitness p) (b : DegreeBound) (reg : VarRegist
 /-- The registered witness re-encoding pass (see `denseRncF` in `Reencode.lean`). -/
 def denseReencodePass (pw : PrimeWitness p) (b : DegreeBound) : DenseVerifiedPassW p :=
   DenseVerifiedPassW.ofExtendingWithHints
-    (fun reg bs facts d => ⟨(denseRncF pw b reg bs facts d).back⟩)
-    (fun reg bs facts d => let r := denseRncF pw b reg bs facts d; (r.1, r.2.1, r.2.2))
+    (denseRncF pw b)
     (fun reg bs facts d hcov => (denseRncF_props pw b reg bs facts d hcov).1)
     (fun reg bs facts d hcov => (denseRncF_props pw b reg bs facts d hcov).2.1)
     (fun reg bs facts d hcov => (denseRncF_props pw b reg bs facts d hcov).2.2.1)

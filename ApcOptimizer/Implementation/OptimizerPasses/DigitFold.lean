@@ -587,8 +587,8 @@ def denseDigitFoldHints (bs : BusSemantics p) (facts : BusFacts p bs) (d : Dense
     RecoveryMap p :=
   if 256 < p then
     match denseDigitFoldFind bs facts d.busInteractions with
-    | some (i, dd) => ⟨substitutionHints (fun j => if j = i then some (.const (dd : ZMod p)) else none)⟩
-    | none => ⟨WitnessExpr.var⟩
-  else ⟨WitnessExpr.var⟩
+    | some (i, dd) => .ofFn (substitutionHints (fun j => if j = i then some (.const (dd : ZMod p)) else none))
+    | none => .identity
+  else .identity
 
 end ApcOptimizer.Dense

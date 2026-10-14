@@ -1582,8 +1582,7 @@ theorem denseHintCollapseF_props (pw : PrimeWitness p) (reg : VarRegistry) (bs :
 /-- The registry-extending hint-collapse pass. -/
 def denseHintCollapsePass (pw : PrimeWitness p) : DenseVerifiedPassW p :=
   DenseVerifiedPassW.ofExtendingWithHints
-    (fun reg bs facts d => ⟨(denseHintCollapseF pw reg bs facts d).back⟩)
-    (fun reg bs facts d => let r := denseHintCollapseF pw reg bs facts d; (r.1, r.2.1, r.2.2))
+    (denseHintCollapseF pw)
     (fun reg bs facts d hcov => (denseHintCollapseF_props pw reg bs facts d hcov).1)
     (fun reg bs facts d hcov => (denseHintCollapseF_props pw reg bs facts d hcov).2.1)
     (fun reg bs facts d hcov => (denseHintCollapseF_props pw reg bs facts d hcov).2.2.1)

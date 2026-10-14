@@ -64,3 +64,61 @@ theorem Reconstruction.ofMap_eval [DecidableEq α] (xs : List α) (f : α → Wi
     simp only [Reconstruction.ofMap, Reconstruction.eval, List.foldl_cons, List.foldl_nil, hn]
     exact (WitnessExpr.isCopy_eval hc env).symm
   · exact Reconstruction.eval_block _ f env (List.mem_filter.mpr ⟨hx, by simpa using hc⟩)
+
+namespace Reconstruction
+
+/-- Materialized values prevent repeated evaluation of earlier assignments. -/
+def readValues [DecidableEq α] (values : List (α × ZMod p))
+    (env : α → ZMod p) (x : α) : ZMod p :=
+  match values.lookup x with
+  | some value => value
+  | none => env x
+
+def evalValues [DecidableEq α] (hints : Reconstruction α p) (env : α → ZMod p)
+    (values : List (α × ZMod p)) : List (α × ZMod p) :=
+  hints.foldl (fun values block =>
+    block.map (fun (v, e) => (v, e.eval (readValues values env))) ++ values) values
+
+@[inline] def evalEager [DecidableEq α] (hints : Reconstruction α p)
+    (env : α → ZMod p) : α → ZMod p :=
+  readValues (evalValues hints env []) env
+
+theorem lookup_values [DecidableEq α] (block : List (α × WitnessExpr α p))
+    (env : α → ZMod p) (x : α) :
+    (block.map (fun (v, e) => (v, e.eval env))).lookup x =
+      (block.lookup x).map (fun e => e.eval env) := by
+  induction block with
+  | nil => rfl
+  | cons pair rest ih =>
+    obtain ⟨v, e⟩ := pair
+    by_cases h : x = v
+    · subst v; simp
+    · simpa [List.lookup_cons, BEq.beq, h] using ih
+
+theorem evalValues_correct [DecidableEq α] (hints : Reconstruction α p)
+    (env : α → ZMod p) (values : List (α × ZMod p)) :
+    readValues (evalValues hints env values) env = hints.eval (readValues values env) := by
+  induction hints generalizing values with
+  | nil => rfl
+  | cons block rest ih =>
+    simp only [evalValues, List.foldl_cons, eval] at *
+    rw [ih]
+    congr 1
+    funext x
+    simp only [readValues, List.lookup_append, lookup_values]
+    cases block.lookup x <;> rfl
+
+@[csimp] theorem eval_eq_evalEager : @Reconstruction.eval = @evalEager := by
+  funext p α inst hints env
+  exact (evalValues_correct hints env []).symm
+
+@[inline] def recoverEager (hints : Reconstruction Variable p) (kept : List Variable)
+    (env : Variable → ZMod p) : Variable → ZMod p :=
+  evalEager hints (fun v => if v ∈ kept then env v else 0)
+
+@[csimp] theorem recover_eq_recoverEager : @Reconstruction.recover = @recoverEager := by
+  funext p hints kept env
+  change Reconstruction.eval hints _ = evalEager hints _
+  rw [eval_eq_evalEager]
+
+end Reconstruction

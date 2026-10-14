@@ -822,8 +822,7 @@ theorem denseSeqzCollapseF_props (reg : VarRegistry) (bs : BusSemantics p) (fact
     `ofExtending`. -/
 def denseSeqzCollapseStep : DenseVerifiedPassW p :=
   DenseVerifiedPassW.ofExtendingWithHints
-    (fun reg bs facts d => ⟨(denseSeqzCollapseF reg bs facts d).back⟩)
-    (fun reg bs facts d => let r := denseSeqzCollapseF reg bs facts d; (r.1, r.2.1, r.2.2))
+    (denseSeqzCollapseF)
     (fun reg bs facts d hcov => (denseSeqzCollapseF_props reg bs facts d hcov).1)
     (fun reg bs facts d hcov => (denseSeqzCollapseF_props reg bs facts d hcov).2.1)
     (fun reg bs facts d hcov => (denseSeqzCollapseF_props reg bs facts d hcov).2.2.1)

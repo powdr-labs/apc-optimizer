@@ -877,10 +877,8 @@ theorem denseCS_coveredBy_mono {r r' : VarRegistry} (h : r.Extends r')
     the obligations are extension (`hext`), coverage there (`hcov`/`hdcov`), and a
     `DensePassCorrect` proof at the extended registry's `isInput` (`hcorrect`). -/
 def DenseVerifiedPassW.ofExtendingWithHints
-    (backF : VarRegistry → (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
-      RecoveryMap p)
     (transform : VarRegistry → (bs : BusSemantics p) → BusFacts p bs → DenseConstraintSystem p →
-      VarRegistry × DenseConstraintSystem p × DenseDerivations p)
+      RecoveryResult (DenseConstraintSystem p) p)
     (hext : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
       (d : DenseConstraintSystem p), d.CoveredBy reg → reg.Extends (transform reg bs facts d).1)
     (hcov : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
@@ -892,7 +890,7 @@ def DenseVerifiedPassW.ofExtendingWithHints
     (hcorrect : ∀ (reg : VarRegistry) (bs : BusSemantics p) (facts : BusFacts p bs)
       (d : DenseConstraintSystem p), d.CoveredBy reg →
       DensePassCorrect (transform reg bs facts d).1.isInput d
-        (transform reg bs facts d).2.1 (transform reg bs facts d).2.2 bs (backF reg bs facts d).expr) :
+        (transform reg bs facts d).2.1 (transform reg bs facts d).2.2 bs (transform reg bs facts d).back) :
     DenseVerifiedPassW p :=
   fun reg d hcovd bs facts =>
     let t := transform reg bs facts d
@@ -900,11 +898,11 @@ def DenseVerifiedPassW.ofExtendingWithHints
     have hcov' : t.2.1.CoveredBy t.1 := hcov reg bs facts d hcovd
     have hdcov' : t.2.2.CoveredBy t.1 := hdcov reg bs facts d hcovd
     have hcorrect' : DensePassCorrect t.1.isInput d t.2.1 t.2.2 bs
-      (backF reg bs facts d).expr := hcorrect reg bs facts d hcovd
+      (transform reg bs facts d).back := hcorrect reg bs facts d hcovd
     { reg' := t.1
       out := t.2.1
       derivs := t.2.2
-      hints := t.1.reconstruction d (backF reg bs facts d).expr
+      hints := t.1.reconstruction d t.back
       ext := hext'
       covered := hcov'
       dcovered := hdcov'
@@ -929,8 +927,8 @@ def DenseVerifiedPassW.ofExtending
       DensePassCorrect (transform reg bs facts d).1.isInput d
         (transform reg bs facts d).2.1 (transform reg bs facts d).2.2 bs) :
     DenseVerifiedPassW p :=
-  DenseVerifiedPassW.ofExtendingWithHints (fun _ _ _ _ => ⟨WitnessExpr.var⟩)
-    transform hext hcov hdcov hcorrect
+  DenseVerifiedPassW.ofExtendingWithHints
+    (fun reg bs facts d => RecoveryResult.ofTuple (transform reg bs facts d)) hext hcov hdcov hcorrect
 
 /-! ### Sanity check: a trivial registry-minting stub composes through the builder -/
 

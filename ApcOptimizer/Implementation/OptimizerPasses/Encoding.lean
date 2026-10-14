@@ -634,8 +634,13 @@ def substitutionHints (df : VarId → Option (DenseExpr p)) (i : VarId) : Witnes
   | some e => e.witness
   | none => .var i
 
-/-- Boxing prevents eta-expansion from recomputing the map at every variable lookup. -/
-structure RecoveryMap (p : ℕ) where
-  expr : VarId → WitnessExpr VarId p
+/-- Two constructors keep maps boxed, preventing analysis from moving into each lookup. -/
+inductive RecoveryMap (p : ℕ) where
+  | identity
+  | ofFn (f : VarId → WitnessExpr VarId p)
+
+def RecoveryMap.expr : RecoveryMap p → VarId → WitnessExpr VarId p
+  | .identity => WitnessExpr.var
+  | .ofFn f => f
 
 end ApcOptimizer.Dense

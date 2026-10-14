@@ -92,12 +92,12 @@ def denseIdentitySubstF (bs : BusSemantics p) (facts : BusFacts p bs) (d : Dense
 def denseIdentitySubstFHints (bs : BusSemantics p) (facts : BusFacts p bs) (d : DenseConstraintSystem p) :
     RecoveryMap p :=
   match denseIdentityPairs facts d with
-  | [] => ⟨WitnessExpr.var⟩
+  | [] => .identity
   | _ :: _ =>
     if (1 : ZMod p) ≠ 0 then
       -- Bind the map fully applied here; see `denseIdentityFm` (arity-expansion trap).
       let m := denseIdentityMap facts d
-      ⟨substitutionHints (denseIdentityFm m m.size)⟩
-    else ⟨WitnessExpr.var⟩
+      .ofFn (substitutionHints (denseIdentityFm m m.size))
+    else .identity
 
 end ApcOptimizer.Dense
